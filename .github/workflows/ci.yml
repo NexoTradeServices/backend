@@ -1,0 +1,34 @@
+name: CI
+
+# Runs on every pull request into main, and on main itself after a merge.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # ci, not install: installs exactly what package-lock.json says, nothing newer.
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      # No test step yet - tests arrive with the first feature that needs them,
+      # so a green tick never claims more than it checked.

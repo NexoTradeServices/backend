@@ -1,0 +1,33 @@
+# Fly.io configuration for the tradeservice API.
+#
+# Nothing secret lives here - this file is committed. DATABASE_URL, DIRECT_URL
+# and WEB_ORIGIN are set with `fly secrets set`, which stores them encrypted and
+# injects them as environment variables at boot.
+
+app = "tradeservice-api"
+primary_region = "syd"
+
+[build]
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+
+  # Always one machine awake. A cold start would show a customer a spinner on
+  # the enquiry form, and the cost of one small machine is a few dollars a month.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    # Deliberately /health and not /health/db. This check decides whether the
+    # machine itself is alive; if Neon hiccups we want the API up and reporting
+    # 503 on one route, not Fly tearing the machine down and restarting it.
+    path = "/health"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
