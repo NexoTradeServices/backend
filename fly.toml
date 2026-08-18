@@ -4,7 +4,9 @@
 # and WEB_ORIGIN are set with `fly secrets set`, which stores them encrypted and
 # injects them as environment variables at boot.
 
-app = "tradeservice-api"
+# Must match the app that exists on Fly. Named at launch, and Fly has no easy
+# rename, so the file follows the app rather than the other way round.
+app = "tradeservices"
 primary_region = "syd"
 
 [build]
