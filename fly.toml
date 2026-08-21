@@ -15,11 +15,13 @@ primary_region = "syd"
   internal_port = 8080
   force_https = true
 
-  # Always one machine awake. A cold start would show a customer a spinner on
-  # the enquiry form, and the cost of one small machine is a few dollars a month.
+  # No machine kept awake. Fly starts one on the next request, which costs a
+  # 2-6 second wait on that first hit. Fine while nothing but us is calling the
+  # API; set min_machines_running back to 1 before a customer ever sees the
+  # enquiry form, because a cold start there is a spinner on a stranger's screen.
   auto_stop_machines = false
   auto_start_machines = true
-  min_machines_running = 1
+  min_machines_running = 0
 
   [[http_service.checks]]
     # Deliberately /health and not /health/db. This check decides whether the
