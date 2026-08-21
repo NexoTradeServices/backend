@@ -1,0 +1,11 @@
+// Typecheck EVERYTHING, including the things tsconfig.json deliberately leaves
+// out of the build: tests, and the two config files at the repo root.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // nothing is emitted here, so the build's src-only rootDir does not apply
+    "rootDir": "."
+  },
+  "include": ["src", "tests", "vitest.config.ts", "prisma.config.ts"]
+}

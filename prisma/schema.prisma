@@ -1,0 +1,966 @@
+// Prisma schema -- feature 1001 (project/delivery/1001-schema-and-seed/plan.md).
+//
+// This file is the Data Model section of project/design/trades-platform-design.md
+// turned into tables. The design doc outranks this file: if the two disagree, the
+// design is right and this is a defect.
+//
+// Conventions carried from the design:
+//   - money is ALWAYS Int, in whole cents (never Float, never Decimal dollars)
+//   - `reference` (documents: JOB/INV/CINV/CN) and `code` (parties: CUS/CON) are
+//     human handles, system-generated and sequential; the internal id stays the key
+//   - state-changing actions record an audit PAIR: <action>ByUserId + <action>At
+//   - locations a human entered are stored structured (Places shape), never free text
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  customer
+  contractor
+  ops
+  owner
+}
+
+enum PayoutCycle {
+  weekly
+  fortnightly
+}
+
+enum PayoutDay {
+  mon
+  tue
+  wed
+  thu
+  fri
+  sat
+  sun
+}
+
+enum CapabilityTokenType {
+  respond
+  track
+  review
+  approve
+}
+
+/// Shared by Contractor and ContractorSpecialty -- the design gives both the same
+/// two values (active | suspended).
+enum ContractorStatus {
+  active
+  suspended
+}
+
+enum CalendarEventType {
+  job
+  unavailable
+  break
+  /// stored as "time-off" to match the design doc's value exactly
+  time_off    @map("time-off")
+}
+
+enum PreferredWindow {
+  morning
+  afternoon
+  evening
+  specific
+}
+
+enum ServiceLevel {
+  normal
+  emergency
+  weekend
+}
+
+/// completed is TERMINAL. Money is NOT job state -- payment lives on Invoice.
+enum JobStatus {
+  new
+  assigned
+  scheduled
+  in_progress
+  on_hold
+  completed
+  cancelled
+}
+
+enum CancelReason {
+  customer_changed_mind
+  customer_no_show
+  no_coverage
+  duplicate
+  price
+  other
+}
+
+enum AssignmentStatus {
+  assigned
+  accepted
+  in_progress
+  completed
+  declined
+  cancelled
+}
+
+enum PartSuppliedBy {
+  contractor
+  platform
+}
+
+enum UploadedByRole {
+  customer
+  contractor
+  ops
+}
+
+enum InvoiceStatus {
+  sent
+  paid
+  void
+}
+
+enum InvoiceLineKind {
+  labour
+  part
+  callout
+}
+
+enum PaymentStatus {
+  pending
+  succeeded
+  failed
+  refunded
+}
+
+enum RefundStatus {
+  pending
+  succeeded
+  failed
+}
+
+enum SettlementStatus {
+  draft
+  approved
+  paid
+  superseded
+}
+
+enum NotificationRecipientType {
+  customer
+  contractor
+  ops
+}
+
+/// Shared by Notification and Suppression.
+enum NotificationChannel {
+  email
+  sms
+}
+
+enum NotificationCategory {
+  transactional
+  marketing
+}
+
+enum NotificationRelatedType {
+  job
+  assignment
+  invoice
+  payment
+  refund
+  settlement
+  contractor
+  customer
+  user
+}
+
+enum NotificationStatus {
+  queued
+  sent
+  delivered
+  failed
+}
+
+enum SuppressionReason {
+  unsubscribed
+  bounced
+  stopped
+}
+
+// ---------------------------------------------------------------------------
+// Identity -- the Better Auth base (feature 1003 configures auth itself)
+//
+// Field shapes follow Better Auth's Prisma reference so 1003 can point Better
+// Auth at these tables without a migration. `role` is our added field.
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String   @id @default(uuid(7))
+  name          String
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  image         String?
+  role          Role
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  sessions   Session[]
+  accounts   Account[]
+  customer   Customer?
+  contractor Contractor?
+
+  // audit-pair back-relations (who did the thing)
+  gstStatusChanges     PlatformSettings[]     @relation("GstStatusChangedBy")
+  cancelledJobs        Job[]                  @relation("JobCancelledBy")
+  cancelledAssignments Assignment[]           @relation("AssignmentCancelledBy")
+  voidedInvoices       Invoice[]              @relation("InvoiceVoidedBy")
+  approvedRefunds      Refund[]               @relation("RefundApprovedBy")
+  paidSettlements      ContractorSettlement[] @relation("SettlementPaidBy")
+}
+
+model Session {
+  id        String   @id @default(uuid(7))
+  expiresAt DateTime
+  token     String   @unique
+  ipAddress String?
+  userAgent String?
+  userId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Account {
+  id                    String    @id @default(uuid(7))
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+}
+
+/// Better Auth's verification store -- password reset and email verification
+/// tokens (1003 uses it; it is part of the Better Auth base, not our domain).
+model Verification {
+  id         String   @id @default(uuid(7))
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+}
+
+// ---------------------------------------------------------------------------
+// Platform (settings)
+// ---------------------------------------------------------------------------
+
+/// ONE row; business-wide config. OWNER-ONLY write via the admin settings screen
+/// (feature 1006) -- not ops. One switch (gstRegistered) governs every invoice.
+/// The singleton is held by seeding a fixed id, not by a DB constraint.
+model PlatformSettings {
+  id String @id @default(uuid(7))
+
+  /// OFF now; the owner flips it ON at registration (ABN gate -- see Invoicing / GST)
+  gstRegistered             Boolean     @default(false)
+  /// AUDIT pair: when the GST switch last flipped, and who flipped it
+  gstStatusChangedAt        DateTime?
+  gstStatusChangedByUserId  String?
+  businessAbn               String?
+  /// 10 (AU). Decimal, not Int -- it drives money math and must stay exact.
+  gstRatePercent            Decimal     @db.Decimal(5, 2)
+  /// stamps Invoice.dueAt at issue
+  paymentTermsDays          Int
+  /// drives enquiry coverage tiers (derived, never stored)
+  serviceReachKm            Float
+  /// customer NO-SHOW fee, 100% passed to the contractor. NOT Tier 1.
+  calloutFee                Int
+  /// floor on a return visit's billed time
+  returnVisitMinimumMinutes Int
+  /// cap per contractor part line
+  maxContractorPartAmount   Int
+  /// THE single contact number
+  operatorPhone             String
+  payoutCycle               PayoutCycle
+  payoutDay                 PayoutDay?
+  /// swappable inside the Notification module (ADR 0002)
+  emailProvider             String
+  smsProvider               String
+  updatedAt                 DateTime    @updatedAt
+
+  gstStatusChangedBy User? @relation("GstStatusChangedBy", fields: [gstStatusChangedByUserId], references: [id])
+}
+
+// ---------------------------------------------------------------------------
+// Identity & Access -- capability tokens (ADR 0004)
+// ---------------------------------------------------------------------------
+
+/// Login-exempt links. Opaque random value stored HASHED: the DB lookup IS the
+/// validation, and deleting the row IS revocation (ADR 0004).
+model CapabilityToken {
+  id           String              @id @default(uuid(7))
+  tokenHash    String              @unique
+  type         CapabilityTokenType
+  jobId        String?
+  assignmentId String?
+  singleUse    Boolean
+  expiresAt    DateTime
+  usedAt       DateTime?
+  createdAt    DateTime            @default(now())
+
+  job        Job?        @relation(fields: [jobId], references: [id])
+  assignment Assignment? @relation(fields: [assignmentId], references: [id])
+
+  @@index([jobId])
+  @@index([assignmentId])
+}
+
+// ---------------------------------------------------------------------------
+// Customer
+// ---------------------------------------------------------------------------
+
+model Customer {
+  id                     String   @id @default(uuid(7))
+  /// human-readable CUS-xxxx; system-generated, sequential
+  code                   String   @unique
+  /// Better Auth login -- EMPTY = guest, set = has an account
+  userId                 String?  @unique
+  name                   String
+  email                  String   @unique
+  phone                  String?
+  /// the customer's OWN address (Places pick), ops-collected on the confirming
+  /// call: { street, suburb, state, country, postcode, lat, lng, placeId }.
+  /// NOT the job site -- a booking can be for a rental.
+  billingAddress         Json?
+  stripeCustomerId       String?
+  defaultPaymentMethodId String?
+  /// Phase 2. Prisma scalar lists cannot be optional; empty list = none held.
+  savedPaymentMethodIds  String[]
+  /// { email, sms, optedInAt?, source?, unsubscribedAt? }
+  marketingConsent       Json?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  user     User?     @relation(fields: [userId], references: [id])
+  jobs     Job[]
+  reviews  Review[]
+  invoices Invoice[]
+  payments Payment[]
+  refunds  Refund[]
+}
+
+// ---------------------------------------------------------------------------
+// Contractor
+// ---------------------------------------------------------------------------
+
+model Contractor {
+  id                String           @id @default(uuid(7))
+  /// human-readable CON-xxxx; system-generated, sequential
+  code              String           @unique
+  userId            String           @unique
+  name              String
+  businessName      String?
+  abn               String
+  /// set at onboarding; drives GST on their payouts
+  gstRegistered     Boolean          @default(false)
+  phone             String
+  email             String
+  /// business/postal address, entered via Google Places (never typed free-hand)
+  address           String
+  /// the pin the service area is built around (Places pick):
+  /// { suburb, state, country, postcode, lat, lng, placeId }. No postcode column --
+  /// matching runs on ContractorServedPostcode rows.
+  coreLocation      Json
+  /// last slider value, for "expand my area"
+  lastRadiusKm      Float?
+  insurer           String?
+  insurancePolicyNo String?
+  insuranceExpiry   DateTime?        @db.Date
+  payoutBsb         String?
+  payoutAccountNo   String?
+  payoutAccountName String?
+  status            ContractorStatus @default(active)
+  /// denormalized from Review
+  averageRating     Float?
+  reviewCount       Int?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  user            User                       @relation(fields: [userId], references: [id])
+  specialties     ContractorSpecialty[]
+  servedPostcodes ContractorServedPostcode[]
+  reviews         Review[]
+  calendarEvents  CalendarEvent[]
+  assignments     Assignment[]
+  settlements     ContractorSettlement[]
+}
+
+/// A contractor has many -- one per trade.
+model ContractorSpecialty {
+  id                     String           @id @default(uuid(7))
+  contractorId           String
+  trade                  String
+  /// TIER 1 pay: call-out + first hour, once per job
+  contractorCalloutRate  Int
+  /// TIER 2 pay: per hour after, 15-min blocks
+  contractorStandardRate Int
+  licenceNumber          String
+  licenceExpiry          DateTime         @db.Date
+  status                 ContractorStatus @default(active)
+
+  contractor  Contractor   @relation(fields: [contractorId], references: [id], onDelete: Cascade)
+  assignments Assignment[]
+
+  @@unique([contractorId, trade])
+}
+
+/// THE POSTCODE IS THE UNIT (all-or-none). Suburb labels are read from Suburb at
+/// display time, never stored here.
+model ContractorServedPostcode {
+  id           String @id @default(uuid(7))
+  contractorId String
+  postcode     String
+
+  contractor Contractor @relation(fields: [contractorId], references: [id], onDelete: Cascade)
+
+  @@unique([contractorId, postcode])
+  @@index([postcode])
+}
+
+model Review {
+  id           String   @id @default(uuid(7))
+  jobId        String
+  customerId   String
+  contractorId String
+  rating       Int
+  reviewText   String?
+  createdAt    DateTime @default(now())
+
+  job        Job        @relation(fields: [jobId], references: [id])
+  customer   Customer   @relation(fields: [customerId], references: [id])
+  contractor Contractor @relation(fields: [contractorId], references: [id])
+
+  @@index([jobId])
+  @@index([contractorId])
+}
+
+/// Availability + bookings. Block state is READ from the assignment -- there is
+/// deliberately no hold/confirmed field here.
+model CalendarEvent {
+  id           String            @id @default(uuid(7))
+  contractorId String
+  startTime    DateTime
+  endTime      DateTime
+  type         CalendarEventType
+  jobId        String?
+  assignmentId String?
+  notes        String?
+
+  contractor Contractor  @relation(fields: [contractorId], references: [id], onDelete: Cascade)
+  job        Job?        @relation(fields: [jobId], references: [id])
+  assignment Assignment? @relation(fields: [assignmentId], references: [id])
+
+  @@index([contractorId, startTime])
+  @@index([assignmentId])
+}
+
+// ---------------------------------------------------------------------------
+// Jobs & Dispatch
+// ---------------------------------------------------------------------------
+
+model Job {
+  id                   String          @id @default(uuid(7))
+  /// human-readable JOB-xxxx, shown to customer + ops
+  reference            String          @unique
+  /// set when this job is a CALLBACK on an earlier job; points to the ROOT
+  /// original (flat, never to another callback). Empty = original job.
+  parentJobId          String?
+  customerId           String
+  serviceTypeId        String
+  /// SNAPSHOT of ServiceType at JOB CREATION -- price shown = price billed
+  customerCalloutRate  Int
+  customerStandardRate Int
+  /// WHERE THE WORK HAPPENS. Own column because every contractor match filters
+  /// on it (set-membership against ContractorServedPostcode).
+  postcode             String
+  /// the enquiry-form Places pick, a SUBURB not a street address:
+  /// { suburb, state, country, lat, lng, placeId }
+  serviceLocation      Json
+  /// WHERE THE CONTRACTOR PARKS THE VAN -- full street address, ops-entered on
+  /// the confirming call: { street, suburb, state, country, postcode, lat, lng, placeId }
+  siteAddress          Json?
+  /// customer's notes
+  description          String?
+  preferredWindow      PreferredWindow
+  /// when preferredWindow = specific
+  preferredDate        DateTime?       @db.Date
+  /// THE PRICING URGENCY, ops-set at dispatch
+  serviceLevel         ServiceLevel?
+  status               JobStatus       @default(new)
+  /// ops notes outside the lifecycle, a JSON array of
+  /// { at, operatorId, type, note, assignmentId? }
+  /// where type is complaint | dispute | instruction | correction | general
+  operatorNotes        Json?
+  /// customer_no_show is set ONLY by the ops "Mark no-show" action
+  cancelReason         CancelReason?
+  cancelNote           String?
+  /// AUDIT pair: who cancelled, and when
+  cancelledByUserId    String?
+  cancelledAt          DateTime?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  parentJob   Job?        @relation("JobCallbacks", fields: [parentJobId], references: [id])
+  callbacks   Job[]       @relation("JobCallbacks")
+  customer    Customer    @relation(fields: [customerId], references: [id])
+  serviceType ServiceType @relation(fields: [serviceTypeId], references: [id])
+  cancelledBy User?       @relation("JobCancelledBy", fields: [cancelledByUserId], references: [id])
+
+  assignments      Assignment[]
+  attachments      Attachment[]
+  reviews          Review[]
+  invoices         Invoice[]
+  refunds          Refund[]
+  calendarEvents   CalendarEvent[]
+  capabilityTokens CapabilityToken[]
+  notifications    Notification[]
+
+  @@index([status])
+  @@index([postcode])
+  @@index([customerId])
+  @@index([parentJobId])
+}
+
+/// A job has many (one active); the rest are history (declines, reassignments).
+model Assignment {
+  id                     String           @id @default(uuid(7))
+  jobId                  String
+  contractorId           String
+  /// WHICH HAT they were dispatched in -- trade, pay rate and licence in one link
+  specialtyId            String
+  status                 AssignmentStatus @default(assigned)
+  /// CALLBACK visits only: the attending contractor's up-front on-site call.
+  /// true = chargeable, false = goodwill ($0 invoice). Null on normal jobs.
+  callbackChargeable     Boolean?
+  proposedSlot           DateTime?
+  confirmedSlot          DateTime?
+  /// sum of time entries, floored + rounded PER ATTENDANCE. Decimal, not Int:
+  /// this is hours, not money.
+  billedHours            Decimal?         @db.Decimal(6, 2)
+  /// the permanent WORK record, frozen at Complete
+  completionNotes        String?
+  /// copied at completion from the job's birth snapshot; ops may LOWER these two
+  /// via Correct & reissue (decrease only)
+  customerCalloutRate    Int?
+  customerStandardRate   Int?
+  /// snapshot at completion from the specialty; never ops-amendable
+  contractorCalloutRate  Int?
+  contractorStandardRate Int?
+  /// snapshot of Job.serviceLevel at completion -- one level, two ladders
+  serviceLevel           ServiceLevel?
+  /// customer LABOUR, computed at completion
+  customerTotal          Int?
+  /// contractor LABOUR pay
+  contractorPay          Int?
+  /// receipt cost of suppliedBy=contractor rows ONLY, repaid in the payout
+  materialsReimbursement Int?
+  /// snapshot: the contractor's rating at dispatch (drifts, cannot be recomputed)
+  ratingAtDispatch       Float?
+  invoiceId              String?
+  /// which payout run included it
+  settlementId           String?
+  dispatchedAt           DateTime         @default(now())
+  acceptedAt             DateTime?
+  /// system: the moment Complete was pressed
+  completedAt            DateTime?
+  /// AUDIT pair: who pulled the contractor off, and when. Review finding R1.4
+  /// caught the design contradicting itself -- the Foundations audit-trail
+  /// convention named "assignment cancel", while the Assignment record and The
+  /// Ledger wrote the timestamp alone. The architect ruled for the convention
+  /// and amended the design doc, so this is now the shape the doc describes and
+  /// NOT a deviation. It ships in the first migration so 4006 does not have to
+  /// migrate a live Neon database to get one column.
+  cancelledByUserId      String?
+  cancelledAt            DateTime?
+
+  job         Job                   @relation(fields: [jobId], references: [id])
+  contractor  Contractor            @relation(fields: [contractorId], references: [id])
+  specialty   ContractorSpecialty   @relation(fields: [specialtyId], references: [id])
+  /// the design carries an invoiceId here AND an assignmentId on Invoice; they are
+  /// two columns for one fact, kept in step by feature 6001
+  invoice     Invoice?              @relation("AssignmentInvoice", fields: [invoiceId], references: [id])
+  settlement  ContractorSettlement? @relation(fields: [settlementId], references: [id])
+  cancelledBy User?                 @relation("AssignmentCancelledBy", fields: [cancelledByUserId], references: [id])
+
+  timeLogs         AssignmentTimeLog[]
+  parts            AssignmentPart[]
+  attachments      Attachment[]
+  calendarEvents   CalendarEvent[]
+  capabilityTokens CapabilityToken[]
+  issuedInvoices   Invoice[]           @relation("InvoiceAssignment")
+
+  @@index([jobId])
+  @@index([contractorId])
+  @@index([settlementId])
+}
+
+/// One row per ATTENDANCE on site; a visit has many. Frozen at Complete (it is
+/// the source of billedHours); after that, ops only via Correct & reissue.
+model AssignmentTimeLog {
+  id           String   @id @default(uuid(7))
+  assignmentId String
+  /// approximate, retro, editable
+  startedAt    DateTime
+  /// defaults to now on save
+  endedAt      DateTime
+  /// schema-optional; the FORM requires it when saving without completing
+  note         String?
+  createdAt    DateTime @default(now())
+
+  assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  @@index([assignmentId])
+}
+
+/// Parts/materials on a visit. Two kinds, one table, split by suppliedBy; the
+/// invoice never shows the flag.
+model AssignmentPart {
+  id                  String         @id @default(uuid(7))
+  assignmentId        String
+  /// contractor = on-site at completion; platform = ops-entered
+  suppliedBy          PartSuppliedBy
+  name                String
+  description         String?
+  qty                 Decimal        @db.Decimal(10, 2)
+  unitPrice           Int
+  /// qty x unitPrice; contractor rows capped at PlatformSettings.maxContractorPartAmount
+  lineTotal           Int
+  /// REQUIRED for contractor rows (agency purchase + GST input-credit evidence);
+  /// null on platform rows
+  receiptAttachmentId String?
+  /// form-REQUIRED for platform rows (how the customer agreed); null on contractor rows
+  quoteAcceptNote     String?
+
+  assignment        Assignment  @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  receiptAttachment Attachment? @relation(fields: [receiptAttachmentId], references: [id])
+
+  @@index([assignmentId])
+}
+
+/// Images on a job, ALWAYS optional -- with one exception: a part row requires
+/// its receipt photo. The image lives in Cloudinary; the DB stores the public id.
+model Attachment {
+  id             String         @id @default(uuid(7))
+  jobId          String
+  /// set when a contractor uploaded it on a visit
+  assignmentId   String?
+  uploadedByRole UploadedByRole
+  /// Cloudinary public id (ADR 0000)
+  storageKey     String
+  caption        String?
+  createdAt      DateTime       @default(now())
+
+  job        Job              @relation(fields: [jobId], references: [id])
+  assignment Assignment?      @relation(fields: [assignmentId], references: [id])
+  partRows   AssignmentPart[]
+
+  @@index([jobId])
+  @@index([assignmentId])
+}
+
+/// Reference data, SEEDED not user-created (feature 1002 brings the rows); one
+/// row per SUBURB+POSTCODE pair.
+model Suburb {
+  id          String @id @default(uuid(7))
+  name        String
+  slug        String @unique
+  /// REQUIRED -- postcode chips and ContractorServedPostcode rows hang off it
+  postcode    String
+  /// WA, SA, ... (from the seed dataset)
+  state       String
+  /// the one point that stands for the suburb. Stored as a lat/lng pair; PostGIS
+  /// builds the geography at query time (ST_MakePoint(lng, lat)::geography).
+  centroidLat Float
+  centroidLng Float
+  /// { title?, description? }
+  seo         Json?
+
+  serviceAreaPages ServiceAreaPage[]
+
+  @@unique([name, postcode])
+  @@index([postcode])
+}
+
+// ---------------------------------------------------------------------------
+// Money & Finance
+// ---------------------------------------------------------------------------
+
+/// Trade / pricing catalog. WRITE = OWNER ONLY (feature 1007). Ops reads it
+/// everywhere but never edits. Contractor pay rates live on the specialty.
+model ServiceType {
+  id                      String  @id @default(uuid(7))
+  trade                   String  @unique
+  /// /services/[trade] SEO route
+  slug                    String?
+  /// TIER 1: call-out + first hour, charged ONCE per job. GST-INCLUSIVE.
+  customerCalloutRate     Int
+  /// TIER 2: per hour after, 15-min blocks
+  customerStandardRate    Int
+  /// customer-side { normal, emergency, weekend }; the three prices shown are
+  /// computed base x multiplier, never stored
+  serviceLevelMultipliers Json
+  /// enquiry-form service options (a JSON array)
+  prefilledFields         Json
+  /// { title?, description? }
+  seo                     Json?
+
+  jobs             Job[]
+  serviceAreaPages ServiceAreaPage[]
+}
+
+model Invoice {
+  id                   String        @id @default(uuid(7))
+  /// human-readable INV-xxxx -- the invoice number shown to the customer
+  reference            String        @unique
+  jobId                String
+  assignmentId         String
+  customerId           String
+  /// total = sum of InvoiceLine.lineTotal. GST-INCLUSIVE -- GST sits within,
+  /// never on top. 0 for a goodwill callback.
+  amount               Int
+  labourAmount         Int
+  materialsAmount      Int
+  /// the GST component within amount (amount/11 at 10%); 0 while unregistered
+  gstAmount            Int?
+  /// SNAPSHOT of the GST switch at issue -- rendering reads THIS, never the live
+  /// switch. Distinct from isZeroDollar.
+  gstApplied           Boolean
+  isZeroDollar         Boolean       @default(false)
+  /// deliberately NO overdue status -- overdue is derived from dueAt
+  status               InvoiceStatus @default(sent)
+  /// issue + PlatformSettings.paymentTermsDays
+  dueAt                DateTime
+  stripePaymentLinkUrl String?
+  stripePaymentLinkId  String?
+  /// why it was voided (dispute, error, goodwill)
+  voidReason           String?
+  /// AUDIT pair: who voided it, and when
+  voidedByUserId       String?
+  voidedAt             DateTime?
+  createdAt            DateTime      @default(now())
+  sentAt               DateTime?
+  paidAt               DateTime?
+
+  job        Job        @relation(fields: [jobId], references: [id])
+  assignment Assignment @relation("InvoiceAssignment", fields: [assignmentId], references: [id])
+  customer   Customer   @relation(fields: [customerId], references: [id])
+  voidedBy   User?      @relation("InvoiceVoidedBy", fields: [voidedByUserId], references: [id])
+
+  lines           InvoiceLine[]
+  payments        Payment[]
+  refunds         Refund[]
+  /// back-relation of Assignment.invoiceId (see the note on Assignment.invoice)
+  assignmentsHeld Assignment[]  @relation("AssignmentInvoice")
+
+  @@index([jobId])
+  @@index([customerId])
+  @@index([status])
+}
+
+/// FROZEN at issue -- what the customer SAW. Corrections are void + reissue,
+/// never an edit. Lines are the source; the invoice's amount fields summarize them.
+model InvoiceLine {
+  id          String          @id @default(uuid(7))
+  invoiceId   String
+  kind        InvoiceLineKind
+  description String
+  /// hours for labour, count for parts
+  qty         Decimal         @db.Decimal(10, 2)
+  unitPrice   Int
+  /// qty x unitPrice
+  lineTotal   Int
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+model Payment {
+  id                    String        @id @default(uuid(7))
+  invoiceId             String
+  customerId            String
+  stripePaymentIntentId String
+  amount                Int
+  status                PaymentStatus @default(pending)
+  paidAt                DateTime?
+  createdAt             DateTime      @default(now())
+
+  invoice  Invoice  @relation(fields: [invoiceId], references: [id])
+  customer Customer @relation(fields: [customerId], references: [id])
+  refunds  Refund[]
+
+  @@index([invoiceId])
+  @@index([customerId])
+}
+
+model Refund {
+  id               String       @id @default(uuid(7))
+  /// human-readable CN-xxxx (credit note / ATO adjustment note number)
+  reference        String       @unique
+  /// a credit note is always raised against an invoice
+  invoiceId        String
+  /// explicit (mirrors Payment.customerId) so "refunds per customer" needs no join
+  customerId       String
+  jobId            String
+  paymentId        String?
+  amount           Int
+  reason           String
+  /// AUDIT pair: which ops admin approved it, and when
+  approvedByUserId String
+  approvedAt       DateTime
+  stripeRefundId   String
+  status           RefundStatus @default(pending)
+  createdAt        DateTime     @default(now())
+
+  invoice    Invoice  @relation(fields: [invoiceId], references: [id])
+  customer   Customer @relation(fields: [customerId], references: [id])
+  job        Job      @relation(fields: [jobId], references: [id])
+  payment    Payment? @relation(fields: [paymentId], references: [id])
+  approvedBy User     @relation("RefundApprovedBy", fields: [approvedByUserId], references: [id])
+
+  @@index([invoiceId])
+  @@index([customerId])
+}
+
+model ContractorSettlement {
+  id                      String           @id @default(uuid(7))
+  /// human-readable CINV-xxxx -- the number on the contractor's invoice
+  reference               String           @unique
+  contractorId            String
+  periodStart             DateTime         @db.Date
+  periodEnd               DateTime         @db.Date
+  /// a JSON array of { trade, count, amount } -- labour + any no-show comp per
+  /// trade, never materials
+  breakdownByTrade        Json
+  /// sum of Assignment.materialsReimbursement in the period
+  materialsAmount         Int
+  /// sum(breakdownByTrade.amount) + materialsAmount
+  totalAmount             Int
+  /// GST ON TOP when the contractor is registered
+  gstAmount               Int?
+  /// snapshot of Contractor.gstRegistered at approval
+  contractorGstRegistered Boolean?
+  /// superseded rows are kept forever (audit)
+  status                  SettlementStatus @default(draft)
+  /// when the contractor tapped Approve (capability link)
+  approvedAt              DateTime?
+  /// AUDIT pair: which ops/owner user executed the payout, and when
+  paidAt                  DateTime?
+  paidByUserId            String?
+  /// manual bank transfer ref
+  paymentReference        String?
+  createdAt               DateTime         @default(now())
+
+  contractor  Contractor   @relation(fields: [contractorId], references: [id])
+  paidBy      User?        @relation("SettlementPaidBy", fields: [paidByUserId], references: [id])
+  /// member assignments link back via Assignment.settlementId
+  assignments Assignment[]
+
+  @@index([contractorId])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Communications
+// ---------------------------------------------------------------------------
+
+/// Delivery log -- one row per message sent.
+model Notification {
+  id                String                    @id @default(uuid(7))
+  recipientType     NotificationRecipientType
+  recipientId       String
+  channel           NotificationChannel
+  /// dispatched, slot_confirmed, invoice, payout_sent, marketing ... (see catalog)
+  type              String
+  category          NotificationCategory
+  relatedType       NotificationRelatedType?
+  relatedId         String?
+  /// roll-up, so the job page lists all its messages
+  jobId             String?
+  /// which provider actually sent it (mailersend/clicksend/...)
+  provider          String?
+  status            NotificationStatus        @default(queued)
+  providerMessageId String?
+  /// stops a retry / double-trigger sending twice
+  idempotencyKey    String                    @unique
+  attempts          Int                       @default(0)
+  error             String?
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  createdAt         DateTime                  @default(now())
+
+  job Job? @relation(fields: [jobId], references: [id])
+
+  @@index([jobId])
+  @@index([status])
+}
+
+/// Block-list, SCOPED BY REASON -- what blocks what is a design rule, not a
+/// schema one.
+model Suppression {
+  id      String              @id @default(uuid(7))
+  channel NotificationChannel
+  /// email address or phone number
+  address String
+  reason  SuppressionReason
+  at      DateTime            @default(now())
+
+  @@unique([channel, address])
+}
+
+// ---------------------------------------------------------------------------
+// Growth
+// ---------------------------------------------------------------------------
+
+/// The public SEO unit: one row = one live landing page at
+/// /services/[trade]/[suburb]. OWNER-ONLY write.
+model ServiceAreaPage {
+  id             String  @id @default(uuid(7))
+  serviceTypeId  String
+  suburbId       String
+  /// the owner flips this ON when the suburb is genuinely served; OFF = 404
+  published      Boolean @default(false)
+  /// overrides; empty falls back to the formula
+  seoTitle       String?
+  seoDescription String?
+  introText      String?
+
+  serviceType ServiceType @relation(fields: [serviceTypeId], references: [id])
+  suburb      Suburb      @relation(fields: [suburbId], references: [id])
+
+  @@unique([serviceTypeId, suburbId])
+}

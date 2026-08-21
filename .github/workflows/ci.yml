@@ -21,6 +21,16 @@ jobs:
       # ci, not install: installs exactly what package-lock.json says, nothing newer.
       - run: npm ci
 
+      # src/generated is gitignored -- Prisma's client is build output, not source,
+      # and committing 2.9 MB of generated TypeScript would put it in every diff.
+      # So a fresh checkout has no client, and lint, typecheck and build all fail
+      # on "Cannot find module '../generated/prisma/client.js'" without this step.
+      # Prisma 7 has no install-time generate hook, so it is spelled out here.
+      # It needs no database: generate reads prisma/schema.prisma and nothing else.
+      # Review finding R1.1.
+      - name: Generate Prisma client
+        run: npm run db:generate
+
       - name: Lint
         run: npm run lint
 
@@ -30,5 +40,13 @@ jobs:
       - name: Build
         run: npm run build
 
-      # No test step yet - tests arrive with the first feature that needs them,
-      # so a green tick never claims more than it checked.
+      # STILL no test step, and as of feature 1001 that is a gap rather than a
+      # plan: 44 Vitest tests now exist and none of them run here, so a green
+      # tick on this job means "it compiles", not "it works". Wiring them in needs
+      # a Postgres + PostGIS service container, and PostGIS has to be installed by
+      # a superuser before `migrate deploy` runs (the app role cannot -- see the
+      # comment at the top of the init migration). It also touches the job name
+      # that setup/02's branch ruleset requires, so it is CI/CD runbook work.
+      # SETUP IS NOT A FEATURE (features.md's own law), so this does NOT become a
+      # board row: it is written up in 1001's change.md under Discoveries and
+      # belongs to setup/02-repos-and-cicd.md. Not fixed here.
