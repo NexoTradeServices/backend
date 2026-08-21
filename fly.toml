@@ -19,7 +19,7 @@ primary_region = "syd"
   # 2-6 second wait on that first hit. Fine while nothing but us is calling the
   # API; set min_machines_running back to 1 before a customer ever sees the
   # enquiry form, because a cold start there is a spinner on a stranger's screen.
-  auto_stop_machines = false
+  auto_stop_machines = true
   auto_start_machines = true
   min_machines_running = 0
 
