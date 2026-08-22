@@ -14,7 +14,7 @@ primary_region = "syd"
 
   [deploy.release_command_vm]
     size = "performance-1x"
-    memory = "1gb"
+    memory = "2gb"
 
 [build]
 
