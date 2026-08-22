@@ -12,6 +12,10 @@ primary_region = "syd"
 [deploy]
   release_command = "npx prisma migrate deploy"
 
+  [deploy.release_command_vm]
+    size = "performance-1x"
+    memory = "512mb"
+
 [build]
 
 [http_service]
