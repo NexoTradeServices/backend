@@ -35,16 +35,24 @@ FROM node:22-slim AS run
 WORKDIR /app
 ENV NODE_ENV=production
 
+# openssl is needed by the Prisma migrate engine (a Rust binary) to reach Neon
+# over TLS when fly.toml's release_command runs `prisma migrate deploy` here.
+RUN apt-get update && apt-get install -y --no-install-recommends openssl \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
-# dist alone is enough at runtime. The generated client is plain TypeScript with
-# no engine binary or wasm beside it, so tsc compiles it into dist/generated and
-# it travels with the rest of the build. Nothing in the run stage shells out to
-# the Prisma CLI either: fly.toml has no release_command, so migrations are run
-# by hand from a machine that has DIRECT_URL. That is why prisma/ is not copied
-# here.
+# dist alone covers the app itself. The generated client is plain TypeScript
+# with no engine binary or wasm beside it, so tsc compiles it into
+# dist/generated and it travels with the rest of the build.
 COPY --from=build /app/dist ./dist
+
+# prisma/ and prisma.config.ts are needed only for the release_command
+# (`prisma migrate deploy`, run by Fly before the new release takes traffic),
+# not by the app itself at boot.
+COPY prisma ./prisma
+COPY prisma.config.ts ./
 
 # Matches internal_port in fly.toml and the PORT the app reads.
 EXPOSE 8080

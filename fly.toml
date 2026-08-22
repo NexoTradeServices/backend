@@ -9,6 +9,9 @@
 app = "tradeservices"
 primary_region = "syd"
 
+[deploy]
+  release_command = "npx prisma migrate deploy"
+
 [build]
 
 [http_service]
