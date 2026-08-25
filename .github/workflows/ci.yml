@@ -10,6 +10,23 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+
+    # Postgres 18 + PostGIS 3.6, matching setup/01-dev-environment.md. Exposed
+    # on the runner's own localhost:5432, not a container job, so steps below
+    # reach it as an ordinary local Postgres.
+    services:
+      postgres:
+        image: postgis/postgis:18-3.6
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
@@ -40,13 +57,30 @@ jobs:
       - name: Build
         run: npm run build
 
-      # STILL no test step, and as of feature 1001 that is a gap rather than a
-      # plan: 44 Vitest tests now exist and none of them run here, so a green
-      # tick on this job means "it compiles", not "it works". Wiring them in needs
-      # a Postgres + PostGIS service container, and PostGIS has to be installed by
-      # a superuser before `migrate deploy` runs (the app role cannot -- see the
-      # comment at the top of the init migration). It also touches the job name
-      # that setup/02's branch ruleset requires, so it is CI/CD runbook work.
-      # SETUP IS NOT A FEATURE (features.md's own law), so this does NOT become a
-      # board row: it is written up in 1001's change.md under Discoveries and
-      # belongs to setup/02-repos-and-cicd.md. Not fixed here.
+      # Mirrors setup/01-dev-environment.md's local recipe (createdb -O
+      # tradeservice, then CREATE EXTENSION as postgres). The connecting role
+      # for migrations and tests must NOT be the superuser: it must not own
+      # PostGIS's own tables, because tests/helpers/database.ts drops every
+      # table the connecting role owns between test files, and dropping
+      # spatial_ref_sys out from under the postgis extension fails hard.
+      # ubuntu-latest ships psql and createdb already; nothing to install.
+      - name: Create test role, database and PostGIS extension
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -c "CREATE ROLE tradeservice LOGIN PASSWORD 'tradeservice';"
+          createdb -h localhost -U postgres -O tradeservice tradeservice_test
+          psql -h localhost -U postgres -d tradeservice_test -c "CREATE EXTENSION IF NOT EXISTS postgis;"
+
+      # Same command tests/global-setup.ts runs locally before every run. Kept
+      # as its own step so a broken migration fails here, clearly labelled,
+      # rather than surfacing as a vitest global-setup crash.
+      - name: Run database migrations
+        env:
+          DATABASE_URL: postgresql://tradeservice:tradeservice@localhost:5432/tradeservice_test
+        run: npx prisma migrate deploy
+
+      - name: Test
+        env:
+          TEST_DATABASE_URL: postgresql://tradeservice:tradeservice@localhost:5432/tradeservice_test
+        run: npm test
