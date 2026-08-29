@@ -13,6 +13,7 @@
     "db:migrate": "prisma migrate deploy",
     "db:seed": "tsx src/db/seed/base.ts",
     "db:seed:fixtures": "tsx src/db/seed/fixtures.ts",
+    "db:seed:suburbs": "tsx src/db/seed/suburbs.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

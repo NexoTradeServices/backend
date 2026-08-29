@@ -1,4 +1,4 @@
-// Fixture seed -- feature 1001 (project/delivery/1001-schema-and-seed/plan.md).
+// Fixture seed -- Feature 1001, schema and seed.
 //
 // THE CAST, and nothing else. project/design/cast.md is the source: same names,
 // same codes, same rates, same suburbs, so a failing test reads like the design

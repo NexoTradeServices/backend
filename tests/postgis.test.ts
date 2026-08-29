@@ -1,4 +1,4 @@
-// Feature 1001 -- project/delivery/1001-schema-and-seed/plan.md
+// Feature 1001, schema and seed
 //
 // AC9  PostGIS answers a distance query
 //

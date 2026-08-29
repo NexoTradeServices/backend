@@ -1,5 +1,4 @@
-// The reference / code generator -- feature 1001
-// (project/delivery/1001-schema-and-seed/plan.md).
+// The reference / code generator -- Feature 1001, schema and seed.
 //
 // One Postgres sequence per prefix (created in the first migration, configured in
 // src/config/references.ts). Postgres does the hard part: nextval() never hands
