@@ -1,4 +1,4 @@
-// Feature 1001 -- project/delivery/1001-schema-and-seed/plan.md
+// Feature 1001, schema and seed
 //
 // AC2   every Data Model record is a table, plus the Better Auth base
 // AC7   the unique constraints hold at the database
@@ -128,7 +128,7 @@ describe("AC7 -- the unique constraints hold", () => {
     for (const expected of [
       "ContractorSpecialty(contractorId,trade)",
       "ContractorServedPostcode(contractorId,postcode)",
-      "Suburb(name,postcode)",
+      "Suburb(name,postcode,state)",
       "ServiceAreaPage(serviceTypeId,suburbId)",
       "Notification(idempotencyKey)",
     ]) {
@@ -161,7 +161,7 @@ describe("AC7 -- the unique constraints hold", () => {
     });
   });
 
-  test("AC7: a second (name, postcode) Suburb is rejected", async () => {
+  test("AC7: a second (name, postcode, state) Suburb is rejected", async () => {
     await db.suburb.create({
       data: { name: "Hilton", slug: "hilton-6163", postcode: "6163", state: "WA", centroidLat: -32.0731, centroidLng: 115.7797 },
     });

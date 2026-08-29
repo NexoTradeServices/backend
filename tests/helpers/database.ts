@@ -1,5 +1,4 @@
-// Test-database helpers -- feature 1001
-// (project/delivery/1001-schema-and-seed/plan.md).
+// Test-database helpers -- Feature 1001, schema and seed.
 //
 // Tests run against tradeservice_test, the database setup/01-dev-environment.md
 // created for exactly this and nothing else. It is wiped at the start of every

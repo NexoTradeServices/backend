@@ -1,5 +1,4 @@
-// The Prisma client -- feature 1001
-// (project/delivery/1001-schema-and-seed/plan.md).
+// The Prisma client -- Feature 1001, schema and seed.
 //
 // Prisma 7 talks to Postgres through a driver adapter, so the connection string
 // is supplied here rather than in schema.prisma.

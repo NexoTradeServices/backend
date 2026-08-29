@@ -1,4 +1,4 @@
-// Feature 1001 -- project/delivery/1001-schema-and-seed/plan.md
+// Feature 1001, schema and seed
 //
 // AC1  migrate + base seed on an empty Postgres, and again with no change
 // AC3  the PlatformSettings singleton

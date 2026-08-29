@@ -1,5 +1,4 @@
-// Human-readable references and codes -- feature 1001
-// (project/delivery/1001-schema-and-seed/plan.md).
+// Human-readable references and codes -- Feature 1001, schema and seed.
 //
 // The design's Data Model: records a person quotes, or that leave the system as a
 // document, carry a short unique SEQUENTIAL identifier beside the internal id.

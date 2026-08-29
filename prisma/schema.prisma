@@ -1,4 +1,4 @@
-// Prisma schema -- feature 1001 (project/delivery/1001-schema-and-seed/plan.md).
+// Prisma schema -- Feature 1001, schema and seed.
 //
 // This file is the Data Model section of project/design/trades-platform-design.md
 // turned into tables. The design doc outranks this file: if the two disagree, the
@@ -693,7 +693,9 @@ model Attachment {
 }
 
 /// Reference data, SEEDED not user-created (feature 1002 brings the rows); one
-/// row per SUBURB+POSTCODE pair.
+/// row per SUBURB+POSTCODE+STATE triple. Border towns are listed once per state
+/// and both rows are real places (TEXAS 4385 is both QLD and NSW), so name and
+/// postcode alone do NOT identify a suburb -- never key a lookup on the pair.
 model Suburb {
   id          String @id @default(uuid(7))
   name        String
@@ -711,7 +713,7 @@ model Suburb {
 
   serviceAreaPages ServiceAreaPage[]
 
-  @@unique([name, postcode])
+  @@unique([name, postcode, state])
   @@index([postcode])
 }
 

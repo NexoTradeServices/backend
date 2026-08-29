@@ -1,5 +1,4 @@
-// Prisma 7 configuration -- feature 1001
-// (project/delivery/1001-schema-and-seed/plan.md).
+// Prisma 7 configuration -- Feature 1001, schema and seed.
 //
 // Prisma 7 moved the datasource URL out of schema.prisma and into this file.
 // It is read by the CLI only -- migrate, generate, studio, db execute. The

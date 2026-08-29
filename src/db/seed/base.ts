@@ -1,4 +1,4 @@
-// Base seed -- feature 1001 (project/delivery/1001-schema-and-seed/plan.md).
+// Base seed -- Feature 1001, schema and seed.
 //
 // The rows the platform cannot run without: the single PlatformSettings row and
 // the ServiceType catalog. Safe on every environment, including production.

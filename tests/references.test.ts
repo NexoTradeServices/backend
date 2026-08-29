@@ -1,4 +1,4 @@
-// Feature 1001 -- project/delivery/1001-schema-and-seed/plan.md
+// Feature 1001, schema and seed
 //
 // AC6  the reference generator issues sequential unique values per prefix
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
