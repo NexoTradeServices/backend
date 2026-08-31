@@ -310,6 +310,10 @@ model PlatformSettings {
   /// swappable inside the Notification module (ADR 0002)
   emailProvider             String
   smsProvider               String
+  /// per-NOTIFICATION-TYPE exceptions to the two above -- { "password_reset": "brevo" }.
+  /// Empty = every type on the default. The lever that makes a provider cutover one
+  /// type at a time instead of all at once -- see Notification module (architecture).
+  providerOverrides         Json?
   updatedAt                 DateTime    @updatedAt
 
   gstStatusChangedBy User? @relation("GstStatusChangedBy", fields: [gstStatusChangedByUserId], references: [id])
@@ -913,10 +917,13 @@ model Notification {
   relatedId         String?
   /// roll-up, so the job page lists all its messages
   jobId             String?
-  /// which provider actually sent it (mailersend/clicksend/...)
+  /// which provider actually sent it (mailjet/clicksend/...)
   provider          String?
   status            NotificationStatus        @default(queued)
   providerMessageId String?
+  /// the template variables, kept from the ask until the dispatcher renders --
+  /// sending is async, so the caller's context has to outlive the request
+  context           Json?
   /// stops a retry / double-trigger sending twice
   idempotencyKey    String                    @unique
   attempts          Int                       @default(0)
