@@ -41,4 +41,10 @@ primary_region = "syd"
 
 [[vm]]
   size = "shared-cpu-1x"
-  memory = "256mb"
+  # Bumped from 256mb (feature 1003): Better Auth's own dependency tree
+  # (kysely, jose, zod, defu ...) is constructed at boot in buildAuth(),
+  # before the server starts listening, and that pushed a machine that was
+  # already right at the 256mb edge into a boot-time OOM kill (Fly logs:
+  # "Out of memory: Killed process ... anon-rss:155648kB", repeating on
+  # every restart). See project/delivery/completed/1003-auth-and-roles/change.md.
+  memory = "512mb"
