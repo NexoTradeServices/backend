@@ -14,6 +14,7 @@
     "db:seed": "tsx src/db/seed/base.ts",
     "db:seed:fixtures": "tsx src/db/seed/fixtures.ts",
     "db:seed:suburbs": "tsx src/db/seed/suburbs.ts",
+    "auth:create-user": "tsx src/scripts/create-user.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -29,6 +30,7 @@
   "dependencies": {
     "@prisma/adapter-pg": "7.9.1",
     "@prisma/client": "7.9.1",
+    "better-auth": "1.6.30",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",

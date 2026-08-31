@@ -244,6 +244,42 @@ public endpoint sees noise as often as bugs. Turning a hard bounce into a
 `Suppression` row and an ops alert is feature 7001; this build sets the status
 and stops there.
 
+## Auth
+
+Better Auth (feature 1003), pointed at 1001's `User`/`Session`/`Account`/
+`Verification` tables through its Prisma adapter -- zero migration, per the
+plan. **Pinned to `better-auth@1.6.30`, not the `^1.7` range**: 1.7.0 added a
+required `Account.issuer` column that 1001's schema does not carry. Upgrading
+is a future migration, not something to do casually.
+
+`/api/auth/*` is Better Auth's own framework handler (session, sign-in/out,
+password reset -- one auth brain, server-side); `GET /api/me` and
+`GET /api/reset-link` are the two small read-only helpers this feature adds
+beside it (`src/auth/routes.ts`). RBAC lives in `src/auth/middleware.ts`:
+`requireRole("ops")` admits the owner too; a contractor's session is dropped
+the moment `Contractor.status` flips to `suspended`, checked live on every
+request.
+
+Env vars (see `.env.example`): `BETTER_AUTH_SECRET`, `COOKIE_DOMAIN`,
+`API_BASE_URL`. All three are required -- no default, same pattern as
+`WEB_ORIGIN`.
+
+**The dev password.** Every login the fixture seed creates -- Mike, the
+owner, Bob, Dave, Priya -- shares one password: `dev-password-123`
+(`src/db/seed/auth.ts`, `DEV_PASSWORD`). Dev and test only; the fixture seed
+refuses `NODE_ENV=production` (feature 1001).
+
+**Real accounts** (prod, or any environment with a `DATABASE_URL`): no
+self-signup anywhere on this platform, so a real login is minted by hand:
+
+```bash
+DATABASE_URL='<connection string>' npm run auth:create-user
+```
+
+Prompts for email, name, role and a password (min 8 characters), and writes
+the same `User` + `Account` shape the seed does -- the account can log in
+immediately, no separate step.
+
 ## Checks
 
 ```bash
@@ -263,7 +299,12 @@ src/db/client.ts            the Prisma client (built on first use)
 src/db/reference.ts         nextReference() and friends
 src/db/seed/base.ts         PlatformSettings + ServiceTypes
 src/db/seed/fixtures.ts     the cast
+src/db/seed/auth.ts         dev-password logins for the cast
 src/db/seed/suburbs.ts      the suburb reference table
+src/auth/config.ts          the Better Auth instance
+src/auth/middleware.ts      session load + RBAC (requireAuth, requireRole)
+src/auth/routes.ts          GET /api/me, GET /api/reset-link
+src/scripts/create-user.ts  auth:create-user -- mints one real login
 src/notifications/          the notification module -- index.ts is its only public face
 src/notifications/channels/    one component per channel: email, sms
 src/notifications/templates/   templates as code, one per type + channel
