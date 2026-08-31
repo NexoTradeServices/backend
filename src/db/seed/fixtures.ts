@@ -14,6 +14,7 @@
 import "dotenv/config";
 import { reserveUpTo } from "../reference.js";
 import { disconnectPrisma, getPrisma, type PrismaClient } from "../client.js";
+import { seedAuthFixtures } from "./auth.js";
 
 /**
  * Money is whole cents. cast.md writes dollars: Bob's call-out $200 is 20000
@@ -217,6 +218,12 @@ async function main(): Promise<void> {
   console.log(
     `fixture seed: contractors created: ${result.contractorsCreated.length ? result.contractorsCreated.join(", ") : "none (already present)"}; ` +
       `customers created: ${result.customersCreated.length ? result.customersCreated.join(", ") : "none (already present)"}`,
+  );
+  // Feature 1003 -- every seeded login gets the same dev password.
+  const authResult = await seedAuthFixtures();
+  console.log(
+    `fixture seed: platform users created: ${authResult.usersCreated.length ? authResult.usersCreated.join(", ") : "none (already present)"}; ` +
+      `passwords set: ${authResult.passwordsSet.length ? authResult.passwordsSet.join(", ") : "none (already present)"}`,
   );
   await disconnectPrisma();
 }

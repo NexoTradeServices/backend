@@ -2,7 +2,12 @@ import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
 import pg from 'pg'
+import { toNodeHandler } from 'better-auth/node'
 import { notificationWebhooks, startNotifications } from './notifications/index.js'
+import { buildAuth } from './auth/config.js'
+import { attachSession } from './auth/middleware.js'
+import { authRoutes } from './auth/routes.js'
+import { getPrisma } from './db/client.js'
 
 const app = express()
 
@@ -25,9 +30,22 @@ if (!databaseUrl) {
 }
 
 const pool = new pg.Pool({ connectionString: databaseUrl })
+const prisma = getPrisma()
 
 // Credentials on: the session cookie (feature 1003) rides this same path.
 app.use(cors({ origin: webOrigin, credentials: true }))
+
+// One auth brain, server-side (feature 1003, decision 1). Mounted before any
+// body-parsing middleware -- Better Auth reads the raw request body itself,
+// and a parser upstream would consume the stream first (there is none in
+// this app yet, but the order matters the moment one is added).
+const auth = buildAuth({ client: prisma })
+app.all('/api/auth/*splat', toNodeHandler(auth))
+
+// Loads the session (and re-checks a contractor's live status) on every
+// request; RBAC-guarded routes read `req.authUser` after this runs.
+app.use(attachSession(auth, prisma))
+app.use('/api', authRoutes(prisma))
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', service: 'tradeservice-backend' })
