@@ -2,6 +2,7 @@ import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
 import pg from 'pg'
+import { notificationWebhooks, startNotifications } from './notifications/index.js'
 
 const app = express()
 
@@ -47,7 +48,22 @@ app.get('/health/db', (_req, res) => {
     })
 })
 
-// 0.0.0.0, not localhost: Caddy on 192.168.1.41 has to reach this from another machine.
-app.listen(port, '0.0.0.0', () => {
-  console.log(`backend listening on 0.0.0.0:${port}`)
-})
+// Provider delivery events (feature 1004). The module owns the route bodies;
+// this file only says where they live: /webhooks/mailjet, /webhooks/clicksend.
+app.use('/webhooks', notificationWebhooks())
+
+// The notification queue drains inside this process (feature 1004). It is
+// started BEFORE listen on purpose: in production a provider named by the
+// settings row with no credentials behind it refuses the boot here, rather than
+// letting the API come up and fail one invoice email at a time.
+startNotifications()
+  .then(() => {
+    // 0.0.0.0, not localhost: Caddy on 192.168.1.41 has to reach this from another machine.
+    app.listen(port, '0.0.0.0', () => {
+      console.log(`backend listening on 0.0.0.0:${port}`)
+    })
+  })
+  .catch((error: unknown) => {
+    console.error('the API could not start', error)
+    process.exit(1)
+  })

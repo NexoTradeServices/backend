@@ -40,7 +40,7 @@ export async function seedBase(client: PrismaClient = getPrisma()): Promise<Seed
         serviceReachKm: 25, // PLACEHOLDER
         calloutFee: 15_000, // PLACEHOLDER -- customer no-show fee, passed to the contractor
         operatorPhone: "08 0000 0000", // PLACEHOLDER
-        emailProvider: "mailersend", // ADR 0000
+        emailProvider: "mailjet", // ADR 0000 (moved from MailerSend 30/08/26)
         smsProvider: "clicksend", // ADR 0000
       },
     });

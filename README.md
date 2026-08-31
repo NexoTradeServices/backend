@@ -159,6 +159,91 @@ they cannot run beside each other.
 Test names start with the acceptance criterion they prove (`AC1:`, `AC2:` ...)
 and each file's first line names the plan it answers to.
 
+## Notifications
+
+Every message the platform sends -- email or SMS, customer, contractor or ops --
+goes through one module at `src/notifications/`, and `src/notifications/index.ts`
+is its only public face. A feature that needs to reach someone imports from
+there and from nowhere deeper:
+
+```ts
+import { sendNotification } from '../notifications/index.js'
+
+await sendNotification({
+  type: 'password_reset',
+  channel: 'email',
+  recipientType: 'customer',
+  recipientId: sarah.id,
+  idempotencyKey: `password_reset:customer:${sarah.id}:${issuedAt}`,
+  context: { name: sarah.name, resetUrl },
+})
+```
+
+That call writes a `Notification` row at `queued` and returns. Nothing else is a
+feature's business -- rendering, provider choice, retries, suppression and the
+delivery log all happen behind that line. No feature anywhere else contains
+email or SMS logic (ADR 0002).
+
+**Templates are code.** One file per type + channel in
+`src/notifications/templates/`, listed in that directory's `registry.ts`. This
+build ships one -- the password reset; every other message's wording arrives
+with the feature that sends it.
+
+**The idempotency key is the caller's, and its shape is fixed:**
+`<type>:<relatedType>:<relatedId>`, plus a discriminator where one record can
+legitimately send the same message twice (the "on my way" tap keys per calendar
+block). The unique constraint on the column is the guard, so the key has to be
+derivable without reading the table first. Ask twice with the same key and the
+second call gets the row that already exists.
+
+**The queue is the `Notification` table.** A loop inside this process claims
+rows with `SELECT ... FOR UPDATE SKIP LOCKED` and sends them, so two machines
+can never send one row twice. Three attempts, then the row is `failed` with the
+provider's error on it.
+
+**Do not size a sweep off the retry spacing.** While the queue is kept up with,
+the attempts fall 1 then 5 minutes apart. They do NOT once it is not: the backoff
+is measured from `createdAt`, so a row that waited out an outage is already past
+every step when it is picked up, and its attempts land as fast as passes come
+round. A single pass can only ever spend one attempt on a row, so the floor is
+the poll interval, not zero. Closing the gap properly needs a retry clock on
+`Notification` -- parked as Q2 on feature 1004 for the architect.
+
+### Dev without any provider accounts
+
+Which provider sends what is DATA -- `PlatformSettings.emailProvider`,
+`.smsProvider`, and `.providerOverrides` for per-type exceptions. The
+credentials are environment variables (see `.env.example`).
+
+Leave those variables empty and the module uses the console adapter: it renders
+the message, logs it, and marks the row `sent`. The whole flow is provable on a
+laptop with no Mailjet account and no ClickSend account. **In production the
+same missing credential refuses the boot**, the way `WEB_ORIGIN` and
+`DATABASE_URL` already do -- a real invoice email must never be quietly written
+to a log nobody reads.
+
+### Changing provider
+
+Edit the settings row; there is no deploy in it.
+
+- `emailProvider` / `smsProvider` -- the default for every message.
+- `providerOverrides` -- the exceptions, BY NOTIFICATION TYPE:
+  `{ "password_reset": "brevo" }`. The registry checks it first and falls back
+  to the default. That is how a cutover happens here: one message type at a
+  time, watched in the delivery log, rolled back by deleting one line.
+
+The provider named implies the channel it serves, so an email provider
+overrides only a type's email leg.
+
+### Delivery webhooks
+
+`POST /webhooks/mailjet` and `POST /webhooks/clicksend` normalise provider
+delivery events into `Notification.status`. An event for a message id we do not
+hold is ignored with a 200 -- providers retry anything that is not a 2xx, and a
+public endpoint sees noise as often as bugs. Turning a hard bounce into a
+`Suppression` row and an ops alert is feature 7001; this build sets the status
+and stops there.
+
 ## Checks
 
 ```bash
@@ -179,6 +264,10 @@ src/db/reference.ts         nextReference() and friends
 src/db/seed/base.ts         PlatformSettings + ServiceTypes
 src/db/seed/fixtures.ts     the cast
 src/db/seed/suburbs.ts      the suburb reference table
+src/notifications/          the notification module -- index.ts is its only public face
+src/notifications/channels/    one component per channel: email, sms
+src/notifications/templates/   templates as code, one per type + channel
+src/notifications/providers/   the registry and its adapters: mailjet, clicksend, console
 data/                       the licensed Australia Post postcode file
 src/generated/              Prisma's output -- gitignored, never hand-edited
 tests/                      Vitest suites, named by acceptance criterion
