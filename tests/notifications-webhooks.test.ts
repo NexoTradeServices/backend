@@ -77,7 +77,7 @@ describe("AC10 -- Mailjet delivery events", () => {
           event: "delivered",
           MessageID: 70650219165027410,
           Message_GUID: "cb927469-36fd-4c02-bce4-0d199929a207",
-          email: "sarah.chen@example.com",
+          email: "sarah@idelta.com.au",
         },
       ]);
 
