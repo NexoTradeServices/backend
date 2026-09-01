@@ -31,6 +31,12 @@ export const smsChannel: ChannelComponent = {
       return { address: contractor.phone };
     }
 
+    // A User carries no phone (Feature 1011, decision 2): a visible failure
+    // per guiding principle 8, never a crash, never silence.
+    if (recipientType === "user") {
+      return { reason: `user ${recipientId} has no phone -- a User carries no phone number` };
+    }
+
     // Ops has one number, and the design names it: PlatformSettings.operatorPhone
     // is THE single contact number.
     return { address: context.settings.operatorPhone };

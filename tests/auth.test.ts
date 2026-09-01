@@ -173,7 +173,10 @@ describe("AC4 -- ops admits the owner; owner is exact", () => {
 });
 
 describe("AC5 -- password reset asks the notification module", () => {
-  test("AC5: one Notification row appears, addressed to Bob, carrying name and resetUrl", async () => {
+  // Re-pointed to recipientType "user" by Feature 1011 (account mail vs
+  // business mail): password reset is account mail, addressed to the
+  // User's own login email, whatever the role -- see that feature's AC2.
+  test("AC5: one Notification row appears, addressed to Bob's user account, carrying name and resetUrl", async () => {
     const cast = await seedCast();
 
     const res = await request(app)
@@ -185,10 +188,8 @@ describe("AC5 -- password reset asks the notification module", () => {
     expect(notifications).toHaveLength(1);
     const notification = notifications[0];
     expect(notification.channel).toBe("email");
-    expect(notification.recipientType).toBe("contractor");
-
-    const bob = await db.contractor.findUniqueOrThrow({ where: { userId: cast.bobUserId } });
-    expect(notification.recipientId).toBe(bob.id);
+    expect(notification.recipientType).toBe("user");
+    expect(notification.recipientId).toBe(cast.bobUserId);
 
     const context = notification.context as { name?: string; resetUrl?: string };
     expect(context.name).toBe("Bob Reilly");
