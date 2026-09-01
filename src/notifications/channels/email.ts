@@ -28,6 +28,18 @@ export const emailChannel: ChannelComponent = {
       return { address: contractor.email };
     }
 
+    // Account mail vs business mail (Feature 1011): the account holder's own
+    // login email, whatever their role -- password reset today, anything
+    // account-shaped later. Never the shared operatorEmail inbox.
+    if (recipientType === "user") {
+      const user = await context.client.user.findUnique({
+        where: { id: recipientId },
+        select: { email: true },
+      });
+      if (user === null) return { reason: `no user ${recipientId}` };
+      return { address: user.email };
+    }
+
     // Ops SMS has a home in the design -- PlatformSettings.operatorPhone, THE
     // single contact number. Ops EMAIL has none: no field on PlatformSettings
     // names the inbox that ops messages go to, and inventing one is a design

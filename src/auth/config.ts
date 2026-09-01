@@ -12,8 +12,6 @@ import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import type { PrismaClient } from "../db/client.js";
 import { sendNotification } from "../notifications/index.js";
-import type { NotificationRecipientType } from "../notifications/types.js";
-import { Role } from "../generated/prisma/enums.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -21,31 +19,6 @@ function requireEnv(name: string): string {
     throw new Error(`${name} is not set -- see .env.example`);
   }
   return value;
-}
-
-/**
- * Which recipient table can this user's password-reset email address be read
- * from. Customers and contractors have one; ops and the owner do not yet --
- * feature 1004's Q1 answered that gap with `PlatformSettings.operatorEmail`,
- * but building it is folded into feature 3001/B-004, not this feature. An
- * ops/owner reset still writes a queued `Notification` row (decision 3 is
- * honoured); the module itself refuses to address it until that lands, and
- * says exactly why on the row rather than silently dropping it.
- */
-async function resolveRecipient(
-  client: PrismaClient,
-  userId: string,
-  role: Role,
-): Promise<{ recipientType: NotificationRecipientType; recipientId: string }> {
-  if (role === Role.customer) {
-    const customer = await client.customer.findUnique({ where: { userId } });
-    if (customer) return { recipientType: "customer", recipientId: customer.id };
-  }
-  if (role === Role.contractor) {
-    const contractor = await client.contractor.findUnique({ where: { userId } });
-    if (contractor) return { recipientType: "contractor", recipientId: contractor.id };
-  }
-  return { recipientType: "ops", recipientId: userId };
 }
 
 export interface BuildAuthOptions {
@@ -88,17 +61,16 @@ export function buildAuth({ client }: BuildAuthOptions) {
       // The revocation teeth for a password reset (plan scope; AC6).
       revokeSessionsOnPasswordReset: true,
       // Decision 3: the notification module, and nothing else, sends this.
+      // Account mail vs business mail (Feature 1011): password reset is
+      // account mail, addressed to the User's own login email, whatever
+      // their role -- one route, no role-branching.
       sendResetPassword: async ({ user, url }) => {
-        // additionalFields ("role") are not carried in this hook's generic
-        // user type, though the column is on every row -- see config below.
-        const role = (user as unknown as { role: Role }).role;
-        const recipient = await resolveRecipient(client, user.id, role);
         await sendNotification(
           {
             type: "password_reset",
             channel: "email",
-            recipientType: recipient.recipientType,
-            recipientId: recipient.recipientId,
+            recipientType: "user",
+            recipientId: user.id,
             idempotencyKey: `password_reset:user:${user.id}:${Date.now().toString()}`,
             context: { name: user.name, resetUrl: url },
           },

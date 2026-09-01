@@ -157,6 +157,9 @@ enum NotificationRecipientType {
   customer
   contractor
   ops
+  /// The account holder as such -- address is User.email, whatever the role.
+  /// See Notifications / Account mail vs business mail.
+  user
 }
 
 /// Shared by Notification and Suppression.
