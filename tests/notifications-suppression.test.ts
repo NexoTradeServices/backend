@@ -22,7 +22,7 @@ let cast: CastIds;
 
 const email = recordingAdapter("test-email", "email");
 
-const SARAH_EMAIL = "sarah.chen@example.com";
+const SARAH_EMAIL = "sarah@idelta.com.au";
 
 async function listSarah(reason: "unsubscribed" | "bounced" | "stopped"): Promise<void> {
   await db.suppression.create({ data: { channel: "email", address: SARAH_EMAIL, reason } });
@@ -159,6 +159,6 @@ describe("AC8 -- bounced stops everything on that address", () => {
     await drainOnce(db);
 
     expect(email.sent).toHaveLength(1);
-    expect(email.sent[0]?.to).toBe("bob.reilly@example.com");
+    expect(email.sent[0]?.to).toBe("bob@idelta.com.au");
   });
 });

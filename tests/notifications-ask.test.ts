@@ -197,7 +197,7 @@ describe("AC11 -- the password-reset email", () => {
 
     expect(email.sent).toHaveLength(1);
     const message = email.sent[0]?.message;
-    expect(email.sent[0]?.to).toBe("sarah.chen@example.com");
+    expect(email.sent[0]?.to).toBe("sarah@idelta.com.au");
     expect(message?.subject).toBe("Reset your password");
     expect(message?.text).toContain("Hi Sarah,");
     expect(message?.text).toContain(resetUrl);

@@ -5,7 +5,7 @@
 // helpers the frontend needs and Better Auth does not provide:
 //   - GET /api/me: what the gates and placeholders read (plan, Backend tasks).
 //   - GET /api/reset-link: resolves a reset token to the email it belongs to,
-//     so the set-new-password card can say "For mike@example.com" per the
+//     so the set-new-password card can say "For mike@idelta.com.au" per the
 //     frozen Portal Login Gate style reference -- without this, Better Auth's
 //     own POST /reset-password never returns the email either.
 // Read-only, no email code, no session logic of its own -- it looks up the

@@ -41,8 +41,8 @@ async function seedCast(): Promise<Cast> {
   await seedBase(db);
   await seedFixtures(db);
   await seedAuthFixtures(db);
-  const mike = await db.user.findUniqueOrThrow({ where: { email: "mike@example.com" } });
-  const owner = await db.user.findUniqueOrThrow({ where: { email: "owner@example.com" } });
+  const mike = await db.user.findUniqueOrThrow({ where: { email: "mike@idelta.com.au" } });
+  const owner = await db.user.findUniqueOrThrow({ where: { email: "owner@idelta.com.au" } });
   const bob = await db.contractor.findUniqueOrThrow({ where: { code: "CON-014" } });
   const dave = await db.contractor.findUniqueOrThrow({ where: { code: "CON-021" } });
   const priya = await db.contractor.findUniqueOrThrow({ where: { code: "CON-030" } });
@@ -111,7 +111,7 @@ describe("AC1 -- Mike logs in", () => {
   test("AC1: sign-in sets an HTTP-only session cookie and a Session row exists", async () => {
     const cast = await seedCast();
 
-    const res = await signIn("mike@example.com", DEV_PASSWORD);
+    const res = await signIn("mike@idelta.com.au", DEV_PASSWORD);
     expect(res.status).toBe(200);
 
     expect(fullSessionCookie(res)).toMatch(/HttpOnly/i);
@@ -125,7 +125,7 @@ describe("AC2 -- no enumeration on login", () => {
   test("AC2: wrong password and unknown email return the same status and message", async () => {
     await seedCast();
 
-    const wrongPassword = await signIn("mike@example.com", "not-the-right-password");
+    const wrongPassword = await signIn("mike@idelta.com.au", "not-the-right-password");
     const unknownEmail = await signIn("nobody@example.com", "not-the-right-password");
 
     expect(wrongPassword.status).toBe(unknownEmail.status);
@@ -136,7 +136,7 @@ describe("AC2 -- no enumeration on login", () => {
 describe("AC3 -- wrong door", () => {
   test("AC3: Bob's contractor session gets 403 from an ops-guarded route", async () => {
     await seedCast();
-    const signInRes = await signIn("bob.reilly@example.com", DEV_PASSWORD);
+    const signInRes = await signIn("bob@idelta.com.au", DEV_PASSWORD);
     const cookie = cookieHeader(signInRes);
 
     const res = await request(app).get("/test/ops-guarded").set("Cookie", cookie);
@@ -148,8 +148,8 @@ describe("AC4 -- ops admits the owner; owner is exact", () => {
   test("AC4: the owner-guarded route refuses Mike (ops) with 403 and admits the owner", async () => {
     await seedCast();
 
-    const mikeCookie = cookieHeader(await signIn("mike@example.com", DEV_PASSWORD));
-    const ownerCookie = cookieHeader(await signIn("owner@example.com", DEV_PASSWORD));
+    const mikeCookie = cookieHeader(await signIn("mike@idelta.com.au", DEV_PASSWORD));
+    const ownerCookie = cookieHeader(await signIn("owner@idelta.com.au", DEV_PASSWORD));
 
     const mikeOnOwnerRoute = await request(app).get("/test/owner-guarded").set("Cookie", mikeCookie);
     expect(mikeOnOwnerRoute.status).toBe(403);
@@ -161,8 +161,8 @@ describe("AC4 -- ops admits the owner; owner is exact", () => {
   test("AC4: the ops-guarded route admits both ops and the owner", async () => {
     await seedCast();
 
-    const mikeCookie = cookieHeader(await signIn("mike@example.com", DEV_PASSWORD));
-    const ownerCookie = cookieHeader(await signIn("owner@example.com", DEV_PASSWORD));
+    const mikeCookie = cookieHeader(await signIn("mike@idelta.com.au", DEV_PASSWORD));
+    const ownerCookie = cookieHeader(await signIn("owner@idelta.com.au", DEV_PASSWORD));
 
     const mikeOnOpsRoute = await request(app).get("/test/ops-guarded").set("Cookie", mikeCookie);
     expect(mikeOnOpsRoute.status).toBe(200);
@@ -178,7 +178,7 @@ describe("AC5 -- password reset asks the notification module", () => {
 
     const res = await request(app)
       .post("/api/auth/request-password-reset")
-      .send({ email: "bob.reilly@example.com", redirectTo: "https://idelta.com.au/reset-password" });
+      .send({ email: "bob@idelta.com.au", redirectTo: "https://idelta.com.au/reset-password" });
     expect(res.status).toBe(200);
 
     const notifications = await db.notification.findMany({ where: { type: "password_reset" } });
@@ -217,17 +217,17 @@ describe("AC6 -- the reset link", () => {
     await seedCast();
 
     // A session that must NOT survive the reset.
-    const priorCookie = cookieHeader(await signIn("bob.reilly@example.com", DEV_PASSWORD));
+    const priorCookie = cookieHeader(await signIn("bob@idelta.com.au", DEV_PASSWORD));
     const priorSessionCount = await db.session.count();
     expect(priorSessionCount).toBe(1);
 
-    const resetUrl = await requestResetUrl("bob.reilly@example.com");
+    const resetUrl = await requestResetUrl("bob@idelta.com.au");
     const token = tokenFromResetUrl(resetUrl);
 
     // The set-new-password page's "For <email>" line -- the reset-link helper.
     const info = await request(app).get(`/api/reset-link?token=${token}`);
     expect(info.status).toBe(200);
-    expect((info.body as { email: string }).email).toBe("bob.reilly@example.com");
+    expect((info.body as { email: string }).email).toBe("bob@idelta.com.au");
 
     const resetRes = await request(app)
       .post("/api/auth/reset-password")
@@ -238,7 +238,7 @@ describe("AC6 -- the reset link", () => {
     expect(await db.session.count()).toBe(0);
 
     // The frozen spec: success logs the person straight into their portal.
-    const newSignIn = await signIn("bob.reilly@example.com", "a-brand-new-password-1");
+    const newSignIn = await signIn("bob@idelta.com.au", "a-brand-new-password-1");
     expect(newSignIn.status).toBe(200);
 
     // The old cookie is dead either way.
@@ -254,7 +254,7 @@ describe("AC6 -- the reset link", () => {
 describe("AC7 -- expiry and the password floor", () => {
   test("AC7: a reset link past one hour is dead", async () => {
     await seedCast();
-    const resetUrl = await requestResetUrl("bob.reilly@example.com");
+    const resetUrl = await requestResetUrl("bob@idelta.com.au");
     const token = tokenFromResetUrl(resetUrl);
 
     await db.verification.updateMany({
@@ -274,7 +274,7 @@ describe("AC7 -- expiry and the password floor", () => {
 
   test("AC7: a 7-character password is refused", async () => {
     await seedCast();
-    const resetUrl = await requestResetUrl("bob.reilly@example.com");
+    const resetUrl = await requestResetUrl("bob@idelta.com.au");
     const token = tokenFromResetUrl(resetUrl);
 
     const resetRes = await request(app)
@@ -284,7 +284,7 @@ describe("AC7 -- expiry and the password floor", () => {
     expect((resetRes.body as { code?: string }).code).toBe("PASSWORD_TOO_SHORT");
 
     // Refused, not silently accepted -- the account still holds the old password.
-    const stillOldPassword = await signIn("bob.reilly@example.com", DEV_PASSWORD);
+    const stillOldPassword = await signIn("bob@idelta.com.au", DEV_PASSWORD);
     expect(stillOldPassword.status).toBe(200);
   });
 });
@@ -292,7 +292,7 @@ describe("AC7 -- expiry and the password floor", () => {
 describe("AC8 -- suspension takes effect immediately", () => {
   test("AC8: Bob's very next contractor request fails once Contractor.status flips to suspended", async () => {
     const cast = await seedCast();
-    const cookie = cookieHeader(await signIn("bob.reilly@example.com", DEV_PASSWORD));
+    const cookie = cookieHeader(await signIn("bob@idelta.com.au", DEV_PASSWORD));
 
     const beforeSuspend = await request(app).get("/test/contractor-guarded").set("Cookie", cookie);
     expect(beforeSuspend.status).toBe(200);
@@ -312,11 +312,11 @@ describe("AC9 -- every seeded login works; Sarah stays a guest", () => {
   test("AC9: Mike, the owner, Bob, Dave and Priya can all log in with the dev password", async () => {
     await seedCast();
     for (const email of [
-      "mike@example.com",
-      "owner@example.com",
-      "bob.reilly@example.com",
-      "dave.hurst@example.com",
-      "priya.nair@example.com",
+      "mike@idelta.com.au",
+      "owner@idelta.com.au",
+      "bob@idelta.com.au",
+      "dave@idelta.com.au",
+      "priya@idelta.com.au",
     ]) {
       const res = await signIn(email, DEV_PASSWORD);
       expect(res.status).toBe(200);
@@ -328,10 +328,10 @@ describe("AC9 -- every seeded login works; Sarah stays a guest", () => {
     const sarah = await db.customer.findUniqueOrThrow({ where: { code: "CUS-1050" } });
     expect(sarah.userId).toBeNull();
 
-    const user = await db.user.findUnique({ where: { email: "sarah.chen@example.com" } });
+    const user = await db.user.findUnique({ where: { email: "sarah@idelta.com.au" } });
     expect(user).toBeNull();
 
-    const res = await signIn("sarah.chen@example.com", DEV_PASSWORD);
+    const res = await signIn("sarah@idelta.com.au", DEV_PASSWORD);
     expect(res.status).not.toBe(200);
   });
 });
@@ -339,7 +339,7 @@ describe("AC9 -- every seeded login works; Sarah stays a guest", () => {
 describe("AC10 -- log out", () => {
   test("AC10: log out deletes the Session row server-side; the next request shows the gate again", async () => {
     await seedCast();
-    const cookie = cookieHeader(await signIn("mike@example.com", DEV_PASSWORD));
+    const cookie = cookieHeader(await signIn("mike@idelta.com.au", DEV_PASSWORD));
 
     expect(await db.session.count()).toBe(1);
 

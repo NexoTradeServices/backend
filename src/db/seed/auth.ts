@@ -21,8 +21,8 @@ import { Role } from "../../generated/prisma/enums.js";
 export const DEV_PASSWORD = "dev-password-123";
 
 const PLATFORM_USERS = [
-  { name: "Mike", email: "mike@example.com", role: Role.ops },
-  { name: "The owner", email: "owner@example.com", role: Role.owner },
+  { name: "Mike", email: "mike@idelta.com.au", role: Role.ops },
+  { name: "The owner", email: "owner@idelta.com.au", role: Role.owner },
 ] as const;
 
 export interface SeedAuthResult {
