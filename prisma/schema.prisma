@@ -308,6 +308,11 @@ model PlatformSettings {
   maxContractorPartAmount   Int
   /// THE single contact number
   operatorPhone             String
+  /// the BUSINESS clock, an IANA name; seed Australia/Perth. Decides everything
+  /// that spans jobs (payout week, the daily sweep, "today" on a screen) and is
+  /// stamped onto each new Job -- see Data Model / Time. Backfilled onto the
+  /// existing row by this column's own migration (Feature 1008).
+  timezone                  String      @default("Australia/Perth")
   payoutCycle               PayoutCycle
   payoutDay                 PayoutDay?
   /// swappable inside the Notification module (ADR 0002)
@@ -520,6 +525,11 @@ model Job {
   /// WHERE THE CONTRACTOR PARKS THE VAN -- full street address, ops-entered on
   /// the confirming call: { street, suburb, state, country, postcode, lat, lng, placeId }
   siteAddress          Json?
+  /// IANA name (Australia/Perth). FROZEN at job creation from serviceLocation's
+  /// state, never typed; every time this job shows or sends renders in it --
+  /// see Data Model / Time. No jobs exist yet, so no backfill question (Feature
+  /// 1008 decision 1); the creation helper (3001) is the only writer.
+  timezone             String
   /// customer's notes
   description          String?
   preferredWindow      PreferredWindow
