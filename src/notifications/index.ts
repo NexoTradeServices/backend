@@ -21,7 +21,7 @@
 // and stops thinking about it. Rendering, provider choice, retries, suppression
 // and the delivery log all happen behind this line.
 import { getPrisma, type PrismaClient } from "../db/client.js";
-import { assertProvidersConfigured } from "./providers/registry.js";
+import { assertProvidersConfigured, isProduction } from "./providers/registry.js";
 import { startDispatcher, type Dispatcher, type DispatcherOptions } from "./dispatcher.js";
 
 export { sendNotification } from "./send.js";
@@ -42,10 +42,12 @@ export type {
  * Boot the module: check the providers the settings row names, then start the
  * draining loop.
  *
- * IN PRODUCTION A MISSING CREDENTIAL STOPS THE PROCESS HERE, the same way the
- * app already treats WEB_ORIGIN and DATABASE_URL. Outside production the same
- * gap is only reported -- the console adapter takes over and the whole flow
- * stays provable on a laptop with no provider accounts at all.
+ * A MISSING CREDENTIAL NEVER STOPS THE PROCESS (Feature 1009 -- a missing or
+ * broken provider is never an outage, guiding principle 8). It only logs one
+ * loud warning per unconfigured channel, here, at startup. Outside production
+ * the console adapter takes over per send; in production the send itself
+ * fails on its own row instead (see `resolveProvider`) -- either way the app
+ * boots and the rest of the business keeps moving.
  */
 export async function startNotifications(options: DispatcherOptions = {}): Promise<Dispatcher> {
   const client: PrismaClient = options.client ?? getPrisma();
@@ -56,8 +58,11 @@ export async function startNotifications(options: DispatcherOptions = {}): Promi
   }
 
   const problems = assertProvidersConfigured(settings);
+  const suffix = isProduction()
+    ? "sends on this channel will fail until it is configured"
+    : "falling back to the console adapter";
   for (const problem of problems) {
-    console.warn(`notifications: ${problem} -- falling back to the console adapter`);
+    console.warn(`notifications: ${problem} -- ${suffix}`);
   }
 
   return startDispatcher({ ...options, client });

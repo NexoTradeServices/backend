@@ -32,6 +32,12 @@ export interface RecordingAdapter extends ProviderAdapter {
   failWith: string | null;
   /** hold each send open this long, so two loops can genuinely overlap */
   delayMs: number;
+  /**
+   * Mutable, unlike the constructor option it starts from -- a test proves a
+   * provider RECOVERING mid-retry-window (Feature 1009 AC4) by flipping this
+   * to true between two `drainOnce` calls, no re-registration needed.
+   */
+  configured: boolean;
   reset(): void;
 }
 
@@ -46,7 +52,8 @@ export function recordingAdapter(
     sent: [],
     failWith: null,
     delayMs: 0,
-    isConfigured: () => options.configured ?? true,
+    configured: options.configured ?? true,
+    isConfigured: () => adapter.configured,
     async send(outbound) {
       if (adapter.delayMs > 0) {
         await new Promise((resolve) => setTimeout(resolve, adapter.delayMs));
@@ -59,6 +66,7 @@ export function recordingAdapter(
       adapter.sent = [];
       adapter.failWith = null;
       adapter.delayMs = 0;
+      adapter.configured = options.configured ?? true;
     },
   };
   return adapter;

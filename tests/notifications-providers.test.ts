@@ -2,7 +2,9 @@
 //
 // AC6  changing the default is config -- a settings row, not a deploy
 // AC7  a cutover moves one message type only, and rolls back by deleting a line
-// AC9  no credentials: dev logs it, production refuses to boot
+// AC9  no credentials: dev logs it, production still boots (behaviour changed
+//      by Feature 1009 -- notifications never block boot; see
+//      notifications-boot-resilience.test.ts for that feature's own AC1-AC6)
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { testClient, truncateAll } from "./helpers/database.js";
 import {
@@ -224,13 +226,12 @@ describe("AC9 -- credentials decide the environment", () => {
     }
   });
 
-  test("AC9: in production the same missing credentials refuse the boot", async () => {
+  test("AC9: in production the same missing credentials do not refuse the boot (Feature 1009)", async () => {
     await setProviders(db, { emailProvider: "mailjet", smsProvider: "clicksend" });
     process.env["NODE_ENV"] = "production";
 
-    await expect(startNotifications({ client: db })).rejects.toThrow(
-      /the notification module cannot start/,
-    );
+    const dispatcher = await startNotifications({ client: db, intervalMs: 3_600_000 });
+    await dispatcher.stop();
   });
 
   test("AC9: in production WITH credentials the boot goes through", async () => {
