@@ -13,6 +13,7 @@ import type {
   PlatformSettings,
 } from "../generated/prisma/client.js";
 import type { Prisma } from "../generated/prisma/client.js";
+import type { LinkSpec } from "../capability-tokens/types.js";
 
 /**
  * The database handle every component inside the module takes.
@@ -122,4 +123,11 @@ export interface SendRequest {
   relatedId?: string;
   /** set whenever the context carries a job, so a job page can list its messages */
   jobId?: string;
+  /**
+   * Feature 1005, capability tokens -- decision 2. Asking for a link is
+   * putting a spec here; the module persists it under one reserved key
+   * inside `context` and the dispatcher mints the real token, and injects
+   * `{{linkUrl}}`, at send time. Never resolved here -- see `sendNotification`.
+   */
+  capabilityLink?: LinkSpec;
 }
