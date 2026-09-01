@@ -10,6 +10,7 @@
 // that send them (4002, 6009, 4005 -- see this feature's Scope).
 import type { PrismaClient } from "../../src/db/client.js";
 import type { NotificationTemplate } from "../../src/notifications/types.js";
+import { zoneForState } from "../../src/time/index.js";
 import type { CastIds } from "./notifications.js";
 
 export interface JobAndAssignment {
@@ -36,6 +37,7 @@ export async function seedJob1042(client: PrismaClient, cast: CastIds): Promise<
       customerStandardRate: 18_000,
       postcode: "6160",
       serviceLocation: { suburb: "Fremantle", state: "WA", country: "AU", postcode: "6160" },
+      timezone: zoneForState("WA"),
       preferredWindow: "morning",
     },
   });

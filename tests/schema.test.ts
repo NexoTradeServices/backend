@@ -293,11 +293,11 @@ describe("AC10 -- money is not job state", () => {
       INSERT INTO "Job" (
         id, reference, "customerId", "serviceTypeId",
         "customerCalloutRate", "customerStandardRate",
-        postcode, "serviceLocation", "preferredWindow", status, "updatedAt"
+        postcode, "serviceLocation", timezone, "preferredWindow", status, "updatedAt"
       ) VALUES (
         gen_random_uuid()::text, '${reference}', '${customerId}', '${serviceTypeId}',
         25000, 18000,
-        '6163', '{"suburb":"Hilton","postcode":"6163"}'::jsonb, 'morning', '${status}', now()
+        '6163', '{"suburb":"Hilton","postcode":"6163"}'::jsonb, 'Australia/Perth', 'morning', '${status}', now()
       )
     `);
   }

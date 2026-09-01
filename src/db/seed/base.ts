@@ -32,6 +32,7 @@ export async function seedBase(client: PrismaClient = getPrisma()): Promise<Seed
         id: PLATFORM_SETTINGS_ID,
         gstRegistered: false,
         gstRatePercent: "10",
+        timezone: "Australia/Perth", // Feature 1008 -- Data Model / Time
         paymentTermsDays: 7,
         returnVisitMinimumMinutes: 30,
         maxContractorPartAmount: 15_000,
