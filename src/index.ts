@@ -71,9 +71,11 @@ app.get('/health/db', (_req, res) => {
 app.use('/webhooks', notificationWebhooks())
 
 // The notification queue drains inside this process (feature 1004). It is
-// started BEFORE listen on purpose: in production a provider named by the
-// settings row with no credentials behind it refuses the boot here, rather than
-// letting the API come up and fail one invoice email at a time.
+// started BEFORE listen so its own startup warnings land before the "backend
+// listening" line -- but a missing provider credential never refuses this
+// boot (feature 1009): it only warns, and each affected send fails on its own
+// row instead. Only a missing PlatformSettings row (the base seed never run)
+// still stops the process here, the same way WEB_ORIGIN and DATABASE_URL do.
 startNotifications()
   .then(() => {
     // 0.0.0.0, not localhost: Caddy on 192.168.1.41 has to reach this from another machine.

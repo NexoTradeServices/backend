@@ -106,9 +106,10 @@ export function isProduction(): boolean {
  *
  * Environment awareness falls out of credentials, exactly as the design frames
  * it: the chosen adapter with no credentials means dev logs the message through
- * the console adapter instead. It cannot mean that in production -- the boot
- * check below refuses to start rather than let a real invoice email be quietly
- * written to a log file nobody reads.
+ * the console adapter instead. It cannot mean that in production -- a missing
+ * or broken provider is never an outage (guiding principle 8), so production
+ * fails THIS ROW instead, with a plain, named reason, and never silently
+ * writes a real message to a log file nobody reads.
  */
 export function resolveProvider(
   settings: PlatformSettings,
@@ -122,19 +123,20 @@ export function resolveProvider(
   }
   if (adapter.isConfigured()) return adapter;
   if (isProduction()) {
-    throw new Error(`${channel} provider "${name}" has no credentials`);
+    throw new Error(`no configured ${channel} provider (${name})`);
   }
   return consoleProviderFor(channel);
 }
 
 /**
- * The boot refusal. Called before the server listens, the same way the app
- * already treats WEB_ORIGIN and DATABASE_URL: in production a chosen provider
- * with no credentials stops the process here, loudly, instead of failing one
- * message at a time in the delivery log.
- *
- * Outside production this only reports -- a laptop with no accounts at all is a
- * supported way to run the whole platform.
+ * The startup check. Called before the server listens, the same way the app
+ * already treats WEB_ORIGIN and DATABASE_URL -- but unlike those, a chosen
+ * provider with no credentials never stops the process (Feature 1009,
+ * "notifications never block boot" -- guiding principle 8: outside services
+ * degrade, never block). It only names the gap; the caller logs one warning
+ * per problem. Every affected send then fails on its own row, per
+ * `resolveProvider` above, riding the normal retry clock until the owner
+ * configures it or a human covers the message by phone.
  */
 export function assertProvidersConfigured(settings: PlatformSettings): string[] {
   const problems: string[] = [];
@@ -167,8 +169,5 @@ export function assertProvidersConfigured(settings: PlatformSettings): string[] 
     }
   }
 
-  if (problems.length > 0 && isProduction()) {
-    throw new Error(`the notification module cannot start: ${problems.join("; ")}`);
-  }
   return problems;
 }

@@ -73,7 +73,7 @@ export interface ProviderAdapter {
   /** the name PlatformSettings.emailProvider / .smsProvider / .providerOverrides use */
   name: string;
   channel: NotificationChannel;
-  /** credentials present? Drives dev fallback and the production boot refusal. */
+  /** credentials present? Drives the dev fallback and the production per-row send failure. */
   isConfigured(): boolean;
   send(outbound: OutboundMessage): Promise<{ providerMessageId: string }>;
 }
