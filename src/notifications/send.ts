@@ -6,8 +6,9 @@
 // does the rest off the request path -- so a slow provider can never slow down
 // the enquiry form or the dispatch screen.
 import { getPrisma, type PrismaClient } from "../db/client.js";
+import { assertLinkSpec, CAPABILITY_LINK_CONTEXT_KEY } from "../capability-tokens/index.js";
 import { getTemplate } from "./templates/registry.js";
-import type { Notification, SendRequest } from "./types.js";
+import type { Notification, NotificationContext, SendRequest } from "./types.js";
 
 /**
  * The key's shape is fixed: `<type>:<relatedType>:<relatedId>`, plus a
@@ -55,6 +56,27 @@ export async function sendNotification(
     throw new Error(`no ${request.channel} template for notification type "${request.type}"`);
   }
 
+  // Feature 1005, capability tokens, AC9: a link spec that cannot mint is
+  // refused HERE, in the caller's own stack trace -- never a queued row that
+  // sits there because the dispatcher cannot mint it either.
+  if (request.capabilityLink !== undefined) {
+    assertLinkSpec(request.capabilityLink);
+  }
+
+  const context: NotificationContext | undefined =
+    request.context === undefined && request.capabilityLink === undefined
+      ? undefined
+      : {
+          ...request.context,
+          // Decision 2: the spec rides inside context, under one reserved key,
+          // so it survives the async gap without a schema change. Serialized
+          // to a string because NotificationContext values are flat -- the
+          // same shape a template can render.
+          ...(request.capabilityLink === undefined
+            ? {}
+            : { [CAPABILITY_LINK_CONTEXT_KEY]: JSON.stringify(request.capabilityLink) }),
+        };
+
   try {
     return await client.notification.create({
       data: {
@@ -67,7 +89,7 @@ export async function sendNotification(
         relatedType: request.relatedType ?? null,
         relatedId: request.relatedId ?? null,
         jobId: request.jobId ?? null,
-        context: request.context ?? undefined,
+        context: context ?? undefined,
         idempotencyKey: request.idempotencyKey,
       },
     });

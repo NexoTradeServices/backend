@@ -24,6 +24,7 @@
 // rare; sending twice from two live loops was not.
 import { Prisma } from "../generated/prisma/client.js";
 import { getPrisma, type PrismaClient } from "../db/client.js";
+import { CAPABILITY_LINK_CONTEXT_KEY, mintCapabilityLink, type LinkSpec } from "../capability-tokens/index.js";
 import { channelFor } from "./channels/index.js";
 import { resolveProvider } from "./providers/registry.js";
 import { blockedReason } from "./suppression.js";
@@ -184,6 +185,32 @@ function contextOf(row: ClaimedRow): NotificationContext {
   return raw as NotificationContext;
 }
 
+/**
+ * Feature 1005, capability tokens, decisions 2-3: pop the reserved key (if
+ * this send asked for a link), mint a token INSIDE this send attempt, and
+ * hand back a render context carrying `{{linkUrl}}` instead of the spec.
+ *
+ * Runs on every attempt, not just the first: a retry mints a fresh token
+ * because the raw value of an earlier attempt is unrecoverable by design --
+ * so a row that fails twice before succeeding leaves two unused token rows
+ * behind, which is exactly what the design blesses ("a re-send mints a fresh
+ * token").
+ */
+async function resolveRenderContext(
+  client: TransactionalDb,
+  row: ClaimedRow,
+): Promise<NotificationContext> {
+  const context = contextOf(row);
+  const rawSpec = context[CAPABILITY_LINK_CONTEXT_KEY];
+  if (typeof rawSpec !== "string") return context;
+
+  const spec = JSON.parse(rawSpec) as LinkSpec;
+  const { url } = await mintCapabilityLink(client, spec);
+  const rest = { ...context };
+  delete rest[CAPABILITY_LINK_CONTEXT_KEY];
+  return { ...rest, linkUrl: url };
+}
+
 /** One claimed row, all the way to `sent` or to a recorded reason it was not. */
 export async function deliver(client: TransactionalDb, row: ClaimedRow): Promise<void> {
   const settings = await client.platformSettings.findFirst();
@@ -220,9 +247,19 @@ export async function deliver(client: TransactionalDb, row: ClaimedRow): Promise
     return;
   }
 
+  let renderContext: NotificationContext;
+  try {
+    renderContext = await resolveRenderContext(client, row);
+  } catch (error: unknown) {
+    // Minting is a DB write, not a caller mistake -- treat a failure here like
+    // any other transient infra blip and let it retry.
+    await failAttempt(client, row, `mint failed: ${messageOf(error)}`);
+    return;
+  }
+
   let rendered;
   try {
-    rendered = template.render(contextOf(row));
+    rendered = template.render(renderContext);
   } catch (error: unknown) {
     // A template variable that is missing now is missing on every retry.
     await giveUp(client, row.id, `render failed: ${messageOf(error)}`);
