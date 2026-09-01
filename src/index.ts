@@ -7,6 +7,7 @@ import { notificationWebhooks, startNotifications } from './notifications/index.
 import { buildAuth } from './auth/config.js'
 import { attachSession } from './auth/middleware.js'
 import { authRoutes } from './auth/routes.js'
+import { settingsRoutes } from './settings/routes.js'
 import { getPrisma } from './db/client.js'
 
 const app = express()
@@ -46,6 +47,12 @@ app.all('/api/auth/*splat', toNodeHandler(auth))
 // request; RBAC-guarded routes read `req.authUser` after this runs.
 app.use(attachSession(auth, prisma))
 app.use('/api', authRoutes(prisma))
+
+// The first JSON body this app parses (feature 1006's PUT /api/settings).
+// Mounted after Better Auth's own routes, which read the raw body themselves
+// -- see the comment above.
+app.use(express.json())
+app.use('/api/settings', settingsRoutes(prisma))
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', service: 'tradeservice-backend' })
