@@ -308,6 +308,10 @@ model PlatformSettings {
   maxContractorPartAmount   Int
   /// THE single contact number
   operatorPhone             String
+  /// the BUSINESS inbox -- every notice the platform sends the business lands
+  /// here (Notifications / the business inbox). Backfilled onto the existing
+  /// row by this column's own migration (Feature 1006); B-004.
+  operatorEmail             String      @default("ops@idelta.com.au")
   /// the BUSINESS clock, an IANA name; seed Australia/Perth. Decides everything
   /// that spans jobs (payout week, the daily sweep, "today" on a screen) and is
   /// stamped onto each new Job -- see Data Model / Time. Backfilled onto the
