@@ -14,7 +14,7 @@
 // Auth itself (dist/api/rate-limiter/index.mjs), shared by every `betterAuth()`
 // instance in this process -- so every IP literal below is unique to its own
 // test to keep buckets from bleeding across tests.
-import { beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import express, { type Express } from "express";
 import request from "supertest";
 import { toNodeHandler } from "better-auth/node";
@@ -33,6 +33,13 @@ let db: PrismaClient;
 let auth: Auth;
 let app: Express;
 
+// Saved/restored in afterAll -- review R1.1: this file is the only
+// env-mutating test in the suite that didn't, unlike its own sibling
+// auth-rate-limit-warn.test.ts and the pre-existing notifications-*
+// env-mutating files.
+const ORIGINAL_HEADER = process.env["AUTH_TRUSTED_IP_HEADER"];
+const ORIGINAL_PROXIES = process.env["AUTH_TRUSTED_PROXIES"];
+
 beforeAll(() => {
   process.env["AUTH_TRUSTED_IP_HEADER"] = "x-forwarded-for";
   process.env["AUTH_TRUSTED_PROXIES"] = TEST_PROXY_IP;
@@ -45,6 +52,14 @@ beforeAll(() => {
 
 beforeEach(async () => {
   await truncateAll(db);
+});
+
+afterAll(async () => {
+  if (ORIGINAL_HEADER === undefined) delete process.env["AUTH_TRUSTED_IP_HEADER"];
+  else process.env["AUTH_TRUSTED_IP_HEADER"] = ORIGINAL_HEADER;
+  if (ORIGINAL_PROXIES === undefined) delete process.env["AUTH_TRUSTED_PROXIES"];
+  else process.env["AUTH_TRUSTED_PROXIES"] = ORIGINAL_PROXIES;
+  await db.$disconnect();
 });
 
 /** The header shape a request that actually arrived via the trusted hop carries. */
