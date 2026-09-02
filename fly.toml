@@ -18,6 +18,14 @@ primary_region = "syd"
 
 [build]
 
+[env]
+  # Feature 1013 -- login rate limiting sees real client IPs. Fly's own edge
+  # sets this header from the real client connection and it is not
+  # client-settable, so (unlike dev's chained X-Forwarded-For via Caddy) no
+  # AUTH_TRUSTED_PROXIES is needed here -- see backend/.env.example and
+  # src/auth/ip-config.ts.
+  AUTH_TRUSTED_IP_HEADER = "fly-client-ip"
+
 [http_service]
   internal_port = 8080
   force_https = true
