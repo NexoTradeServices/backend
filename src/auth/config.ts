@@ -12,6 +12,7 @@ import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import type { PrismaClient } from "../db/client.js";
 import { sendNotification } from "../notifications/index.js";
+import { buildIpAddressConfig } from "./ip-config.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -23,10 +24,17 @@ function requireEnv(name: string): string {
 
 export interface BuildAuthOptions {
   client: PrismaClient;
+  // Better Auth only auto-enables its rate limiter when NODE_ENV is
+  // "production" (the shared bucket + WARN this feature fixes is a
+  // production-only symptom -- see @better-auth/core/src/utils/ip.ts's
+  // dev/test localhost fallback). Test-only override so a suite proving
+  // AC1-AC3 doesn't have to fake a production environment; production
+  // itself never sets this and gets Better Auth's own default.
+  rateLimit?: { enabled?: boolean };
 }
 
 /** The Better Auth instance the whole backend shares -- one auth brain. */
-export function buildAuth({ client }: BuildAuthOptions) {
+export function buildAuth({ client, rateLimit }: BuildAuthOptions) {
   const webOrigin = requireEnv("WEB_ORIGIN");
   const cookieDomain = requireEnv("COOKIE_DOMAIN");
   const secret = requireEnv("BETTER_AUTH_SECRET");
@@ -40,6 +48,7 @@ export function buildAuth({ client }: BuildAuthOptions) {
     // The frontend is the only site allowed to redirect through the reset
     // flow or complete a state-changing auth request (decision 1).
     trustedOrigins: [webOrigin],
+    rateLimit,
     advanced: {
       // Prisma's default id (uuid(7)) generates the primary key -- Better
       // Auth must not mint its own and overwrite it.
@@ -51,6 +60,10 @@ export function buildAuth({ client }: BuildAuthOptions) {
       // Security: "cross-site cookies are increasingly blocked").
       crossSubDomainCookies: { enabled: true, domain: cookieDomain },
       defaultCookieAttributes: { sameSite: "lax" },
+      // Feature 1013 -- which header carries the real client IP, and which
+      // hop is trusted to set it, both read from env (ip-config.ts). Unset
+      // in either var leaves Better Auth's own pre-1013 default in place.
+      ipAddress: buildIpAddressConfig(),
     },
     emailAndPassword: {
       enabled: true,
