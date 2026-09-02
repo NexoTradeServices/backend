@@ -8,6 +8,7 @@ import { buildAuth } from './auth/config.js'
 import { attachSession } from './auth/middleware.js'
 import { authRoutes } from './auth/routes.js'
 import { settingsRoutes } from './settings/routes.js'
+import { serviceTypeRoutes } from './service-types/routes.js'
 import { getPrisma } from './db/client.js'
 
 const app = express()
@@ -53,6 +54,7 @@ app.use('/api', authRoutes(prisma))
 // -- see the comment above.
 app.use(express.json())
 app.use('/api/settings', settingsRoutes(prisma))
+app.use('/api/service-types', serviceTypeRoutes(prisma))
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', service: 'tradeservice-backend' })
