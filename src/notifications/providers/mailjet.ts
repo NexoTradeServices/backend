@@ -5,10 +5,12 @@
 //
 // CREDENTIALS COME FROM THE ENVIRONMENT, never from the database. The settings
 // row names WHICH provider -- that is config the owner can change on a screen --
-// and the secret behind it is a deploy-time secret the owner sets once. The
-// sender identity lives here too: `idelta.com.au` is authenticated at Mailjet
-// (SPF, DKIM), and which address on it signs the mail is a deployment fact, not
-// a design one.
+// and the secret behind it is a deploy-time secret the owner sets once.
+// `idelta.com.au` is authenticated at Mailjet (SPF, DKIM), and which ADDRESS
+// on it signs the mail is a deployment fact, not a design one -- but the NAME
+// on the From line is brand truth (Foundations / Brand identity; ADR 0005),
+// handed in per send as `fromName` rather than read from an env var (feature
+// 1014 retires the one that used to hold it).
 import type { ProviderAdapter } from "../types.js";
 
 export const MAILJET_PROVIDER = "mailjet";
@@ -54,7 +56,7 @@ export const mailjetEmail: ProviderAdapter = {
   channel: "email",
   isConfigured: () => credentials() !== null,
 
-  async send({ to, message }) {
+  async send({ to, fromName, message }) {
     const auth = credentials();
     if (auth === null) {
       throw new Error("mailjet is not configured -- MAILJET_API_KEY, MAILJET_API_SECRET and MAILJET_FROM_EMAIL are required");
@@ -70,7 +72,7 @@ export const mailjetEmail: ProviderAdapter = {
       body: JSON.stringify({
         Messages: [
           {
-            From: { Email: auth.fromEmail, Name: process.env["MAILJET_FROM_NAME"] ?? "Perth Trades & Services" },
+            From: { Email: auth.fromEmail, Name: fromName },
             To: [{ Email: to }],
             Subject: message.subject,
             TextPart: message.text,

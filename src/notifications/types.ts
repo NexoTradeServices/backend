@@ -60,9 +60,11 @@ export interface NotificationTemplate {
   render(context: NotificationContext): RenderedMessage;
 }
 
-/** What a provider is handed: an address and a rendered message. */
+/** What a provider is handed: an address, a rendered message, and who it is from. */
 export interface OutboundMessage {
   to: string;
+  /** PlatformSettings.displayName at send time -- the sender identity every channel signs (Foundations / Brand identity; ADR 0005) */
+  fromName: string;
   message: RenderedMessage;
 }
 

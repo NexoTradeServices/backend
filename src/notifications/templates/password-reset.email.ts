@@ -35,11 +35,14 @@ export const passwordResetEmail: NotificationTemplate = {
   channel: "email",
   category: "transactional",
   render(context) {
-    const variables = { platformName: "Perth Trades & Services", ...context };
+    // No name of its own (Foundations / Brand identity; ADR 0005): platformName
+    // arrives only from the dispatcher, which puts it in AFTER the row's own
+    // context -- a context missing it (as in a direct render() call) throws,
+    // by the renderer's own missing-variable rule.
     return {
       subject: "Reset your password",
-      text: fill(TEXT, variables),
-      html: fillHtml(HTML, variables),
+      text: fill(TEXT, context),
+      html: fillHtml(HTML, context),
     };
   },
 };

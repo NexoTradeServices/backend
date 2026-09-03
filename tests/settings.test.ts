@@ -47,6 +47,7 @@ function validBody(overrides: Record<string, unknown> = {}): Record<string, unkn
     maxContractorPartAmount: 15_000,
     operatorPhone: "08 0000 0000",
     operatorEmail: "ops@idelta.com.au",
+    displayName: "Perth Trades & Services",
     timezone: "Australia/Perth",
     payoutCycle: "weekly",
     payoutDay: "fri",

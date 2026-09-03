@@ -42,6 +42,7 @@ export async function seedBase(client: PrismaClient = getPrisma()): Promise<Seed
         calloutFee: 15_000, // PLACEHOLDER -- customer no-show fee, passed to the contractor
         operatorPhone: "08 0000 0000", // PLACEHOLDER
         operatorEmail: "ops@idelta.com.au", // Feature 1006 -- the real inbox, B-004
+        displayName: "Perth Trades & Services", // Feature 1014 -- interim wording, ADR 0005
         emailProvider: "mailjet", // ADR 0000 (moved from MailerSend 30/08/26)
         smsProvider: "clicksend", // ADR 0000
       },

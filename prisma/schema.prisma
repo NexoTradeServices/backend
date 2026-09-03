@@ -317,6 +317,12 @@ model PlatformSettings {
   /// stamped onto each new Job -- see Data Model / Time. Backfilled onto the
   /// existing row by this column's own migration (Feature 1008).
   timezone                  String      @default("Australia/Perth")
+  /// the brand's display name -- screens, email sender name, template
+  /// signatures all read THIS, never a literal (Foundations / Brand
+  /// identity; ADR 0005). Backfilled onto the existing row by this column's
+  /// own migration (Feature 1014). Seeded with the interim wording; the
+  /// real name lands here on decision day, typed on the settings screen.
+  displayName               String      @default("Perth Trades & Services")
   payoutCycle               PayoutCycle
   payoutDay                 PayoutDay?
   /// swappable inside the Notification module (ADR 0002)

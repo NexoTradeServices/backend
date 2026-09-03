@@ -8,6 +8,7 @@ import { buildAuth } from './auth/config.js'
 import { attachSession } from './auth/middleware.js'
 import { authRoutes } from './auth/routes.js'
 import { settingsRoutes } from './settings/routes.js'
+import { identityRoutes } from './settings/identity-routes.js'
 import { serviceTypeRoutes } from './service-types/routes.js'
 import { getPrisma } from './db/client.js'
 
@@ -48,6 +49,10 @@ app.all('/api/auth/*splat', toNodeHandler(auth))
 // request; RBAC-guarded routes read `req.authUser` after this runs.
 app.use(attachSession(auth, prisma))
 app.use('/api', authRoutes(prisma))
+
+// Public, no session (feature 1014, decision 4) -- the login gate shows the
+// wordmark logged out.
+app.use('/api/identity', identityRoutes(prisma))
 
 // The first JSON body this app parses (feature 1006's PUT /api/settings).
 // Mounted after Better Auth's own routes, which read the raw body themselves
