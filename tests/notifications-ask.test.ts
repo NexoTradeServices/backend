@@ -221,6 +221,10 @@ describe("AC11 -- the password-reset email", () => {
   test("AC11: values are escaped into the HTML part and left alone in the text part", async () => {
     // Sarah types her own name into the enquiry form, so every template variable
     // is somebody's free text. Review finding R1.2.
+    // Feature 1014, decision 1: no runtime code path reads a literal -- the
+    // sign-off is proven against the seeded row, not a hardcoded string.
+    const { displayName } = await db.platformSettings.findFirstOrThrow();
+
     await sendNotification(
       {
         type: "password_reset",
@@ -238,10 +242,10 @@ describe("AC11 -- the password-reset email", () => {
     expect(message?.html).toContain("Hi Bob &amp; Sons &lt;plumbing&gt;,");
     expect(message?.html).not.toContain("<plumbing>");
     // The sign-off carries an ampersand of its own, and it is markup too.
-    expect(message?.html).toContain("Perth Trades &amp; Services");
+    expect(message?.html).toContain(`-- ${displayName.replace("&", "&amp;")}`);
     // Plain text is not markup and must not be mangled.
     expect(message?.text).toContain("Hi Bob & Sons <plumbing>,");
-    expect(message?.text).toContain("-- Perth Trades & Services");
+    expect(message?.text).toContain(`-- ${displayName}`);
   });
 
   test("AC11: a missing variable stops the message rather than sending a blank link", async () => {

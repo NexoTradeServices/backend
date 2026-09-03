@@ -16,6 +16,9 @@ import type { PrismaClient } from "../db/client.js";
 import { requireRole } from "../auth/middleware.js";
 import { Role, PayoutCycle, PayoutDay } from "../generated/prisma/enums.js";
 import { findProvider } from "../notifications/providers/registry.js";
+import { invalidateIdentityCache } from "./identity-cache.js";
+
+const DISPLAY_NAME_MAX_LENGTH = 80;
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -30,6 +33,7 @@ interface SettingsInput {
   maxContractorPartAmount: number;
   operatorPhone: string;
   operatorEmail: string;
+  displayName: string;
   timezone: string;
   payoutCycle: PayoutCycle;
   payoutDay: PayoutDay | null;
@@ -116,6 +120,15 @@ function parseSettingsInput(body: unknown): ParseResult {
     return { ok: false, error: "operatorEmail must be a valid email address", field: "operatorEmail" };
   }
 
+  const displayName = b["displayName"];
+  if (!isNonEmptyString(displayName) || displayName.trim().length > DISPLAY_NAME_MAX_LENGTH) {
+    return {
+      ok: false,
+      error: `displayName must be non-empty (after trim) and at most ${String(DISPLAY_NAME_MAX_LENGTH)} characters`,
+      field: "displayName",
+    };
+  }
+
   const timezone = b["timezone"];
   if (!isNonEmptyString(timezone) || !isValidTimezone(timezone)) {
     return { ok: false, error: "timezone must be a valid IANA timezone name", field: "timezone" };
@@ -154,6 +167,7 @@ function parseSettingsInput(body: unknown): ParseResult {
       maxContractorPartAmount: b["maxContractorPartAmount"] as number,
       operatorPhone,
       operatorEmail,
+      displayName,
       timezone,
       payoutCycle: payoutCycle as PayoutCycle,
       payoutDay: (payoutDay ?? null) as PayoutDay | null,
@@ -218,6 +232,7 @@ export function settingsRoutes(client: PrismaClient): Router {
           maxContractorPartAmount: input.maxContractorPartAmount,
           operatorPhone: input.operatorPhone,
           operatorEmail: input.operatorEmail,
+          displayName: input.displayName,
           timezone: input.timezone,
           payoutCycle: input.payoutCycle,
           payoutDay: input.payoutDay,
@@ -229,6 +244,10 @@ export function settingsRoutes(client: PrismaClient): Router {
         },
         include: { gstStatusChangedBy: { select: { id: true, name: true } } },
       });
+
+      // Decision 4: the settings PUT is the primary invalidation path -- the
+      // 60-second TTL in identity-cache.ts is only the backstop.
+      invalidateIdentityCache();
 
       res.json({ ...updated, gstRatePercent: updated.gstRatePercent.toString() });
     })().catch((error: unknown) => {

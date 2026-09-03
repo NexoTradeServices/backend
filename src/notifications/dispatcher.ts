@@ -256,6 +256,9 @@ export async function deliver(client: TransactionalDb, row: ClaimedRow): Promise
     await failAttempt(client, row, `mint failed: ${messageOf(error)}`);
     return;
   }
+  // Feature 1014, decision 2: after the row's own context, so a caller can
+  // never override the brand by putting its own platformName in.
+  renderContext = { ...renderContext, platformName: settings.displayName };
 
   let rendered;
   try {
@@ -285,6 +288,7 @@ export async function deliver(client: TransactionalDb, row: ClaimedRow): Promise
   try {
     const { providerMessageId } = await provider.send({
       to: lookup.address,
+      fromName: settings.displayName,
       message: rendered,
     });
     await client.notification.update({
