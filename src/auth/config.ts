@@ -77,14 +77,30 @@ export function buildAuth({ client, rateLimit }: BuildAuthOptions) {
       // Account mail vs business mail (Feature 1011): password reset is
       // account mail, addressed to the User's own login email, whatever
       // their role -- one route, no role-branching.
+      //
+      // Feature 2001, plan decision 6: the contractor invite (Save on
+      // /ops/contractors/new) rides this SAME reset-token machinery --
+      // it calls Better Auth's own request-password-reset endpoint rather
+      // than minting a link by hand, so the lifetime/single-use rule stays
+      // in exactly one place (1003). What distinguishes an invite from a
+      // real reset is derived here, not passed in: no credential Account
+      // row yet means the contractor has never set a password, so this is
+      // their first link and the onboarding wording is used; once a
+      // credential row exists, every later reset (forgotten password,
+      // Resend) reads as an ordinary reset.
       sendResetPassword: async ({ user, url }) => {
+        const hasCredential = await client.account.findFirst({
+          where: { userId: user.id, providerId: "credential" },
+          select: { id: true },
+        });
+        const type = hasCredential ? "password_reset" : "contractor_onboarding";
         await sendNotification(
           {
-            type: "password_reset",
+            type,
             channel: "email",
             recipientType: "user",
             recipientId: user.id,
-            idempotencyKey: `password_reset:user:${user.id}:${Date.now().toString()}`,
+            idempotencyKey: `${type}:user:${user.id}:${Date.now().toString()}`,
             context: { name: user.name, resetUrl: url },
           },
           client,

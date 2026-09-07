@@ -7,9 +7,11 @@ import { notificationWebhooks, startNotifications } from './notifications/index.
 import { buildAuth } from './auth/config.js'
 import { attachSession } from './auth/middleware.js'
 import { authRoutes } from './auth/routes.js'
+import { contractorLoginRoutes } from './auth/login-routes.js'
 import { settingsRoutes } from './settings/routes.js'
 import { identityRoutes } from './settings/identity-routes.js'
 import { serviceTypeRoutes } from './service-types/routes.js'
+import { contractorRoutes } from './contractors/routes.js'
 import { getPrisma } from './db/client.js'
 
 const app = express()
@@ -43,6 +45,11 @@ app.use(cors({ origin: webOrigin, credentials: true }))
 // and a parser upstream would consume the stream first (there is none in
 // this app yet, but the order matters the moment one is added).
 const auth = buildAuth({ client: prisma })
+
+// Feature 2001, decision 9: the deactivated-login reason. Mounted BEFORE
+// the catch-all below so this one path is intercepted; every other
+// /api/auth/* route falls through to Better Auth untouched.
+app.use('/api/auth', contractorLoginRoutes(auth, prisma))
 app.all('/api/auth/*splat', toNodeHandler(auth))
 
 // Loads the session (and re-checks a contractor's live status) on every
@@ -60,6 +67,7 @@ app.use('/api/identity', identityRoutes(prisma))
 app.use(express.json())
 app.use('/api/settings', settingsRoutes(prisma))
 app.use('/api/service-types', serviceTypeRoutes(prisma))
+app.use('/api/contractors', contractorRoutes(prisma, auth))
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', service: 'tradeservice-backend' })
