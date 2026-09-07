@@ -9,7 +9,7 @@
 //      gstStatusChangedByUserId; a save that does not flip the switch does
 //      not restamp
 // AC6  operatorEmail is backfilled ops@idelta.com.au by the seed, and the
-//      settings PUT can change it (B-004)
+//      settings PUT can change it
 import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import express, { type Express } from "express";

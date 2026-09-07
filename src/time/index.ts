@@ -6,7 +6,8 @@
 // drift for the reviewer to catch.
 //
 // Every point in time is stored as a UTC moment (a plain `Date` / Prisma
-// `DateTime`, TIMESTAMP(3) WITHOUT TIME ZONE holding UTC -- see B-005 below).
+// `DateTime`, TIMESTAMP(3) WITHOUT TIME ZONE holding UTC -- see the raw-SQL
+// safe fragment below).
 // Nothing here ever reads the machine's clock zone or a browser's: every
 // question about a day, hour or date boundary converts the stored moment
 // into an IANA zone FIRST, using the caller-supplied zone (`Job.timezone` for
@@ -158,7 +159,7 @@ export function formatLabelled(zone: string, moment: Date): string {
 }
 
 /**
- * B-005: interpolate this in place of a bare `now()` whenever raw SQL
+ * Interpolate this in place of a bare `now()` whenever raw SQL
  * compares against a stored timestamp. Prisma's `DateTime` is
  * `TIMESTAMP(3) WITHOUT TIME ZONE` holding UTC, while bare `now()` is a
  * `timestamptz` that Postgres renders in the SESSION's zone before comparing

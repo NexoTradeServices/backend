@@ -159,7 +159,7 @@ describe("AC3 -- validate is repeatable; consume burns it once", () => {
   });
 
   test("AC3: consuming a multi-use (track) token is refused; it stays valid, usedAt never set", async () => {
-    // Review finding R1.2 -- a validate/consume mix-up must not silently and
+    // Review finding 1005-RVW1.2 -- a validate/consume mix-up must not silently and
     // permanently burn a household's shared track link.
     const { url } = await mintCapabilityLink(db, { type: CapabilityTokenType.track, jobId: refs.jobId });
     const raw = extractToken(url);

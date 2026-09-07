@@ -13,6 +13,7 @@ import { prismaAdapter } from "better-auth/adapters/prisma";
 import type { PrismaClient } from "../db/client.js";
 import { sendNotification } from "../notifications/index.js";
 import { buildIpAddressConfig } from "./ip-config.js";
+import { passwordHasher } from "./dev-password.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -73,6 +74,11 @@ export function buildAuth({ client, rateLimit }: BuildAuthOptions) {
       resetPasswordTokenExpiresIn: 3600, // 1 hour (plan scope; AC7)
       // The revocation teeth for a password reset (plan scope; AC6).
       revokeSessionsOnPasswordReset: true,
+      // BKLG-013 (feature 2002): a real login's cost everywhere except a
+      // real production boot -- dev-password.ts is the one place that
+      // decides, and the fixture seed reads the same decision so a seeded
+      // password always verifies.
+      password: passwordHasher(),
       // Decision 3: the notification module, and nothing else, sends this.
       // Account mail vs business mail (Feature 1011): password reset is
       // account mail, addressed to the User's own login email, whatever

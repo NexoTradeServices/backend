@@ -312,7 +312,7 @@ model PlatformSettings {
   operatorPhone             String
   /// the BUSINESS inbox -- every notice the platform sends the business lands
   /// here (Notifications / the business inbox). Backfilled onto the existing
-  /// row by this column's own migration (Feature 1006); B-004.
+  /// row by this column's own migration (Feature 1006).
   operatorEmail             String      @default("ops@idelta.com.au")
   /// the BUSINESS clock, an IANA name; seed Australia/Perth. Decides everything
   /// that spans jobs (payout week, the daily sweep, "today" on a screen) and is
@@ -649,8 +649,8 @@ model Assignment {
   acceptedAt             DateTime?
   /// system: the moment Complete was pressed
   completedAt            DateTime?
-  /// AUDIT pair: who pulled the contractor off, and when. Review finding R1.4
-  /// caught the design contradicting itself -- the Foundations audit-trail
+  /// AUDIT pair: who pulled the contractor off, and when. Review finding
+  /// 1001-RVW1.4 caught the design contradicting itself -- the Foundations audit-trail
   /// convention named "assignment cancel", while the Assignment record and The
   /// Ledger wrote the timestamp alone. The architect ruled for the convention
   /// and amended the design doc, so this is now the shape the doc describes and

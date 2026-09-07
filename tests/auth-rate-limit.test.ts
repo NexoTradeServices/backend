@@ -33,7 +33,7 @@ let db: PrismaClient;
 let auth: Auth;
 let app: Express;
 
-// Saved/restored in afterAll -- review R1.1: this file is the only
+// Saved/restored in afterAll -- review 1013-RVW1.1: this file is the only
 // env-mutating test in the suite that didn't, unlike its own sibling
 // auth-rate-limit-warn.test.ts and the pre-existing notifications-*
 // env-mutating files.
@@ -161,18 +161,4 @@ describe("AC3 -- the spoof test", () => {
     const bobsRequest = await signInAs(bobsOwnBucket, "nobody@example.com", "whatever");
     expect(bobsRequest.status).not.toBe(429);
   });
-
-  // Discovery, not a defect of this feature: a single, un-chained
-  // X-Forwarded-For value is trusted at face value by Better Auth's own
-  // trustedProxies algorithm regardless of who actually connected (see
-  // node_modules/@better-auth/core/src/utils/ip.ts, getIPFromHeader -- the
-  // single-value branch never checks trustedProxies membership at all). That
-  // is only exploitable by a caller who can reach this backend directly,
-  // bypassing Caddy -- and project/setup/01-dev-environment.md records .40 as
-  // having no host firewall. Recorded in change.md Discoveries for the
-  // architect/owner; not fixable inside this feature's scope (Better Auth's
-  // advanced ipAddress config, not a firewall rule).
-  test.todo(
-    "discovery: a direct connection to :8080 bypassing Caddy can spoof a single-value X-Forwarded-For -- see change.md Discoveries",
-  );
 });

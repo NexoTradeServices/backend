@@ -19,6 +19,7 @@ import { requireRole } from "../auth/middleware.js";
 import { Role } from "../generated/prisma/enums.js";
 import { nextReference } from "../db/reference.js";
 import { readyToDispatch, type ReadyInput } from "./ready.js";
+import { parseServiceAreaInput, saveServiceArea, serviceAreaDtoOf } from "./service-area.js";
 
 // ---------------------------------------------------------------------------
 // Shapes
@@ -695,6 +696,66 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
         res.json({ ok: true });
       })().catch((error: unknown) => {
         console.error("POST /api/contractors/:code/resend-welcome failed", error);
+        res.status(500).json({ error: "internal error" });
+      });
+    },
+  );
+
+  // Feature 2002, service area builder: the same shared screen as
+  // /api/contractor/service-area, opened by ops (or the owner) against any
+  // contractor's code rather than the caller's own session (plan decision 1).
+  router.get(
+    "/:code/service-area",
+    requireRole(Role.ops),
+    (req: Request<{ code: string }>, res: Response) => {
+      void (async () => {
+        const contractor = await client.contractor.findUnique({
+          where: { code: req.params.code },
+          include: { servedPostcodes: true },
+        });
+        if (!contractor) {
+          res.status(404).json({ error: "not found" });
+          return;
+        }
+        res.json(serviceAreaDtoOf(contractor));
+      })().catch((error: unknown) => {
+        console.error("GET /api/contractors/:code/service-area failed", error);
+        res.status(500).json({ error: "internal error" });
+      });
+    },
+  );
+
+  router.put(
+    "/:code/service-area",
+    requireRole(Role.ops),
+    (req: Request<{ code: string }>, res: Response) => {
+      void (async () => {
+        const contractor = await client.contractor.findUnique({ where: { code: req.params.code } });
+        if (!contractor) {
+          res.status(404).json({ error: "not found" });
+          return;
+        }
+        const parsed = parseServiceAreaInput(req.body);
+        if (!parsed.ok) {
+          res.status(400).json({ error: parsed.error, field: parsed.field });
+          return;
+        }
+        const saved = await saveServiceArea(client, contractor.id, parsed.data);
+        if (!saved.ok) {
+          res.status(400).json({ error: saved.error, field: saved.field });
+          return;
+        }
+        const full = await client.contractor.findUnique({
+          where: { id: contractor.id },
+          include: { servedPostcodes: true },
+        });
+        if (!full) {
+          res.status(500).json({ error: "internal error" });
+          return;
+        }
+        res.json(serviceAreaDtoOf(full));
+      })().catch((error: unknown) => {
+        console.error("PUT /api/contractors/:code/service-area failed", error);
         res.status(500).json({ error: "internal error" });
       });
     },

@@ -16,7 +16,7 @@
 // row claimed while it is still fresh: a row ALREADY older than its next backoff
 // step is due again the instant the claim commits, so during a Fly deploy overlap
 // two loops could both send it and Bob would be dispatched twice for one job. See
-// review finding R1.1.
+// review finding 1004-RVW1.1.
 //
 // What is still at-least-once, and cannot be otherwise without a claim marker on
 // the row: if the provider accepts the message and the transaction then fails to

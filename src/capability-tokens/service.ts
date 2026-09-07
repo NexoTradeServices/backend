@@ -135,7 +135,7 @@ export async function validateCapabilityToken(
  * Decision 6: consuming (usedAt stamped) happens in the same transaction as
  * the action it gates -- the caller passes that transaction's client in.
  *
- * REFUSED FOR A MULTI-USE TYPE (review finding R1.2): decision 6 says
+ * REFUSED FOR A MULTI-USE TYPE (review finding 1005-RVW1.2): decision 6 says
  * consuming happens "only for single-use types" -- track is meant to work
  * from two phones in one household, repeatedly, so burning it on a stray
  * `consumeCapabilityToken` call (a validate/consume mix-up has the same

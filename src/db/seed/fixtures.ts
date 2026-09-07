@@ -9,9 +9,22 @@
 //
 // NOT seeded: the cast's reference jobs (JOB-1042, INV-2041, CINV-517). The
 // features that compute them create them in their own tests -- see the plan's
-// Scope. Served postcodes are absent too: service areas are feature 2002, and
-// the Suburb rows they read arrive in 1002.
+// Scope.
+//
+// Feature 2002, plan decision 13: Bob's service area (lastRadiusKm + a FIXED
+// served-postcode list) is written here, hand-picked, because this seed runs
+// without the Suburb rows (1002) a real in-range query would need -- the list
+// below is the Perth south-of-river postcodes within 30km of Fremantle
+// (computed once from the licensed file, ADR 0003), including 6163 (Sarah's
+// Hilton), excluding 6027 (Karl's Joondalup -- genuinely out of reach) and
+// excluding 6161 (Rottnest Island -- in range by straight-line distance but
+// crossed off by hand, so the derived-crossed rule has something real to
+// show on reopen). Dave and Priya keep no coreLocation and no served rows:
+// neither has ever saved a service area, so the shelf stays empty until they
+// do (decision 13) -- 2001's fixture had filled Dave's and Priya's
+// coreLocation as an incidental placeholder; 2002 corrects it.
 import "dotenv/config";
+import { Prisma } from "../../generated/prisma/client.js";
 import { reserveUpTo } from "../reference.js";
 import { disconnectPrisma, getPrisma, type PrismaClient } from "../client.js";
 import { seedAuthFixtures } from "./auth.js";
@@ -48,6 +61,20 @@ const CAST = {
         lng: 115.7439,
         placeId: "fixture-place-fremantle",
       },
+      lastRadiusKm: 30,
+      // The Perth south-of-river postcodes within 30km of Fremantle
+      // (nearest-suburb-centroid distance, licensed file, computed 07/09/26),
+      // nearest first. Includes 6163 (Hilton); 6027 (Joondalup) never appears
+      // -- it is genuinely past 30km; 6161 (Rottnest Island) is deliberately
+      // left off though it is in range by sea, so reopening the page shows it
+      // crossed off (decision 6).
+      servedPostcodes: [
+        "6160", "6162", "6157", "6163", "6156", "6154", "6166", "6150",
+        "6153", "6164", "6149", "6148", "6152", "6155", "6151", "6147",
+        "6107", "6101", "6100", "6102", "6167", "6112", "6168", "6108",
+        "6106", "6110", "6105", "6109", "6111", "6170", "6121", "6058",
+        "6169", "6057", "6122", "6076",
+      ],
       specialties: [
         {
           trade: "Plumbing",
@@ -72,15 +99,11 @@ const CAST = {
       payoutBsb: "066-102",
       payoutAccountNo: "22110021",
       payoutAccountName: "D Hurst",
-      coreLocation: {
-        suburb: "Perth",
-        state: "WA",
-        country: "AU",
-        postcode: "6000",
-        lat: -31.9523,
-        lng: 115.8613,
-        placeId: "fixture-place-perth",
-      },
+      // No service area saved (decision 13) -- the shelf stays empty until
+      // Dave (or Mike) opens the Service area page once.
+      coreLocation: null,
+      lastRadiusKm: null,
+      servedPostcodes: [] as string[],
       specialties: [
         {
           trade: "Electrical",
@@ -117,15 +140,10 @@ const CAST = {
       payoutBsb: null,
       payoutAccountNo: null,
       payoutAccountName: null,
-      coreLocation: {
-        suburb: "Cannington",
-        state: "WA",
-        country: "AU",
-        postcode: "6107",
-        lat: -32.0165,
-        lng: 115.9345,
-        placeId: "fixture-place-cannington",
-      },
+      // No service area saved (decision 13) -- same as Dave.
+      coreLocation: null,
+      lastRadiusKm: null,
+      servedPostcodes: [] as string[],
       specialties: [
         {
           trade: "Electrical",
@@ -188,11 +206,11 @@ export async function seedFixtures(
           // No own-address fixture yet -- cast.md gives each contractor a
           // core (service-area) location, not their own home/postal
           // address, and the two are different fields (Managing the
-          // contractor record). Left empty, same as their service area:
-          // both count toward Ready to dispatch, so the fixture stays
-          // truthfully Not ready rather than inventing an address cast.md
-          // never gave them.
-          coreLocation: contractor.coreLocation,
+          // contractor record). Left empty, so the fixture stays truthfully
+          // Not ready rather than inventing an address cast.md never gave
+          // them.
+          coreLocation: contractor.coreLocation ?? Prisma.JsonNull,
+          lastRadiusKm: contractor.lastRadiusKm,
           insurer: contractor.insurer,
           insurancePolicyNo: contractor.insurancePolicyNo,
           insuranceExpiry: new Date(contractor.insuranceExpiry),
@@ -216,6 +234,9 @@ export async function seedFixtures(
               licenceExpiry: new Date(specialty.licenceExpiry),
               status: "active",
             })),
+          },
+          servedPostcodes: {
+            create: contractor.servedPostcodes.map((postcode) => ({ postcode })),
           },
         },
       });
