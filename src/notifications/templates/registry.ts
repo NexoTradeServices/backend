@@ -7,9 +7,10 @@
 // anywhere grows message text of its own.
 import type { NotificationChannel, NotificationTemplate } from "../types.js";
 import { passwordResetEmail } from "./password-reset.email.js";
+import { contractorOnboardingEmail } from "./contractor-onboarding.email.js";
 
 /** Every template this build ships. Features append; nothing else registers. */
-const BUILT_IN: NotificationTemplate[] = [passwordResetEmail];
+const BUILT_IN: NotificationTemplate[] = [passwordResetEmail, contractorOnboardingEmail];
 
 function key(type: string, channel: NotificationChannel): string {
   return `${type}:${channel}`;

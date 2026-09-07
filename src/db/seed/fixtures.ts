@@ -28,8 +28,15 @@ const CAST = {
       name: "Bob Reilly",
       email: "bob@idelta.com.au",
       phone: "0400 000 014",
-      abn: "51000000014",
+      abn: "51000000680", // ATO-checksum-valid (decision 10)
       businessName: "Reilly Plumbing",
+      // Feature 2001, AC12: Bob and Dave gain insurance and payout details.
+      insurer: "QBE",
+      insurancePolicyNo: "PL-2291-884",
+      insuranceExpiry: "2028-02-28",
+      payoutBsb: "066-000",
+      payoutAccountNo: "12345678",
+      payoutAccountName: "B Reilly",
       // "core location Fremantle" (cast.md). Places-shaped, as every stored
       // location is; these coordinates are Fremantle WA 6160.
       coreLocation: {
@@ -57,8 +64,14 @@ const CAST = {
       name: "Dave Hurst",
       email: "dave@idelta.com.au",
       phone: "0400 000 021",
-      abn: "51000000021",
+      abn: "51000000761", // ATO-checksum-valid (decision 10)
       businessName: "Hurst Electrical & Air",
+      insurer: "QBE",
+      insurancePolicyNo: "PL-7710-020",
+      insuranceExpiry: "2028-03-31",
+      payoutBsb: "066-102",
+      payoutAccountNo: "22110021",
+      payoutAccountName: "D Hurst",
       coreLocation: {
         suburb: "Perth",
         state: "WA",
@@ -91,8 +104,19 @@ const CAST = {
       name: "Priya Nair",
       email: "priya@idelta.com.au",
       phone: "0400 000 030",
-      abn: "51000000030",
+      abn: "51000000793", // ATO-checksum-valid (decision 10)
       businessName: "Nair Electrical",
+      // AC12: Priya gets an insurance expiry in the past -- insurer and
+      // policy number are set so the missing-items list names exactly
+      // "insurance renewal (expired)", not a wholesale "insurance details".
+      // No payout details: she stays Not ready for more than one reason,
+      // same as cast.md's "never a customer, third candidate" framing.
+      insurer: "Allianz",
+      insurancePolicyNo: "PL-3090-011",
+      insuranceExpiry: "2024-08-31",
+      payoutBsb: null,
+      payoutAccountNo: null,
+      payoutAccountName: null,
       coreLocation: {
         suburb: "Cannington",
         state: "WA",
@@ -161,8 +185,20 @@ export async function seedFixtures(
           gstRegistered: false,
           phone: contractor.phone,
           email: contractor.email,
-          address: `${contractor.coreLocation.suburb} ${contractor.coreLocation.state} ${contractor.coreLocation.postcode}`,
+          // No own-address fixture yet -- cast.md gives each contractor a
+          // core (service-area) location, not their own home/postal
+          // address, and the two are different fields (Managing the
+          // contractor record). Left empty, same as their service area:
+          // both count toward Ready to dispatch, so the fixture stays
+          // truthfully Not ready rather than inventing an address cast.md
+          // never gave them.
           coreLocation: contractor.coreLocation,
+          insurer: contractor.insurer,
+          insurancePolicyNo: contractor.insurancePolicyNo,
+          insuranceExpiry: new Date(contractor.insuranceExpiry),
+          payoutBsb: contractor.payoutBsb,
+          payoutAccountNo: contractor.payoutAccountNo,
+          payoutAccountName: contractor.payoutAccountName,
           status: "active",
           user: {
             create: {
