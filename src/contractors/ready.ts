@@ -21,7 +21,6 @@ export interface ReadySpecialty {
 export interface ReadyInput {
   businessName: string | null;
   abn: string | null;
-  address: unknown;
   status: ContractorStatus;
   insurer: string | null;
   insurancePolicyNo: string | null;
@@ -48,8 +47,11 @@ export function readyToDispatch(input: ReadyInput, now: Date = new Date()): Read
 
   if (!input.businessName) missing.push("business name");
   if (!input.abn) missing.push("ABN");
-  if (!input.address) missing.push("address");
 
+  // Design, "Managing the contractor record": the contractor's own address
+  // and the emergency contact pair never count -- licence, insurance, an
+  // active trade and a service area are what make someone safe to send;
+  // where they live is administrative and should never hold up a job.
   const hasCurrentActiveTrade = input.specialties.some(
     (specialty) => specialty.status === "active" && isFuture(specialty.licenceExpiry, now),
   );

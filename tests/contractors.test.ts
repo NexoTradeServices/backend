@@ -121,8 +121,11 @@ describe("AC1 -- the seeded list, ops+owner, Bob refused", () => {
   // Feature 2002, decision 13: Bob's fixture now carries a saved service
   // area (lastRadiusKm 30 + a fixed served-postcode list), so he no longer
   // names "service area (not set up yet)" -- Dave and Priya still do, since
-  // neither has ever saved one.
-  test("AC1: Mike sees Bob, Dave, Priya -- all Not ready, Priya's insurance expired, Dave and Priya missing a service area", async () => {
+  // neither has ever saved one. The address check dropped from
+  // readyToDispatch (design, "Managing the contractor record" -- address
+  // never counts) is what makes Bob ready straight from the fixture seed:
+  // he has everything else, and his fixture never gives him an address.
+  test("AC1: Mike sees Bob ready; Dave and Priya Not ready, Priya's insurance expired, both missing a service area", async () => {
     await seedCast();
     const cookie = await signInCookie("mike@idelta.com.au");
 
@@ -133,11 +136,13 @@ describe("AC1 -- the seeded list, ops+owner, Bob refused", () => {
 
     for (const row of rows) {
       expect(row.status).toBe("active");
-      expect(row.ready).toBe(false);
     }
     const bob = rows.find((r) => r.code === "CON-014");
     const dave = rows.find((r) => r.code === "CON-021");
     const priya = rows.find((r) => r.code === "CON-030");
+    expect(bob?.ready).toBe(true);
+    expect(dave?.ready).toBe(false);
+    expect(priya?.ready).toBe(false);
     expect(bob?.missing).not.toContain("service area (not set up yet)");
     expect(dave?.missing).toContain("service area (not set up yet)");
     expect(priya?.missing).toContain("service area (not set up yet)");
@@ -306,10 +311,11 @@ describe("AC5 -- a full trade row round-trips as whole cents", () => {
 
     const reopen = await request(app).get(`/api/contractors/${bob.code}`).set("Cookie", cookie);
     const missing = (reopen.body as { missing: string[] }).missing;
-    // The fixture never gives Bob his own address (only a core/service-area
-    // location); this PUT does not touch it either. His fixture-seeded
-    // service area (2002, decision 13) already covers the other item.
-    expect(missing).toEqual(["address"]);
+    // The fixture never gives Bob his own address, but address no longer
+    // counts (design, "Managing the contractor record"); his fixture-seeded
+    // service area (2002, decision 13) covers that item too, so this PUT
+    // leaves him with nothing missing at all.
+    expect(missing).toEqual([]);
   });
 
   test("a legacy street-only address (pre-2001 migration, AC12) round-trips on an ordinary Save; a genuinely malformed one is still refused", async () => {
