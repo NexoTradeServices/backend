@@ -161,7 +161,7 @@ describe("AC4 -- three attempts, then failed", () => {
 
 describe("AC5 -- two loops, one send", () => {
   test("AC5: two loops over an OVERDUE row still send it exactly once", async () => {
-    // THE CASE REVIEW FINDING R1.1 PROVED. A row that is already past its next
+    // THE CASE REVIEW FINDING 1004-RVW1.1 PROVED. A row that is already past its next
     // backoff step when it is claimed cannot be protected by the backoff: it is
     // due again the instant the claim commits. Only the row lock, held for the
     // whole send, keeps the second loop off it. A fresh row never exercises

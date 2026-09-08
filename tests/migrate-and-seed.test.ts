@@ -80,7 +80,7 @@ describe("AC1 -- migrate + base seed, twice", () => {
     expect(secondRun).toEqual(firstRun);
   });
 
-  // Review finding R1.5. This block used to hold one test, "the PostGIS
+  // Review finding 1001-RVW1.5. This block used to hold one test, "the PostGIS
   // extension is present after migrating", and it could not fail. The wipe that
   // runs before migrating deliberately leaves PostGIS standing -- it belongs to
   // `postgres`, not to the app role -- so the extension was already there before

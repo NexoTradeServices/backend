@@ -5,7 +5,7 @@
 // AC3  a weekend moment is decided in the job's zone, not UTC's
 // AC4  labelled rendering, in the job's zone
 // AC5  "today" and the payout-week boundary derive through PlatformSettings.timezone
-// AC6  (B-005) the safe raw-SQL fragment agrees across sessions in different zones
+// AC6  the safe raw-SQL fragment agrees across sessions in different zones
 import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { testClient, truncateAll } from "./helpers/database.js";
@@ -147,7 +147,7 @@ describe("AC5 -- today and the payout-week boundary derive through PlatformSetti
   });
 });
 
-describe("AC6 (B-005) -- the safe raw-SQL fragment", () => {
+describe("AC6 -- the safe raw-SQL fragment", () => {
   /** One raw comparison, run inside a transaction pinned to `sessionZone`. */
   async function compareUnder(
     sessionZone: string,
@@ -165,7 +165,7 @@ describe("AC6 (B-005) -- the safe raw-SQL fragment", () => {
 
   test("AC6: a stored timestamp compares identically against NOW_UTC_SQL on a Perth-zone session and a UTC session", async () => {
     // 2 hours out: past due only if 8 (or more) hours were wrongly added, as
-    // B-005's bare `now()` on a Perth session does.
+    // a bare `now()` on a Perth session does.
     const storedFutureUtc = new Date(Date.now() + 2 * 60 * 60 * 1000);
 
     const perth = await compareUnder("Australia/Perth", storedFutureUtc);
@@ -175,7 +175,7 @@ describe("AC6 (B-005) -- the safe raw-SQL fragment", () => {
     expect(utc.safe).toBe(false);
   });
 
-  test("AC6: the bare now() comparison is exactly the B-005 trap it replaces -- session-dependent, and wrong on Perth", async () => {
+  test("AC6: the bare now() comparison is exactly the trap it replaces -- session-dependent, and wrong on Perth", async () => {
     const storedFutureUtc = new Date(Date.now() + 2 * 60 * 60 * 1000);
 
     const perth = await compareUnder("Australia/Perth", storedFutureUtc);

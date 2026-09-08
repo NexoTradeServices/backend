@@ -118,7 +118,11 @@ afterAll(async () => {
 });
 
 describe("AC1 -- the seeded list, ops+owner, Bob refused", () => {
-  test("AC1: Mike sees Bob, Dave, Priya -- all Not ready, Priya's insurance expired, all missing a service area", async () => {
+  // Feature 2002, decision 13: Bob's fixture now carries a saved service
+  // area (lastRadiusKm 30 + a fixed served-postcode list), so he no longer
+  // names "service area (not set up yet)" -- Dave and Priya still do, since
+  // neither has ever saved one.
+  test("AC1: Mike sees Bob, Dave, Priya -- all Not ready, Priya's insurance expired, Dave and Priya missing a service area", async () => {
     await seedCast();
     const cookie = await signInCookie("mike@idelta.com.au");
 
@@ -130,9 +134,13 @@ describe("AC1 -- the seeded list, ops+owner, Bob refused", () => {
     for (const row of rows) {
       expect(row.status).toBe("active");
       expect(row.ready).toBe(false);
-      expect(row.missing).toContain("service area (not set up yet)");
     }
+    const bob = rows.find((r) => r.code === "CON-014");
+    const dave = rows.find((r) => r.code === "CON-021");
     const priya = rows.find((r) => r.code === "CON-030");
+    expect(bob?.missing).not.toContain("service area (not set up yet)");
+    expect(dave?.missing).toContain("service area (not set up yet)");
+    expect(priya?.missing).toContain("service area (not set up yet)");
     expect(priya?.missing).toContain("insurance renewal (expired)");
   });
 
@@ -299,8 +307,9 @@ describe("AC5 -- a full trade row round-trips as whole cents", () => {
     const reopen = await request(app).get(`/api/contractors/${bob.code}`).set("Cookie", cookie);
     const missing = (reopen.body as { missing: string[] }).missing;
     // The fixture never gives Bob his own address (only a core/service-area
-    // location); this PUT does not touch it either.
-    expect(missing).toEqual(["address", "service area (not set up yet)"]);
+    // location); this PUT does not touch it either. His fixture-seeded
+    // service area (2002, decision 13) already covers the other item.
+    expect(missing).toEqual(["address"]);
   });
 
   test("a legacy street-only address (pre-2001 migration, AC12) round-trips on an ordinary Save; a genuinely malformed one is still refused", async () => {

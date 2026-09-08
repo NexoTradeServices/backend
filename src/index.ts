@@ -12,6 +12,8 @@ import { settingsRoutes } from './settings/routes.js'
 import { identityRoutes } from './settings/identity-routes.js'
 import { serviceTypeRoutes } from './service-types/routes.js'
 import { contractorRoutes } from './contractors/routes.js'
+import { contractorServiceAreaRoutes } from './contractors/service-area-routes.js'
+import { suburbRoutes } from './suburbs/routes.js'
 import { getPrisma } from './db/client.js'
 
 const app = express()
@@ -68,6 +70,8 @@ app.use(express.json())
 app.use('/api/settings', settingsRoutes(prisma))
 app.use('/api/service-types', serviceTypeRoutes(prisma))
 app.use('/api/contractors', contractorRoutes(prisma, auth))
+app.use('/api/contractor', contractorServiceAreaRoutes(prisma))
+app.use('/api/suburbs', suburbRoutes(prisma))
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', service: 'tradeservice-backend' })

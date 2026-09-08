@@ -220,7 +220,7 @@ describe("AC11 -- the password-reset email", () => {
 
   test("AC11: values are escaped into the HTML part and left alone in the text part", async () => {
     // Sarah types her own name into the enquiry form, so every template variable
-    // is somebody's free text. Review finding R1.2.
+    // is somebody's free text. Review finding 1004-RVW1.2.
     // Feature 1014, decision 1: no runtime code path reads a literal -- the
     // sign-off is proven against the seeded row, not a hardcoded string.
     const { displayName } = await db.platformSettings.findFirstOrThrow();
