@@ -347,7 +347,6 @@ function readyInputOf(contractor: NonNullable<ContractorWithRelations>): ReadyIn
   return {
     businessName: contractor.businessName,
     abn: contractor.abn,
-    address: contractor.address,
     status: contractor.status,
     insurer: contractor.insurer,
     insurancePolicyNo: contractor.insurancePolicyNo,
