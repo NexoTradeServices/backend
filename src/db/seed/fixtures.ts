@@ -7,9 +7,13 @@
 // DEV AND TEST ONLY. Refuses to run in production, and it is a separate command
 // from the base seed for exactly that reason.
 //
-// NOT seeded: the cast's reference jobs (JOB-1042, INV-2041, CINV-517). The
-// features that compute them create them in their own tests -- see the plan's
-// Scope.
+// NOT seeded: the cast's reference documents INV-2041 and CINV-517. The
+// features that compute them (Invoicing, Contractor Settlement) create them
+// in their own tests -- see those plans' Scope. JOB-1042 (Sarah's mixer tap)
+// IS seeded here as of Feature 2003, alongside JOB-1051 (Tom) and JOB-1039
+// (Margaret) -- Bob's three live jobs, the dashboard's own fixture (plan
+// AC12). Any other test that needs "JOB-1042" reads THIS row rather than
+// creating its own (tests/helpers/capability-tokens.ts's seedJob1042()).
 //
 // Feature 2002, plan decision 13: Bob's service area (lastRadiusKm + a FIXED
 // served-postcode list) is written here, hand-picked, because this seed runs
@@ -23,9 +27,14 @@
 // neither has ever saved a service area, so the shelf stays empty until they
 // do (decision 13) -- 2001's fixture had filled Dave's and Priya's
 // coreLocation as an incidental placeholder; 2002 corrects it.
+//
+// Feature 2003: every contractor's own address + emergency contact are now
+// filled too, so the non-blocking readiness nudges (ready.ts) never fire on
+// the base cast -- AC6 needs Bob to see no readiness panel at all.
 import "dotenv/config";
 import { Prisma } from "../../generated/prisma/client.js";
 import { reserveUpTo } from "../reference.js";
+import { zoneForState, nextWeekdayAt, todayAt } from "../../time/index.js";
 import { disconnectPrisma, getPrisma, type PrismaClient } from "../client.js";
 import { seedAuthFixtures } from "./auth.js";
 
@@ -50,6 +59,21 @@ const CAST = {
       payoutBsb: "066-000",
       payoutAccountNo: "12345678",
       payoutAccountName: "B Reilly",
+      // Feature 2003, AC6: his own address + emergency contact, so his
+      // dashboard shows no readiness panel at all -- neither is in cast.md,
+      // so these are invented, same spirit as the ABN/insurer above.
+      address: {
+        street: "14 High Street",
+        suburb: "Fremantle",
+        state: "WA",
+        country: "AU",
+        postcode: "6160",
+        lat: -32.0569,
+        lng: 115.7439,
+        placeId: "fixture-place-fremantle-home",
+      },
+      emergencyContactName: "Jenny Reilly",
+      emergencyContactPhone: "0400 100 014",
       // "core location Fremantle" (cast.md). Places-shaped, as every stored
       // location is; these coordinates are Fremantle WA 6160.
       coreLocation: {
@@ -99,6 +123,19 @@ const CAST = {
       payoutBsb: "066-102",
       payoutAccountNo: "22110021",
       payoutAccountName: "D Hurst",
+      // Feature 2003: his own address + emergency contact, same spirit as Bob's.
+      address: {
+        street: "9 Berwick Street",
+        suburb: "Victoria Park",
+        state: "WA",
+        country: "AU",
+        postcode: "6100",
+        lat: -31.9803,
+        lng: 115.9003,
+        placeId: "fixture-place-victoria-park",
+      },
+      emergencyContactName: "Karen Hurst",
+      emergencyContactPhone: "0400 100 021",
       // No service area saved (decision 13) -- the shelf stays empty until
       // Dave (or Mike) opens the Service area page once.
       coreLocation: null,
@@ -140,6 +177,21 @@ const CAST = {
       payoutBsb: null,
       payoutAccountNo: null,
       payoutAccountName: null,
+      // Feature 2003, AC7: her own address + emergency contact are filled so
+      // her panel shows exactly the three items the AC names (service area,
+      // bank details, expired insurance) and no non-blocking nudge besides.
+      address: {
+        street: "5 Flora Terrace",
+        suburb: "West Perth",
+        state: "WA",
+        country: "AU",
+        postcode: "6005",
+        lat: -31.9505,
+        lng: 115.8425,
+        placeId: "fixture-place-west-perth",
+      },
+      emergencyContactName: "Raj Nair",
+      emergencyContactPhone: "0400 100 030",
       // No service area saved (decision 13) -- same as Dave.
       coreLocation: null,
       lastRadiusKm: null,
@@ -176,18 +228,61 @@ const CAST = {
         placeId: "fixture-place-hilton",
       },
     },
+    {
+      // Feature 2003, AC2/AC12: JOB-1051, "sits at the far edge of Bob's
+      // reach" (cast.md) -- Kalamunda is the last postcode in his served
+      // list above. cast.md gives Tom no code yet; CUS-1051 is skipped here
+      // (already a real, hand-inserted row outside the seed -- project/setup/
+      // 01-dev-environment.md, section 7b), so he takes CUS-1052.
+      code: "CUS-1052",
+      codeNumber: 1052,
+      name: "Tom",
+      email: "tom@idelta.com.au",
+      phone: "0400 001 052",
+      billingAddress: {
+        street: "22 Williams Road",
+        suburb: "Kalamunda",
+        state: "WA",
+        country: "AU",
+        postcode: "6076",
+        lat: -31.974211,
+        lng: 116.051444,
+        placeId: "fixture-place-kalamunda",
+      },
+    },
+    {
+      // Feature 2003, AC3/AC12: JOB-1039, on hold with no return date.
+      // "her postcode also covers Ardross and Mount Pleasant" (cast.md) --
+      // the one-postcode-many-suburbs case; her own suburb is Applecross.
+      code: "CUS-1053",
+      codeNumber: 1053,
+      name: "Margaret",
+      email: "margaret@idelta.com.au",
+      phone: "0400 001 053",
+      billingAddress: {
+        street: "8 Riverside Road",
+        suburb: "Applecross",
+        state: "WA",
+        country: "AU",
+        postcode: "6153",
+        lat: -32.015475,
+        lng: 115.836868,
+        placeId: "fixture-place-applecross",
+      },
+    },
   ],
 } as const;
 
 export interface SeedFixturesResult {
   contractorsCreated: string[];
   customersCreated: string[];
+  jobsCreated: string[];
 }
 
 export async function seedFixtures(
   client: PrismaClient = getPrisma(),
 ): Promise<SeedFixturesResult> {
-  const result: SeedFixturesResult = { contractorsCreated: [], customersCreated: [] };
+  const result: SeedFixturesResult = { contractorsCreated: [], customersCreated: [], jobsCreated: [] };
 
   for (const contractor of CAST.contractors) {
     const existing = await client.contractor.findUnique({ where: { code: contractor.code } });
@@ -203,12 +298,12 @@ export async function seedFixtures(
           gstRegistered: false,
           phone: contractor.phone,
           email: contractor.email,
-          // No own-address fixture yet -- cast.md gives each contractor a
-          // core (service-area) location, not their own home/postal
-          // address, and the two are different fields (Managing the
-          // contractor record). Left empty, so the fixture stays truthfully
-          // Not ready rather than inventing an address cast.md never gave
-          // them.
+          // The own-address / emergency-contact fields (Feature 2003) are
+          // separate from `coreLocation` below -- that is the SERVICE AREA
+          // pin (Managing the contractor record), never his own home.
+          address: contractor.address,
+          emergencyContactName: contractor.emergencyContactName,
+          emergencyContactPhone: contractor.emergencyContactPhone,
           coreLocation: contractor.coreLocation ?? Prisma.JsonNull,
           lastRadiusKm: contractor.lastRadiusKm,
           insurer: contractor.insurer,
@@ -264,6 +359,119 @@ export async function seedFixtures(
     await reserveUpTo("CUS", customer.codeNumber, client);
   }
 
+  // ---------------------------------------------------------------------
+  // Feature 2003, AC12: Bob's three live jobs and their assignments -- the
+  // dashboard's own fixture. Create-if-missing (base.ts's own rule), keyed
+  // on the reference, so a second run of this seed is a no-op here too.
+  // ---------------------------------------------------------------------
+  const jobFixtures = [
+    {
+      reference: "JOB-1042",
+      customerCode: "CUS-1050", // Sarah, Hilton
+      postcode: "6163",
+      suburb: "Hilton",
+      lat: -32.0731,
+      lng: 115.7797,
+      placeId: "fixture-place-hilton",
+      // AC2: "awaiting Bob's answer for Thursday 8:00am" -- always the next
+      // Thursday, so the seed reads true on whichever day it runs.
+      assignment: (now: Date, zone: string) => ({
+        status: "assigned" as const,
+        proposedSlot: nextWeekdayAt(zone, "thu", 8, 0, now),
+        confirmedSlot: null,
+      }),
+      jobStatus: "assigned" as const,
+    },
+    {
+      reference: "JOB-1051",
+      customerCode: "CUS-1052", // Tom, Kalamunda
+      postcode: "6076",
+      suburb: "Kalamunda",
+      lat: -31.974211,
+      lng: 116.051444,
+      placeId: "fixture-place-kalamunda",
+      // AC2: "already accepted for today 1:00pm".
+      assignment: (now: Date, zone: string) => ({
+        status: "accepted" as const,
+        proposedSlot: todayAt(zone, 13, 0, now),
+        confirmedSlot: todayAt(zone, 13, 0, now),
+      }),
+      jobStatus: "scheduled" as const,
+    },
+    {
+      reference: "JOB-1039",
+      customerCode: "CUS-1053", // Margaret, Applecross
+      postcode: "6153",
+      suburb: "Applecross",
+      lat: -32.015475,
+      lng: 115.836868,
+      placeId: "fixture-place-applecross",
+      // AC3: on hold, no return date -- the original visit already happened
+      // (a slot a few days back); Job.status = on_hold is what makes the
+      // dashboard treat this assignment as having no (sortable) slot at
+      // all, whatever `confirmedSlot` still holds (Job Lifecycle & Statuses).
+      assignment: (now: Date, zone: string) => ({
+        status: "in_progress" as const,
+        proposedSlot: todayAt(zone, 9, 0, new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000)),
+        confirmedSlot: todayAt(zone, 9, 0, new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000)),
+      }),
+      jobStatus: "on_hold" as const,
+    },
+  ];
+
+  const jobsCreated: string[] = [];
+  const bob = await client.contractor.findUnique({ where: { code: "CON-014" }, include: { specialties: true } });
+  const plumbingSpecialty = bob?.specialties.find((s) => s.trade === "Plumbing");
+  const plumbingType = await client.serviceType.findUnique({ where: { trade: "Plumbing" } });
+  const zone = zoneForState("WA");
+  const now = new Date();
+
+  if (bob && plumbingSpecialty && plumbingType) {
+    for (const fixture of jobFixtures) {
+      const existingJob = await client.job.findUnique({ where: { reference: fixture.reference } });
+      if (existingJob !== null) continue;
+
+      const customer = await client.customer.findUniqueOrThrow({ where: { code: fixture.customerCode } });
+      const created = await client.job.create({
+        data: {
+          reference: fixture.reference,
+          customerId: customer.id,
+          serviceTypeId: plumbingType.id,
+          customerCalloutRate: plumbingType.customerCalloutRate,
+          customerStandardRate: plumbingType.customerStandardRate,
+          postcode: fixture.postcode,
+          serviceLocation: {
+            suburb: fixture.suburb,
+            state: "WA",
+            country: "AU",
+            lat: fixture.lat,
+            lng: fixture.lng,
+            placeId: fixture.placeId,
+          },
+          timezone: zone,
+          preferredWindow: "morning",
+          status: fixture.jobStatus,
+        },
+      });
+      const assignmentInput = fixture.assignment(now, zone);
+      await client.assignment.create({
+        data: {
+          jobId: created.id,
+          contractorId: bob.id,
+          specialtyId: plumbingSpecialty.id,
+          status: assignmentInput.status,
+          proposedSlot: assignmentInput.proposedSlot,
+          confirmedSlot: assignmentInput.confirmedSlot,
+        },
+      });
+      jobsCreated.push(fixture.reference);
+    }
+    // Guard: JOB-1051 sits above the sequence's configured start (1043) --
+    // never let a generated JOB- reference land on it.
+    await reserveUpTo("JOB", 1051, client);
+  }
+  result.jobsCreated.push(...jobsCreated);
+
   return result;
 }
 
@@ -274,7 +482,8 @@ async function main(): Promise<void> {
   const result = await seedFixtures();
   console.log(
     `fixture seed: contractors created: ${result.contractorsCreated.length ? result.contractorsCreated.join(", ") : "none (already present)"}; ` +
-      `customers created: ${result.customersCreated.length ? result.customersCreated.join(", ") : "none (already present)"}`,
+      `customers created: ${result.customersCreated.length ? result.customersCreated.join(", ") : "none (already present)"}; ` +
+      `jobs created: ${result.jobsCreated.length ? result.jobsCreated.join(", ") : "none (already present)"}`,
   );
   // Feature 1003 -- every seeded login gets the same dev password.
   const authResult = await seedAuthFixtures();

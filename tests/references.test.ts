@@ -88,7 +88,10 @@ describe("AC6 -- sequential, unique, independent", () => {
       (row) => row.code,
     );
     expect(seededContractorCodes.sort()).toEqual(["CON-014", "CON-021", "CON-030"]);
-    expect(seededCustomerCodes).toEqual(["CUS-1050"]);
+    // CUS-1051 is deliberately skipped (Feature 2003) -- it is a real,
+    // hand-inserted row outside this seed (project/setup/01-dev-environment.md,
+    // section 7b), so Tom and Margaret take CUS-1052/1053 instead.
+    expect(seededCustomerCodes.sort()).toEqual(["CUS-1050", "CUS-1052", "CUS-1053"]);
 
     // Draw a handful and prove none of them lands on a seeded code.
     for (let index = 0; index < 5; index += 1) {
@@ -102,8 +105,10 @@ describe("AC6 -- sequential, unique, independent", () => {
   });
 
   test("AC6: the document sequences start past the cast's reference jobs too", async () => {
-    // JOB-1042, INV-2041 and CINV-517 are not seeded (the features that compute
-    // them create them), but a generated number must never reuse one.
+    // JOB-1042 (Sarah's), JOB-1051 (Tom's) and JOB-1039 (Margaret's) are now
+    // seeded (Feature 2003); INV-2041 and CINV-517 still are not (the
+    // features that compute them create them) -- either way a generated
+    // number must never reuse one.
     expect(parseReference("JOB", await nextReference("JOB", db))!).toBeGreaterThan(1042);
     expect(parseReference("INV", await nextReference("INV", db))!).toBeGreaterThan(2041);
     expect(parseReference("CINV", await nextReference("CINV", db))!).toBeGreaterThan(517);

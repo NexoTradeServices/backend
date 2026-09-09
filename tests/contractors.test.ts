@@ -291,6 +291,9 @@ describe("AC5 -- a full trade row round-trips as whole cents", () => {
           phone: bob.phone,
           businessName: bob.businessName,
           abn: bob.abn,
+          address: bob.address,
+          emergencyContactName: bob.emergencyContactName,
+          emergencyContactPhone: bob.emergencyContactPhone,
           specialties: [validTradeRow()],
           insurer: "QBE",
           insurancePolicyNo: "PL-2291-884",
@@ -311,10 +314,11 @@ describe("AC5 -- a full trade row round-trips as whole cents", () => {
 
     const reopen = await request(app).get(`/api/contractors/${bob.code}`).set("Cookie", cookie);
     const missing = (reopen.body as { missing: string[] }).missing;
-    // The fixture never gives Bob his own address, but address no longer
-    // counts (design, "Managing the contractor record"); his fixture-seeded
-    // service area (2002, decision 13) covers that item too, so this PUT
-    // leaves him with nothing missing at all.
+    // Address never counts toward Ready to dispatch (design, "Managing the
+    // contractor record"); his fixture-seeded service area (2002, decision
+    // 13) covers the last blocking item, and his fixture-seeded own address
+    // + emergency contact (2003, AC6) cover the two non-blocking nudges --
+    // this PUT round-trips all three, leaving him with nothing missing.
     expect(missing).toEqual([]);
   });
 
@@ -329,14 +333,22 @@ describe("AC5 -- a full trade row round-trips as whole cents", () => {
     const ok = await request(app)
       .put(`/api/contractors/${bob.code}`)
       .set("Cookie", cookie)
-      .send(validBody({ name: bob.name, email: bob.email, phone: bob.phone }));
+      .send(validBody({ name: bob.name, email: bob.email, phone: bob.phone, specialties: [validTradeRow()] }));
     expect(ok.status).toBe(200);
     expect((ok.body as { address: { street: string } }).address).toEqual({ street: "Fremantle WA 6160" });
 
     const bad = await request(app)
       .put(`/api/contractors/${bob.code}`)
       .set("Cookie", cookie)
-      .send(validBody({ name: bob.name, email: bob.email, phone: bob.phone, address: { foo: "bar" } }));
+      .send(
+        validBody({
+          name: bob.name,
+          email: bob.email,
+          phone: bob.phone,
+          specialties: [validTradeRow()],
+          address: { foo: "bar" },
+        }),
+      );
     expect(bad.status).toBe(400);
     expect((bad.body as { field?: string }).field).toBe("address");
   });
@@ -415,7 +427,7 @@ describe("AC8 -- deactivating Bob", () => {
     const res = await request(app)
       .put(`/api/contractors/${bob.code}`)
       .set("Cookie", cookie)
-      .send(validBody({ name: bob.name, email: bob.email, phone: bob.phone, active: false }));
+      .send(validBody({ name: bob.name, email: bob.email, phone: bob.phone, active: false, specialties: [validTradeRow()] }));
     expect(res.status).toBe(200);
 
     const updated = await db.contractor.findUniqueOrThrow({ where: { id: bob.id } });
@@ -455,14 +467,14 @@ describe("AC9 -- reactivating Bob", () => {
     await request(app)
       .put(`/api/contractors/${bob.code}`)
       .set("Cookie", cookie)
-      .send(validBody({ name: bob.name, email: bob.email, phone: bob.phone, active: false }));
+      .send(validBody({ name: bob.name, email: bob.email, phone: bob.phone, active: false, specialties: [validTradeRow()] }));
 
     const notificationsBefore = await db.notification.count();
 
     const res = await request(app)
       .put(`/api/contractors/${bob.code}`)
       .set("Cookie", cookie)
-      .send(validBody({ name: bob.name, email: bob.email, phone: bob.phone, active: true }));
+      .send(validBody({ name: bob.name, email: bob.email, phone: bob.phone, active: true, specialties: [validTradeRow()] }));
     expect(res.status).toBe(200);
 
     const reactivated = await db.contractor.findUniqueOrThrow({ where: { id: bob.id } });
@@ -526,10 +538,13 @@ describe("AC12 -- the migration and seed shape", () => {
     expect(priya.insuranceExpiry).not.toBeNull();
     expect(priya.insuranceExpiry && priya.insuranceExpiry.getTime()).toBeLessThan(Date.now());
 
-    // columns exist and are nullable/optional as the migration promises
-    expect(bob.address).toBeNull();
-    expect(bob.coreLocation).not.toBeNull(); // seeded, unlike address
-    expect(bob.emergencyContactName).toBeNull();
+    // Feature 2003, AC6: his own address + emergency contact are seeded too,
+    // so his dashboard shows no readiness panel at all.
+    expect(bob.address).not.toBeNull();
+    expect(bob.coreLocation).not.toBeNull();
+    expect(bob.emergencyContactName).not.toBeNull();
+    // agreementVersion/agreementAcceptedAt: still nullable/optional, unset --
+    // acceptance is 2006's, out of this feature's scope.
     expect(bob.agreementVersion).toBeNull();
     expect(bob.agreementAcceptedAt).toBeNull();
   });

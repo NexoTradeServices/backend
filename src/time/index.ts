@@ -159,6 +159,52 @@ export function formatLabelled(zone: string, moment: Date): string {
 }
 
 /**
+ * `zone`'s wall-clock TODAY at `hour:minute` (default: now's calendar day).
+ * Feature 2003's fixture seed uses this to keep "accepted for today" true on
+ * whichever day the seed actually runs.
+ */
+export function todayAt(zone: string, hour: number, minute: number, from: Date = new Date()): Date {
+  return zonedTimeToUtc(zone, ymdIn(zone, from), hour, minute);
+}
+
+/**
+ * The next `target` weekday strictly AFTER `from`'s calendar day in `zone`,
+ * at `hour:minute` -- e.g. "the next Thursday, 8am". Never today, even if
+ * `from` already falls on `target` (feature 2003's fixture seed: a proposed
+ * slot always reads in the future).
+ */
+export function nextWeekdayAt(
+  zone: string,
+  target: Weekday,
+  hour: number,
+  minute: number,
+  from: Date = new Date(),
+): Date {
+  const todayYmd = ymdIn(zone, from);
+  const currentWeekday = weekdayIn(zone, from);
+  const delta = ((WEEKDAY_ORDER.indexOf(target) - WEEKDAY_ORDER.indexOf(currentWeekday) + 7) % 7) || 7;
+  return zonedTimeToUtc(zone, addDays(todayYmd, delta), hour, minute);
+}
+
+/**
+ * `moment` rendered for a dashboard card, in `zone` -- `Today, 1:00pm AWST`
+ * on the same calendar day as `now`, otherwise `Thu 10/09, 8:00am AWST`
+ * (Contractor Workflow step 3; Flow walkthrough "Contractor dashboard and
+ * rates (2003)", state 1).
+ */
+export function formatSlotLabel(zone: string, moment: Date, now: Date = new Date()): string {
+  const time = formatLabelled(zone, moment);
+  if (todayIn(zone, moment) === todayIn(zone, now)) {
+    return `Today, ${time}`;
+  }
+  const weekdayLabel = new Intl.DateTimeFormat("en-AU", { timeZone: zone, weekday: "short" }).format(moment);
+  const { month, day } = ymdIn(zone, moment);
+  const dd = String(day).padStart(2, "0");
+  const mm = String(month).padStart(2, "0");
+  return `${weekdayLabel} ${dd}/${mm}, ${time}`;
+}
+
+/**
  * Interpolate this in place of a bare `now()` whenever raw SQL
  * compares against a stored timestamp. Prisma's `DateTime` is
  * `TIMESTAMP(3) WITHOUT TIME ZONE` holding UTC, while bare `now()` is a

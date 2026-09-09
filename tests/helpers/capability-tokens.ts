@@ -1,8 +1,11 @@
 // Test helpers -- Feature 1005, capability tokens.
 //
-// JOB-1042 and Bob's assignment on it are the cast's reference job (cast.md),
-// deliberately NOT part of the base fixture seed (see fixtures.ts) -- each
-// feature that needs them creates its own, here, in its own tests.
+// JOB-1042 is the cast's reference job (cast.md); Feature 2003 made it part
+// of the fixture seed (fixtures.ts), dispatched to Bob awaiting his answer.
+// This helper reuses THAT row when it is already there (every caller here
+// runs `seedCast()` -- notifications.ts -- first) and only mints its own
+// assignment on it, so this suite's own respond/track/review token scenarios
+// stay independent of whatever slot 2003's fixture happens to carry.
 //
 // Also: two test-only templates carrying `{{linkUrl}}`, so the dispatch-path
 // criteria can prove a real message contains a real link. The wording is a
@@ -28,19 +31,22 @@ export async function seedJob1042(client: PrismaClient, cast: CastIds): Promise<
     where: { contractorId: cast.bobId, trade: "Plumbing" },
   });
 
-  const job = await client.job.create({
-    data: {
-      reference: "JOB-1042",
-      customerId: cast.sarahId,
-      serviceTypeId: serviceType.id,
-      customerCalloutRate: 25_000,
-      customerStandardRate: 18_000,
-      postcode: "6160",
-      serviceLocation: { suburb: "Fremantle", state: "WA", country: "AU", postcode: "6160" },
-      timezone: zoneForState("WA"),
-      preferredWindow: "morning",
-    },
-  });
+  const existing = await client.job.findUnique({ where: { reference: "JOB-1042" } });
+  const job =
+    existing ??
+    (await client.job.create({
+      data: {
+        reference: "JOB-1042",
+        customerId: cast.sarahId,
+        serviceTypeId: serviceType.id,
+        customerCalloutRate: 25_000,
+        customerStandardRate: 18_000,
+        postcode: "6160",
+        serviceLocation: { suburb: "Fremantle", state: "WA", country: "AU", postcode: "6160" },
+        timezone: zoneForState("WA"),
+        preferredWindow: "morning",
+      },
+    }));
 
   const assignment = await client.assignment.create({
     data: {
