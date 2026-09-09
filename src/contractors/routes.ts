@@ -354,13 +354,21 @@ function readyInputOf(contractor: NonNullable<ContractorWithRelations>): ReadyIn
     payoutBsb: contractor.payoutBsb,
     payoutAccountNo: contractor.payoutAccountNo,
     payoutAccountName: contractor.payoutAccountName,
+    address: contractor.address,
+    emergencyContactName: contractor.emergencyContactName,
+    emergencyContactPhone: contractor.emergencyContactPhone,
     specialties: contractor.specialties.map((s) => ({ status: s.status, licenceExpiry: s.licenceExpiry })),
     servedPostcodeCount: contractor._count.servedPostcodes,
   };
 }
 
 async function toDto(client: PrismaClient, contractor: NonNullable<ContractorWithRelations>) {
-  const { ready, missing } = readyToDispatch(readyInputOf(contractor));
+  // Ops's list/record screens: unchanged shape and wording since 2001 --
+  // `ready.ts` now returns structured items (2003), but ops only ever
+  // rendered the copy text, so mapping back to `string[]` here means ops's
+  // own screens and tests need no changes at all.
+  const { ready, missing: missingItems } = readyToDispatch(readyInputOf(contractor));
+  const missing = missingItems.map((item) => item.copy);
   const credential = await client.account.findFirst({
     where: { userId: contractor.userId, providerId: "credential" },
     select: { createdAt: true },
