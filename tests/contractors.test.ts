@@ -570,7 +570,9 @@ describe("decision 8 -- a specialty used on a job cannot be removed", () => {
         postcode: "6163",
         serviceLocation: { suburb: "Hilton", state: "WA", country: "AU", lat: -32.07, lng: 115.78, placeId: "x" },
         timezone: "Australia/Perth",
+        source: "web",
         preferredWindow: "morning",
+        preferredDate: new Date(),
       },
     });
     await db.assignment.create({

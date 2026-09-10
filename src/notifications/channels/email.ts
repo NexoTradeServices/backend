@@ -40,13 +40,16 @@ export const emailChannel: ChannelComponent = {
       return { address: user.email };
     }
 
-    // Ops SMS has a home in the design -- PlatformSettings.operatorPhone, THE
-    // single contact number. Ops EMAIL has none: no field on PlatformSettings
-    // names the inbox that ops messages go to, and inventing one is a design
-    // decision this feature may not take. Parked as Q1 in the feature's
-    // change.md; the features that send to ops (3001, 4001, 7001) need it
-    // answered before they can.
-    return { reason: "no ops email address is configured -- see open question Q1 on feature 1004" };
+    // Feature 3001, AC6, BKLG-004: the four Ops rows all land in ONE shared
+    // inbox, PlatformSettings.operatorEmail -- never a person's, never
+    // derived from who holds the ops role (Notifications). recipientId is
+    // ignored here on purpose: there is no per-row ops entity to look up,
+    // only the one business address.
+    const operatorEmail = context.settings.operatorEmail.trim();
+    if (operatorEmail === "") {
+      return { reason: "PlatformSettings.operatorEmail is not set -- the owner sets it on /ops/settings" };
+    }
+    return { address: operatorEmail };
   },
 
   check(message) {

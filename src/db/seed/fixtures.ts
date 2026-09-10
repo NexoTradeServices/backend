@@ -432,6 +432,10 @@ export async function seedFixtures(
       if (existingJob !== null) continue;
 
       const customer = await client.customer.findUniqueOrThrow({ where: { code: fixture.customerCode } });
+      // Feature 3001, AC9: preferredDate is NOT NULL now -- each fixture's
+      // real date is the same date its own assignment is scheduled against
+      // (proposedSlot), so the job and its visit never disagree.
+      const assignmentInput = fixture.assignment(now, zone);
       const created = await client.job.create({
         data: {
           reference: fixture.reference,
@@ -449,11 +453,12 @@ export async function seedFixtures(
             placeId: fixture.placeId,
           },
           timezone: zone,
+          source: "web",
           preferredWindow: "morning",
+          preferredDate: assignmentInput.proposedSlot,
           status: fixture.jobStatus,
         },
       });
-      const assignmentInput = fixture.assignment(now, zone);
       await client.assignment.create({
         data: {
           jobId: created.id,

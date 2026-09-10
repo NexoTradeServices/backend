@@ -145,7 +145,9 @@ describe("AC1-AC4 -- Bob's live job list, sorted", () => {
           postcode: "6163",
           serviceLocation: { suburb: "Hilton", state: "WA", country: "AU", lat: -32.07, lng: 115.78, placeId: "x" },
           timezone: "Australia/Perth",
+          source: "web",
           preferredWindow: "morning",
+          preferredDate: new Date(),
           status: "cancelled",
         },
       });
@@ -198,7 +200,9 @@ describe("AC1-AC4 -- Bob's live job list, sorted", () => {
         postcode: "6163",
         serviceLocation: { suburb: "Hilton", state: "WA", country: "AU", lat: -32.07, lng: 115.78, placeId: "x" },
         timezone: zone,
+        source: "web",
         preferredWindow: "morning",
+        preferredDate: fixedSlot,
         status: "assigned",
       },
     });

@@ -44,7 +44,9 @@ export async function seedJob1042(client: PrismaClient, cast: CastIds): Promise<
         postcode: "6160",
         serviceLocation: { suburb: "Fremantle", state: "WA", country: "AU", postcode: "6160" },
         timezone: zoneForState("WA"),
+        source: "web",
         preferredWindow: "morning",
+        preferredDate: new Date(),
       },
     }));
 
