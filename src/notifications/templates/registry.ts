@@ -8,9 +8,16 @@
 import type { NotificationChannel, NotificationTemplate } from "../types.js";
 import { passwordResetEmail } from "./password-reset.email.js";
 import { contractorOnboardingEmail } from "./contractor-onboarding.email.js";
+import { enquiryConfirmationEmail } from "./enquiry-confirmation.email.js";
+import { newJobRequestEmail } from "./new-job-request.email.js";
 
 /** Every template this build ships. Features append; nothing else registers. */
-const BUILT_IN: NotificationTemplate[] = [passwordResetEmail, contractorOnboardingEmail];
+const BUILT_IN: NotificationTemplate[] = [
+  passwordResetEmail,
+  contractorOnboardingEmail,
+  enquiryConfirmationEmail,
+  newJobRequestEmail,
+];
 
 function key(type: string, channel: NotificationChannel): string {
   return `${type}:${channel}`;

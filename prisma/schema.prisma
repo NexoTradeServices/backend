@@ -72,7 +72,14 @@ enum PreferredWindow {
   morning
   afternoon
   evening
-  specific
+}
+
+/// the road a job arrived by; endpoint-written, never caller-sent -- Feature
+/// 3001, Customer Workflow step 8. web = the public enquiry form; phone =
+/// ops phone-taken intake (3005).
+enum JobSource {
+  web
+  phone
 }
 
 enum ServiceLevel {
@@ -562,14 +569,24 @@ model Job {
   siteAddress          Json?
   /// IANA name (Australia/Perth). FROZEN at job creation from serviceLocation's
   /// state, never typed; every time this job shows or sends renders in it --
-  /// see Data Model / Time. No jobs exist yet, so no backfill question (Feature
-  /// 1008 decision 1); the creation helper (3001) is the only writer.
+  /// see Data Model / Time. The enquiry-form creation helper (3001) is the
+  /// only writer.
   timezone             String
   /// customer's notes
   description          String?
+  /// SNAPSHOT of the prefilled-option labels the customer picked, as shown
+  /// at creation (Customer Workflow step 4) -- the trade's live option list
+  /// can change later. Empty/absent when the trade's own prefilledFields is
+  /// empty (Feature 3001, AC11).
+  selectedOptions      Json?
+  /// the road this job arrived by -- endpoint-written, never caller-sent
+  /// (Feature 3001, Customer Workflow step 8; JobSource above)
+  source               JobSource
   preferredWindow      PreferredWindow
-  /// when preferredWindow = specific
-  preferredDate        DateTime?       @db.Date
+  /// defaults to today on the form; the customer can move it later, always
+  /// paired with preferredWindow above -- not conditional, every job
+  /// carries both (Feature 3001, BKLG-002)
+  preferredDate        DateTime        @db.Date
   /// THE PRICING URGENCY, ops-set at dispatch
   serviceLevel         ServiceLevel?
   status               JobStatus       @default(new)

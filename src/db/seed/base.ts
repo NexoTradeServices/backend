@@ -57,24 +57,39 @@ export async function seedBase(client: PrismaClient = getPrisma()): Promise<Seed
   // The multipliers are placeholders too (normal 1.0, emergency 1.5, weekend 1.5).
   const serviceLevelMultipliers = { normal: 1.0, emergency: 1.5, weekend: 1.5 };
 
+  // Feature 3001, AC1/AC11: a starter set so the enquiry form has something
+  // real to show the day it is built. The owner resets these on /ops/pricing
+  // (1007) at any time.
+  const plumbingPrefilledFields = [
+    "Leaking tap or mixer",
+    "Blocked drain",
+    "Hot water system",
+    "Toilet or cistern",
+    "Burst pipe",
+    "Something else",
+  ];
+
   const serviceTypes = [
     {
       trade: "Plumbing",
       slug: "plumbing",
       customerCalloutRate: 25_000,
       customerStandardRate: 18_000,
+      prefilledFields: plumbingPrefilledFields,
     },
     {
       trade: "Electrical",
       slug: "electrical",
       customerCalloutRate: 26_000, // PLACEHOLDER
       customerStandardRate: 19_000, // PLACEHOLDER
+      prefilledFields: [] as string[],
     },
     {
       trade: "Air conditioning",
       slug: "air-conditioning",
       customerCalloutRate: 27_000, // PLACEHOLDER
       customerStandardRate: 20_000, // PLACEHOLDER
+      prefilledFields: [] as string[],
     },
   ];
 
@@ -82,7 +97,7 @@ export async function seedBase(client: PrismaClient = getPrisma()): Promise<Seed
     const existing = await client.serviceType.findUnique({ where: { trade: serviceType.trade } });
     if (existing === null) {
       await client.serviceType.create({
-        data: { ...serviceType, serviceLevelMultipliers, prefilledFields: [] },
+        data: { ...serviceType, serviceLevelMultipliers },
       });
       result.serviceTypesCreated.push(serviceType.trade);
     }
