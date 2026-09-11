@@ -63,7 +63,7 @@ function validBody(overrides: Record<string, unknown> = {}): Record<string, unkn
       placeId: "fixture-place-joondalup",
     },
     trade: "Plumbing",
-    selectedOptions: ["Leaking tap or mixer"],
+    selectedOptions: ["Where in the property is it?: Kitchen"],
     // A fixed Wednesday -- never a weekend, so AC1's normal-rate case is
     // never flaky against the day this suite happens to run.
     preferredDate: "2026-09-09",
@@ -122,7 +122,7 @@ describe("AC1 -- Karl's enquiry, never contacted before", () => {
       lat: -31.7448,
       lng: 115.7661,
     });
-    expect(job.selectedOptions).toEqual(["Leaking tap or mixer"]);
+    expect(job.selectedOptions).toEqual(["Where in the property is it?: Kitchen"]);
     expect(job.timezone).toBe("Australia/Perth");
     expect(job.customerCalloutRate).toBe(25_000);
     expect(job.customerStandardRate).toBe(18_000);
@@ -306,12 +306,12 @@ describe("GET /api/enquiries/form-data", () => {
     expect(body.operatorPhone).toBe(settings.operatorPhone);
     const plumbing = body.serviceTypes.find((s) => s.trade === "Plumbing");
     expect(plumbing?.prefilledFields).toEqual([
-      "Leaking tap or mixer",
-      "Blocked drain",
-      "Hot water system",
-      "Toilet or cistern",
-      "Burst pipe",
-      "Something else",
+      "Where in the property is it?",
+      "What brand is it, if you know?",
+      "Roughly how old is it?",
+      "Is water leaking right now?",
+      "Can you turn the water off at the mains?",
+      "Is the hot water gas or electric?",
     ]);
     expect(plumbing?.customerCalloutRate).toBe(25_000);
   });

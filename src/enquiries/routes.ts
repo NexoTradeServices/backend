@@ -338,7 +338,12 @@ export function enquiryRoutes(client: PrismaClient, options: EnquiryRoutesOption
 
       // AC6: addressed from PlatformSettings.operatorEmail by the email
       // channel (BKLG-004) -- recipientId is unused there, the job id is
-      // handed in as the nearest meaningful pointer.
+      // handed in as the nearest meaningful pointer. Feature 4001, plan
+      // decision 10: the link to the job page is the environment's web
+      // origin plus the path. The process refuses to boot without
+      // WEB_ORIGIN (index.ts); were it ever missing here, the template's own
+      // missing-variable rule fails this one row, never the enquiry.
+      const webOrigin = process.env["WEB_ORIGIN"];
       await sendNotification(
         {
           type: "new_job_request",
@@ -355,6 +360,7 @@ export function enquiryRoutes(client: PrismaClient, options: EnquiryRoutesOption
             suburb: input.location.suburb,
             preferredDate: input.preferredDate.slice(0, 10),
             preferredWindow: WINDOW_LABELS[input.preferredWindow],
+            ...(webOrigin ? { jobUrl: `${webOrigin}/ops/jobs/${job.reference}` } : {}),
           },
         },
         client,

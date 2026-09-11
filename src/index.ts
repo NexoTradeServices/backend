@@ -16,6 +16,7 @@ import { contractorServiceAreaRoutes } from './contractors/service-area-routes.j
 import { contractorDashboardRoutes } from './contractors/dashboard-routes.js'
 import { suburbRoutes } from './suburbs/routes.js'
 import { enquiryRoutes } from './enquiries/routes.js'
+import { jobRoutes } from './jobs/routes.js'
 import { getPrisma } from './db/client.js'
 
 const app = express()
@@ -76,6 +77,7 @@ app.use('/api/contractor', contractorServiceAreaRoutes(prisma))
 app.use('/api/contractor', contractorDashboardRoutes(prisma))
 app.use('/api/suburbs', suburbRoutes(prisma))
 app.use('/api/enquiries', enquiryRoutes(prisma))
+app.use('/api/jobs', jobRoutes(prisma))
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', service: 'tradeservice-backend' })

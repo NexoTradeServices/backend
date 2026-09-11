@@ -59,14 +59,17 @@ export async function seedBase(client: PrismaClient = getPrisma()): Promise<Seed
 
   // Feature 3001, AC1/AC11: a starter set so the enquiry form has something
   // real to show the day it is built. The owner resets these on /ops/pricing
-  // (1007) at any time.
+  // (1007) at any time. Feature 4001, BKLG-023: each is a question wanting a
+  // typed answer (Customer Workflow step 4), never a pick-list label -- the
+  // job page reads "<question>: <answer>". Create-if-missing, so a database
+  // seeded before this keeps its old rows until someone retypes them.
   const plumbingPrefilledFields = [
-    "Leaking tap or mixer",
-    "Blocked drain",
-    "Hot water system",
-    "Toilet or cistern",
-    "Burst pipe",
-    "Something else",
+    "Where in the property is it?",
+    "What brand is it, if you know?",
+    "Roughly how old is it?",
+    "Is water leaking right now?",
+    "Can you turn the water off at the mains?",
+    "Is the hot water gas or electric?",
   ];
 
   const serviceTypes = [
