@@ -199,7 +199,7 @@ describe("AC5 -- prefilled options reorder", () => {
     const cookie = await signInCookie("owner@idelta.com.au");
     const plumbing = await db.serviceType.findFirstOrThrow({ where: { trade: "Plumbing" } });
 
-    const reordered = ["Blocked drain", "Leaking tap", "Hot water system"];
+    const reordered = ["What brand is it, if you know?", "Where in the property is it?", "Roughly how old is it?"];
     const putRes = await request(app)
       .put(`/api/service-types/${plumbing.id}`)
       .set("Cookie", cookie)

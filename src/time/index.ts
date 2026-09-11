@@ -205,6 +205,42 @@ export function formatSlotLabel(zone: string, moment: Date, now: Date = new Date
 }
 
 /**
+ * The calendar date `moment` falls on in `zone`, for a person -- `Tue 08/09/26`.
+ * Carries the year, unlike formatSlotLabel: the ops queue reaches closed
+ * jobs from any year through its Closed filter and search (Feature 4001).
+ */
+export function formatDateLabel(zone: string, moment: Date): string {
+  const weekdayLabel = new Intl.DateTimeFormat("en-AU", { timeZone: zone, weekday: "short" }).format(moment);
+  const { year, month, day } = ymdIn(zone, moment);
+  const dd = String(day).padStart(2, "0");
+  const mm = String(month).padStart(2, "0");
+  const yy = String(year % 100).padStart(2, "0");
+  return `${weekdayLabel} ${dd}/${mm}/${yy}`;
+}
+
+/**
+ * `moment` as a dated time for a person, in `zone` -- `Today, 9:14am AWST`
+ * on the same calendar day as `now`, otherwise `Tue 08/09/26, 3:20pm AWST`.
+ * When a job arrived, when a note was written (Feature 4001).
+ */
+export function formatDateTimeLabel(zone: string, moment: Date, now: Date = new Date()): string {
+  const time = formatLabelled(zone, moment);
+  if (todayIn(zone, moment) === todayIn(zone, now)) {
+    return `Today, ${time}`;
+  }
+  return `${formatDateLabel(zone, moment)}, ${time}`;
+}
+
+/**
+ * A plain DATE (preferredDate, an expiry) for a person -- `Fri 11/09/26`.
+ * A plain date carries no zone and is stored at UTC midnight, so it is read
+ * in UTC, the frame it is stored in: no zone conversion happens here.
+ */
+export function formatPlainDate(date: Date): string {
+  return formatDateLabel("UTC", date);
+}
+
+/**
  * Interpolate this in place of a bare `now()` whenever raw SQL
  * compares against a stored timestamp. Prisma's `DateTime` is
  * `TIMESTAMP(3) WITHOUT TIME ZONE` holding UTC, while bare `now()` is a

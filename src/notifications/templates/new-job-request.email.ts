@@ -3,8 +3,9 @@
 //
 // Transactional, addressed from PlatformSettings.operatorEmail (BKLG-004) --
 // the first message this module actually sends to the shared ops inbox.
-// Plan decision 4: no deep link into the ops portal, because /ops/jobs does
-// not exist yet (4001) -- plain text only; the link is added when 4001 ships.
+// Feature 4001, plan decision 10: it carries a link straight to the job
+// page, built by the sender from the environment's web origin (Foundations /
+// Brand identity, Links inside messages) -- never a hostname in this file.
 import type { NotificationTemplate } from "../types.js";
 import { fill, fillHtml } from "./render.js";
 
@@ -14,12 +15,15 @@ Trade: {{trade}}
 Suburb: {{suburb}}
 Preferred: {{preferredDate}}, {{preferredWindow}}
 
+Open the job: {{jobUrl}}
+
 -- {{platformName}}`;
 
 const HTML = `<p>New job request: <strong>{{jobReference}}</strong></p>
 <p>Trade: {{trade}}<br>
 Suburb: {{suburb}}<br>
 Preferred: {{preferredDate}}, {{preferredWindow}}</p>
+<p><a href="{{jobUrl}}">Open {{jobReference}}</a></p>
 <p>-- {{platformName}}</p>`;
 
 export const newJobRequestEmail: NotificationTemplate = {
