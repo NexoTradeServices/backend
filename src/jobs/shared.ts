@@ -25,7 +25,7 @@ const SHOWN_ASSIGNMENT_STATUSES: AssignmentStatus[] = ["assigned", "accepted", "
 
 export const jobInclude = {
   customer: { select: { code: true, name: true, phone: true, email: true, billingAddress: true } },
-  serviceType: { select: { trade: true } },
+  serviceType: { select: { trade: true, serviceLevelMultipliers: true } },
   assignments: {
     where: { status: { in: SHOWN_ASSIGNMENT_STATUSES } },
     orderBy: { dispatchedAt: "desc" },
@@ -61,6 +61,14 @@ export function asAddress(value: unknown): Address | null {
 export function sameAddress(a: Address | null, b: Address | null): boolean {
   if (a === null || b === null) return a === b;
   return a.placeId === b.placeId && a.street === b.street;
+}
+
+/** Dispatch Logic -- MVP -- Manual: a job with no address at all cannot be dispatched. */
+export const NO_ADDRESS_REASON = "Job site address required before dispatch.";
+
+/** Feature 4002: the job's own site, or -- until one is picked -- the customer's billing address (Dispatch Logic). */
+export function effectiveAddress(job: { siteAddress: unknown; customer: { billingAddress: unknown } }): Address | null {
+  return asAddress(job.siteAddress) ?? asAddress(job.customer.billingAddress);
 }
 
 export function suburbOf(serviceLocation: unknown): string {

@@ -555,7 +555,10 @@ model Job {
   parentJobId          String?
   customerId           String
   serviceTypeId        String
-  /// SNAPSHOT of ServiceType at JOB CREATION -- price shown = price billed
+  /// SNAPSHOT of ServiceType at JOB CREATION, UNMULTIPLIED (BKLG-020,
+  /// Feature 4002) -- the rate card the customer's price list is fixed to;
+  /// the service-level multiplier is applied only at dispatch, against the
+  /// slot's real date (Invoicing / Two-tier pricing -- rate snapshots)
   customerCalloutRate  Int
   customerStandardRate Int
   /// WHERE THE WORK HAPPENS. Own column because every contractor match filters

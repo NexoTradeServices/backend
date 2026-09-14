@@ -323,7 +323,7 @@ describe("AC7 -- the contractor's own door", () => {
 });
 
 describe("AC9 -- the fixture seed's service-area shape", () => {
-  test("AC9: Bob carries the fixed served list; Dave and Priya carry no area at all", async () => {
+  test("AC9: Bob carries the fixed served list; Priya carries no area at all", async () => {
     const bob = await db.contractor.findUniqueOrThrow({ where: { code: "CON-014" }, include: { servedPostcodes: true } });
     expect(bob.coreLocation).toMatchObject({ suburb: "Fremantle", postcode: "6160", state: "WA" });
     expect(bob.lastRadiusKm).toBe(30);
@@ -332,11 +332,22 @@ describe("AC9 -- the fixture seed's service-area shape", () => {
     expect(bobPostcodes).not.toContain("6027");
     expect(bobPostcodes).not.toContain("6161");
 
-    for (const code of ["CON-021", "CON-030"]) {
-      const contractor = await db.contractor.findUniqueOrThrow({ where: { code }, include: { servedPostcodes: true } });
-      expect(contractor.coreLocation).toBeNull();
-      expect(contractor.lastRadiusKm).toBeNull();
-      expect(contractor.servedPostcodes).toHaveLength(0);
-    }
+    const priya = await db.contractor.findUniqueOrThrow({ where: { code: "CON-030" }, include: { servedPostcodes: true } });
+    expect(priya.coreLocation).toBeNull();
+    expect(priya.lastRadiusKm).toBeNull();
+    expect(priya.servedPostcodes).toHaveLength(0);
+  });
+
+  // Feature 4002, plan decision 16 (AC36): Dave now carries his own area --
+  // Victoria Park, 25km -- written by the fixture seed once he has none.
+  test("AC36 (4002): Dave carries Victoria Park, 25km, including 6153/6163/6076 but never 6027", async () => {
+    const dave = await db.contractor.findUniqueOrThrow({ where: { code: "CON-021" }, include: { servedPostcodes: true } });
+    expect(dave.coreLocation).toMatchObject({ suburb: "Victoria Park", postcode: "6100", state: "WA" });
+    expect(dave.lastRadiusKm).toBe(25);
+    const davePostcodes = dave.servedPostcodes.map((r) => r.postcode);
+    expect(davePostcodes).toContain("6153");
+    expect(davePostcodes).toContain("6163");
+    expect(davePostcodes).toContain("6076");
+    expect(davePostcodes).not.toContain("6027");
   });
 });

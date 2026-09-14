@@ -142,8 +142,8 @@ describe("AC1 -- Karl's enquiry, never contacted before", () => {
   });
 });
 
-describe("AC2 -- the weekend auto-bump", () => {
-  test("AC2: a Saturday date freezes the weekend multiplier on the job", async () => {
+describe("AC2 -- a Saturday date never bumps the job's own rate card (BKLG-020, superseded 4002-AC38)", () => {
+  test("AC2: a Saturday enquiry stores the base rates unmultiplied -- the level and its multiplier are Feature 4002's, at dispatch", async () => {
     // 2026-09-12 is a Saturday.
     const res = await request(app)
       .post("/api/enquiries")
@@ -151,8 +151,8 @@ describe("AC2 -- the weekend auto-bump", () => {
     expect(res.status).toBe(201);
 
     const job = await db.job.findUniqueOrThrow({ where: { reference: (res.body as EnquiryResponseBody).reference } });
-    expect(job.customerCalloutRate).toBe(37_500);
-    expect(job.customerStandardRate).toBe(27_000);
+    expect(job.customerCalloutRate).toBe(25_000);
+    expect(job.customerStandardRate).toBe(18_000);
   });
 });
 

@@ -252,11 +252,16 @@ export function enquiryRoutes(client: PrismaClient, options: EnquiryRoutesOption
       }
 
       const preferredDateValue = new Date(input.preferredDate);
+      // BKLG-020: the job stores the unmultiplied rate card (Invoicing /
+      // Two-tier pricing -- "rate snapshots"). Which price list applies is
+      // settled now; whether it is a weekend job is only settled at dispatch
+      // (Feature 4002), so the multiplier is never baked in here -- only
+      // computed, below, for the confirmation email's own wording.
       const multipliers = serviceType.serviceLevelMultipliers as { normal: number; weekend: number };
       const weekend = isWeekend(zone, preferredDateValue);
       const multiplier = weekend ? multipliers.weekend : multipliers.normal;
-      const customerCalloutRate = Math.round(serviceType.customerCalloutRate * multiplier);
-      const customerStandardRate = Math.round(serviceType.customerStandardRate * multiplier);
+      const displayCalloutRate = Math.round(serviceType.customerCalloutRate * multiplier);
+      const displayStandardRate = Math.round(serviceType.customerStandardRate * multiplier);
 
       const job = await client.$transaction(async (tx) => {
         // Find-or-create by email, guest by default -- never overwriting an
@@ -278,8 +283,8 @@ export function enquiryRoutes(client: PrismaClient, options: EnquiryRoutesOption
             reference: await nextReference("JOB", tx),
             customerId: customer.id,
             serviceTypeId: serviceType.id,
-            customerCalloutRate,
-            customerStandardRate,
+            customerCalloutRate: serviceType.customerCalloutRate,
+            customerStandardRate: serviceType.customerStandardRate,
             postcode: input.location.postcode,
             serviceLocation: {
               suburb: input.location.suburb,
@@ -315,7 +320,10 @@ export function enquiryRoutes(client: PrismaClient, options: EnquiryRoutesOption
         return createdJob;
       });
 
-      // AC5: quotes the rates just frozen on the job, never re-read live.
+      // BKLG-020, AC39: the job's frozen base card is never what a message
+      // quotes -- the price for THIS enquiry's date (a message stating a
+      // price computes it the way the invoice will; Notifications /
+      // Transactional messages).
       await sendNotification(
         {
           type: "enquiry_confirmation",
@@ -329,8 +337,8 @@ export function enquiryRoutes(client: PrismaClient, options: EnquiryRoutesOption
           context: {
             name: input.name,
             jobReference: job.reference,
-            calloutRate: formatDollars(customerCalloutRate),
-            standardRate: formatDollars(customerStandardRate),
+            calloutRate: formatDollars(displayCalloutRate),
+            standardRate: formatDollars(displayStandardRate),
           },
         },
         client,

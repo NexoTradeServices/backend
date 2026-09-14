@@ -26,10 +26,46 @@ import { Prisma } from "../generated/prisma/client.js";
 import { getPrisma, type PrismaClient } from "../db/client.js";
 import { CAPABILITY_LINK_CONTEXT_KEY, mintCapabilityLink, type LinkSpec } from "../capability-tokens/index.js";
 import { channelFor } from "./channels/index.js";
+import { CONSOLE_PROVIDER } from "./providers/console.js";
 import { resolveProvider } from "./providers/registry.js";
 import { blockedReason } from "./suppression.js";
 import { getTemplate } from "./templates/registry.js";
 import type { Notification, NotificationContext, SendContext } from "./types.js";
+
+/**
+ * Feature 4002, the interim `/dev/texts` page (build choice 13, until
+ * ClickSend is set up -- BKLG-028 retires it): the reserved key an SMS's
+ * rendered words -- link included -- ride under, the same pattern as the
+ * capability-link spec above. Set only when a text is handed to the console
+ * adapter, or failed for want of a configured provider (recordDevSmsText,
+ * below); a message a real provider actually sent never carries it.
+ */
+export const DEV_SMS_TEXT_CONTEXT_KEY = "__devSmsText";
+
+/**
+ * Keep the row's rendered words, then trim the set back to the latest 50
+ * (AC43) -- one row per SMS carrying the key, newest `createdAt` first, so a
+ * 51st push clears the oldest's words (the delivery-log row itself stays,
+ * as the design keeps every Notification row forever).
+ */
+async function recordDevSmsText(client: TransactionalDb, row: ClaimedRow, text: string): Promise<void> {
+  const context = contextOf(row);
+  await client.notification.update({
+    where: { id: row.id },
+    data: { context: { ...context, [DEV_SMS_TEXT_CONTEXT_KEY]: text } },
+  });
+  await client.$executeRawUnsafe(`
+    UPDATE "Notification"
+       SET context = context - '${DEV_SMS_TEXT_CONTEXT_KEY}'
+     WHERE context ? '${DEV_SMS_TEXT_CONTEXT_KEY}'
+       AND id NOT IN (
+         SELECT id FROM "Notification"
+          WHERE context ? '${DEV_SMS_TEXT_CONTEXT_KEY}'
+          ORDER BY "createdAt" DESC
+          LIMIT 50
+       )
+  `);
+}
 
 /**
  * Three attempts, then `failed` with the provider's error on the row. A
@@ -281,8 +317,15 @@ export async function deliver(client: TransactionalDb, row: ClaimedRow): Promise
   } catch (error: unknown) {
     // A misconfigured provider IS fixable -- the owner edits the settings row --
     // so this one keeps its retries rather than giving up on the message.
+    if (row.channel === "sms") {
+      await recordDevSmsText(client, row, rendered.text);
+    }
     await failAttempt(client, row, messageOf(error));
     return;
+  }
+
+  if (row.channel === "sms" && provider.name === CONSOLE_PROVIDER) {
+    await recordDevSmsText(client, row, rendered.text);
   }
 
   try {
