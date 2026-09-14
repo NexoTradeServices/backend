@@ -23,20 +23,56 @@
 // Hilton), excluding 6027 (Karl's Joondalup -- genuinely out of reach) and
 // excluding 6161 (Rottnest Island -- in range by straight-line distance but
 // crossed off by hand, so the derived-crossed rule has something real to
-// show on reopen). Dave and Priya keep no coreLocation and no served rows:
-// neither has ever saved a service area, so the shelf stays empty until they
-// do (decision 13) -- 2001's fixture had filled Dave's and Priya's
-// coreLocation as an incidental placeholder; 2002 corrects it.
+// show on reopen). Priya keeps no coreLocation and no served rows: she has
+// never saved a service area, so her shelf stays empty (decision 13) --
+// 2001's fixture had filled Dave's and Priya's coreLocation as an incidental
+// placeholder; 2002 corrects it. Dave's own service area is Feature 4002's
+// (below, plan decision 16) -- 2002 leaves him at nothing on purpose so this
+// feature's "written whenever missing" fixture has an empty shelf to fill.
 //
 // Feature 2003: every contractor's own address + emergency contact are now
 // filled too, so the non-blocking readiness nudges (ready.ts) never fire on
 // the base cast -- AC6 needs Bob to see no readiness panel at all.
+//
+// Feature 4002, plan decision 16: Dave gains a service area of his own --
+// Victoria Park, 25km -- written whenever he has no served postcodes, so an
+// existing dev database gains it too (below, after the main contractor
+// loop, not in CAST: create-if-missing only fires on a brand-new row, and
+// this has to also fix a Dave seeded before this feature existed). The 84
+// postcodes are the real nearest-centroid set within 25km of Victoria Park
+// (-31.9803, 115.9003), computed once against the seeded Suburb table
+// (2002's decision-13 pattern) -- includes 6153 (Margaret's Applecross),
+// 6163 (Sarah's Hilton) and 6076 (Tom's Kalamunda), excludes 6027 (Karl's
+// Joondalup, ~26km -- genuinely out of reach, AC36).
 import "dotenv/config";
 import { Prisma } from "../../generated/prisma/client.js";
 import { reserveUpTo } from "../reference.js";
 import { zoneForState, nextWeekdayAt, todayAt } from "../../time/index.js";
+import { serviceLevelFor } from "../../jobs/dispatch-level.js";
 import { disconnectPrisma, getPrisma, type PrismaClient } from "../client.js";
 import { seedAuthFixtures } from "./auth.js";
+
+const DAVE_CORE_LOCATION = {
+  suburb: "Victoria Park",
+  state: "WA",
+  country: "AU",
+  postcode: "6100",
+  lat: -31.9803,
+  lng: 115.9003,
+  placeId: "fixture-place-victoria-park-core",
+};
+const DAVE_RADIUS_KM = 25;
+const DAVE_SERVED_POSTCODES: readonly string[] = [
+  "6100", "6101", "6151", "6102", "6103", "6004", "6152", "6105", "6104", "6107",
+  "6106", "6051", "6000", "6003", "6148", "6050", "6005", "6153", "6009", "6052",
+  "6147", "6006", "6053", "6008", "6054", "6007", "6155", "6062", "6016", "6154",
+  "6149", "6014", "6010", "6150", "6060", "6058", "6057", "6156", "6108", "6055",
+  "6059", "6017", "6109", "6157", "6018", "6061", "6163", "6011", "6063", "6110",
+  "6012", "6015", "6056", "6021", "6019", "6090", "6158", "6164", "6076", "6162",
+  "6160", "6159", "6112", "6064", "6066", "6022", "6111", "6068", "6029", "6024",
+  "6067", "6020", "6070", "6065", "6166", "6023", "6071", "6026", "6079", "6025",
+  "6077", "6069", "6072", "6167",
+];
 
 /**
  * Money is whole cents. cast.md writes dollars: Bob's call-out $200 is 20000
@@ -341,6 +377,25 @@ export async function seedFixtures(
     await reserveUpTo("CON", contractor.codeNumber, client);
   }
 
+  // Feature 4002, plan decision 16: Dave's service area, written whenever he
+  // has none -- covers both a Dave just created above (fresh environment)
+  // and one seeded before this feature existed (an established dev
+  // database), the same "when missing" rule AC36 and AC1 rely on.
+  const daveForArea = await client.contractor.findUnique({
+    where: { code: "CON-021" },
+    include: { _count: { select: { servedPostcodes: true } } },
+  });
+  if (daveForArea && daveForArea._count.servedPostcodes === 0) {
+    await client.contractor.update({
+      where: { id: daveForArea.id },
+      data: {
+        coreLocation: DAVE_CORE_LOCATION,
+        lastRadiusKm: DAVE_RADIUS_KM,
+        servedPostcodes: { create: DAVE_SERVED_POSTCODES.map((postcode) => ({ postcode })) },
+      },
+    });
+  }
+
   for (const customer of CAST.customers) {
     const existing = await client.customer.findUnique({ where: { code: customer.code } });
     if (existing === null) {
@@ -426,50 +481,100 @@ export async function seedFixtures(
   const zone = zoneForState("WA");
   const now = new Date();
 
+  // Feature 4002, plan decision 16: JOB-1042 and JOB-1051 each get a
+  // one-hour hold/booking block, and every fixture past `new` gains its
+  // site copy + service level -- all three "when missing", so a database
+  // seeded before this feature existed gains them too.
+  const HELD_BLOCK_REFERENCES = new Set(["JOB-1042", "JOB-1051"]);
+
   if (bob && plumbingSpecialty && plumbingType) {
     for (const fixture of jobFixtures) {
-      const existingJob = await client.job.findUnique({ where: { reference: fixture.reference } });
-      if (existingJob !== null) continue;
-
-      const customer = await client.customer.findUniqueOrThrow({ where: { code: fixture.customerCode } });
-      // Feature 3001, AC9: preferredDate is NOT NULL now -- each fixture's
-      // real date is the same date its own assignment is scheduled against
-      // (proposedSlot), so the job and its visit never disagree.
       const assignmentInput = fixture.assignment(now, zone);
-      const created = await client.job.create({
-        data: {
-          reference: fixture.reference,
-          customerId: customer.id,
-          serviceTypeId: plumbingType.id,
-          customerCalloutRate: plumbingType.customerCalloutRate,
-          customerStandardRate: plumbingType.customerStandardRate,
-          postcode: fixture.postcode,
-          serviceLocation: {
-            suburb: fixture.suburb,
-            state: "WA",
-            country: "AU",
-            lat: fixture.lat,
-            lng: fixture.lng,
-            placeId: fixture.placeId,
+      let job = await client.job.findUnique({ where: { reference: fixture.reference } });
+      let assignmentId: string | undefined;
+
+      if (job === null) {
+        const customer = await client.customer.findUniqueOrThrow({ where: { code: fixture.customerCode } });
+        // Feature 3001, AC9: preferredDate is NOT NULL now -- each fixture's
+        // real date is the same date its own assignment is scheduled against
+        // (proposedSlot), so the job and its visit never disagree.
+        job = await client.job.create({
+          data: {
+            reference: fixture.reference,
+            customerId: customer.id,
+            serviceTypeId: plumbingType.id,
+            customerCalloutRate: plumbingType.customerCalloutRate,
+            customerStandardRate: plumbingType.customerStandardRate,
+            postcode: fixture.postcode,
+            serviceLocation: {
+              suburb: fixture.suburb,
+              state: "WA",
+              country: "AU",
+              lat: fixture.lat,
+              lng: fixture.lng,
+              placeId: fixture.placeId,
+            },
+            timezone: zone,
+            source: "web",
+            preferredWindow: "morning",
+            preferredDate: assignmentInput.proposedSlot,
+            status: fixture.jobStatus,
           },
-          timezone: zone,
-          source: "web",
-          preferredWindow: "morning",
-          preferredDate: assignmentInput.proposedSlot,
-          status: fixture.jobStatus,
-        },
-      });
-      await client.assignment.create({
-        data: {
-          jobId: created.id,
-          contractorId: bob.id,
-          specialtyId: plumbingSpecialty.id,
-          status: assignmentInput.status,
-          proposedSlot: assignmentInput.proposedSlot,
-          confirmedSlot: assignmentInput.confirmedSlot,
-        },
-      });
-      jobsCreated.push(fixture.reference);
+        });
+        const assignment = await client.assignment.create({
+          data: {
+            jobId: job.id,
+            contractorId: bob.id,
+            specialtyId: plumbingSpecialty.id,
+            status: assignmentInput.status,
+            proposedSlot: assignmentInput.proposedSlot,
+            confirmedSlot: assignmentInput.confirmedSlot,
+          },
+        });
+        assignmentId = assignment.id;
+        jobsCreated.push(fixture.reference);
+      } else {
+        assignmentId = (
+          await client.assignment.findFirst({ where: { jobId: job.id, contractorId: bob.id }, select: { id: true } })
+        )?.id;
+      }
+
+      // The site copy + service level, when missing (AC37) -- every fixture
+      // is past `new`, so each keeps the address it was dispatched to.
+      if (job.status !== "new" && (job.siteAddress === null || job.serviceLevel === null)) {
+        const customer = await client.customer.findUniqueOrThrow({ where: { id: job.customerId } });
+        await client.job.update({
+          where: { id: job.id },
+          data: {
+            ...(job.siteAddress === null && customer.billingAddress !== null
+              ? { siteAddress: customer.billingAddress }
+              : {}),
+            ...(job.serviceLevel === null
+              ? { serviceLevel: serviceLevelFor(zone, assignmentInput.proposedSlot, false) }
+              : {}),
+          },
+        });
+      }
+
+      // JOB-1042's hold and JOB-1051's booking, when missing (AC37) --
+      // JOB-1039 stays without one on purpose: an on-hold job is
+      // recognizable precisely by having no future block (Calendar &
+      // Scheduling).
+      if (assignmentId && HELD_BLOCK_REFERENCES.has(fixture.reference)) {
+        const existingEvent = await client.calendarEvent.findFirst({ where: { assignmentId } });
+        if (existingEvent === null) {
+          await client.calendarEvent.create({
+            data: {
+              contractorId: bob.id,
+              type: "job",
+              jobId: job.id,
+              assignmentId,
+              startTime: assignmentInput.proposedSlot,
+              endTime: new Date(assignmentInput.proposedSlot.getTime() + 60 * 60 * 1000),
+            },
+          });
+        }
+      }
     }
     // Guard: JOB-1051 sits above the sequence's configured start (1043) --
     // never let a generated JOB- reference land on it.

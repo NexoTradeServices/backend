@@ -7,10 +7,13 @@ import type { PrismaClient } from "../db/client.js";
 import type { JobStatus } from "../generated/prisma/enums.js";
 import { formatDateTimeLabel, formatPlainDate } from "../time/index.js";
 import { editableForSeconds, readNotes } from "./notes.js";
+import { isServiceLevelMultipliers, priceLine } from "./dispatch-level.js";
 import {
   WINDOW_LABELS,
+  NO_ADDRESS_REASON,
   asAddress,
   contractorView,
+  effectiveAddress,
   jobInclude,
   sameAddress,
   suburbOf,
@@ -57,6 +60,12 @@ export interface JobDetail {
   /** Ops job actions - Edit: the site freezes once the job is dispatched. */
   siteLocked: boolean;
   contractor: ContractorView | null;
+  /** AC29: the level and its price, shown once the job is dispatched (Job.serviceLevel set). */
+  serviceLevel: string | null;
+  priceLine: string | null;
+  /** AC1/AC2: the job page's own Dispatch button. */
+  canDispatch: boolean;
+  dispatchBlockedReason: string | null;
   notes: NoteView[];
 }
 
@@ -77,11 +86,22 @@ export async function jobDetail(
 ): Promise<JobDetail> {
   const billingAddress = asAddress(job.customer.billingAddress);
   const siteAddress = asAddress(job.siteAddress);
+  const hasAddress = effectiveAddress(job) !== null;
 
   const notes = readNotes(job.operatorNotes);
   const authorIds = [...new Set(notes.map((note) => note.operatorId))];
   const authors = await client.user.findMany({ where: { id: { in: authorIds } }, select: { id: true, name: true } });
   const nameOf = (id: string): string => authors.find((author) => author.id === id)?.name ?? "Unknown";
+
+  const multipliers = job.serviceType.serviceLevelMultipliers;
+  const price =
+    job.serviceLevel !== null && isServiceLevelMultipliers(multipliers)
+      ? priceLine(
+          { calloutRate: job.customerCalloutRate, standardRate: job.customerStandardRate },
+          multipliers,
+          job.serviceLevel,
+        )
+      : null;
 
   return {
     reference: job.reference,
@@ -106,6 +126,10 @@ export async function jobDetail(
     siteSameAsBilling: siteAddress === null || sameAddress(siteAddress, billingAddress),
     siteLocked: job.status !== "new",
     contractor: contractorView(job, now),
+    serviceLevel: job.serviceLevel,
+    priceLine: price,
+    canDispatch: job.status === "new" && hasAddress,
+    dispatchBlockedReason: job.status === "new" && !hasAddress ? NO_ADDRESS_REASON : null,
     notes: [...notes]
       .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
       .map((note) => ({

@@ -17,6 +17,7 @@ import { contractorDashboardRoutes } from './contractors/dashboard-routes.js'
 import { suburbRoutes } from './suburbs/routes.js'
 import { enquiryRoutes } from './enquiries/routes.js'
 import { jobRoutes } from './jobs/routes.js'
+import { devTextsRoutes } from './notifications/dev-texts-routes.js'
 import { getPrisma } from './db/client.js'
 
 const app = express()
@@ -78,6 +79,11 @@ app.use('/api/contractor', contractorDashboardRoutes(prisma))
 app.use('/api/suburbs', suburbRoutes(prisma))
 app.use('/api/enquiries', enquiryRoutes(prisma))
 app.use('/api/jobs', jobRoutes(prisma))
+
+// Feature 4002, plan decision 13: the interim Texts sent page -- no login
+// (the site is not public yet), in dev and production alike, until BKLG-028
+// retires it once ClickSend is set up.
+app.use('/api/dev', devTextsRoutes(prisma))
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', service: 'tradeservice-backend' })

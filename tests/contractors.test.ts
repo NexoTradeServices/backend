@@ -118,14 +118,16 @@ afterAll(async () => {
 });
 
 describe("AC1 -- the seeded list, ops+owner, Bob refused", () => {
-  // Feature 2002, decision 13: Bob's fixture now carries a saved service
-  // area (lastRadiusKm 30 + a fixed served-postcode list), so he no longer
-  // names "service area (not set up yet)" -- Dave and Priya still do, since
-  // neither has ever saved one. The address check dropped from
-  // readyToDispatch (design, "Managing the contractor record" -- address
-  // never counts) is what makes Bob ready straight from the fixture seed:
-  // he has everything else, and his fixture never gives him an address.
-  test("AC1: Mike sees Bob ready; Dave and Priya Not ready, Priya's insurance expired, both missing a service area", async () => {
+  // Feature 2002, decision 13: Bob's fixture carries a saved service area
+  // (lastRadiusKm 30 + a fixed served-postcode list). Feature 4002, plan
+  // decision 16 (AC36): Dave's fixture now carries one too (Victoria Park,
+  // 25km) -- Ready to dispatch on unchanged seed data, since a service area
+  // was his only gap. Priya still names "service area (not set up yet)":
+  // she has never saved one. The address check dropped from readyToDispatch
+  // (design, "Managing the contractor record" -- address never counts) is
+  // what makes Bob and Dave ready straight from the fixture seed: neither's
+  // fixture gives him an address.
+  test("AC1: Mike sees Bob and Dave ready; Priya Not ready, her insurance expired and no service area", async () => {
     await seedCast();
     const cookie = await signInCookie("mike@idelta.com.au");
 
@@ -141,10 +143,10 @@ describe("AC1 -- the seeded list, ops+owner, Bob refused", () => {
     const dave = rows.find((r) => r.code === "CON-021");
     const priya = rows.find((r) => r.code === "CON-030");
     expect(bob?.ready).toBe(true);
-    expect(dave?.ready).toBe(false);
+    expect(dave?.ready).toBe(true);
     expect(priya?.ready).toBe(false);
     expect(bob?.missing).not.toContain("service area (not set up yet)");
-    expect(dave?.missing).toContain("service area (not set up yet)");
+    expect(dave?.missing).not.toContain("service area (not set up yet)");
     expect(priya?.missing).toContain("service area (not set up yet)");
     expect(priya?.missing).toContain("insurance renewal (expired)");
   });

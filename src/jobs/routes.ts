@@ -18,6 +18,15 @@ import { listQueue, parseQueueQuery } from "./queue.js";
 import { jobDetail, loadJob } from "./detail.js";
 import { parseAddressesInput, saveAddresses } from "./addresses.js";
 import { addNote, editNote, parseEditedNote, parseNewNote } from "./notes.js";
+import {
+  candidatesAndPriceFor,
+  dispatchFactsOf,
+  dispatchJob,
+  formatDollarsPrice,
+  loadDispatchJob,
+  parseSlotInput,
+  sendDispatchNotifications,
+} from "./dispatch.js";
 
 type WithReference = Request<{ reference: string }>;
 
@@ -133,6 +142,86 @@ export function jobRoutes(client: PrismaClient): Router {
         }
         res.json(await jobDetail(client, fresh, req.authUser.id));
       })().catch(failWith(res, "PUT /api/jobs/:reference/notes/:noteId"));
+    },
+  );
+
+  // Feature 4002 -- the dispatch page's own facts + slot defaults.
+  router.get("/:reference/dispatch", requireRole(Role.ops), (req: WithReference, res: Response) => {
+    void (async () => {
+      const job = await loadDispatchJob(client, req.params.reference);
+      if (!job) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      res.json(dispatchFactsOf(job));
+    })().catch(failWith(res, "GET /api/jobs/:reference/dispatch"));
+  });
+
+  // The candidate list + the level/price for the slot Mike currently has picked.
+  router.get(
+    "/:reference/dispatch/candidates",
+    requireRole(Role.ops),
+    (req: WithReference, res: Response) => {
+      void (async () => {
+        const job = await loadDispatchJob(client, req.params.reference);
+        if (!job) {
+          res.status(404).json({ error: "not found" });
+          return;
+        }
+        const parsed = parseSlotInput(req.query);
+        if (!parsed.ok) {
+          res.status(parsed.status).json({ error: parsed.error, field: parsed.field });
+          return;
+        }
+        const result = await candidatesAndPriceFor(client, job, parsed.data);
+        if ("error" in result) {
+          res.status(400).json({ error: result.error });
+          return;
+        }
+        res.json({ level: result.level, price: formatDollarsPrice(result.price), ...result.candidates });
+      })().catch(failWith(res, "GET /api/jobs/:reference/dispatch/candidates"));
+    },
+  );
+
+  // The dispatch itself (plan decision 8).
+  router.post("/:reference/dispatch", requireRole(Role.ops), (req: WithReference, res: Response) => {
+    void (async () => {
+      const body = req.body as Record<string, unknown>;
+      const contractorCode = body["contractorCode"];
+      if (typeof contractorCode !== "string" || contractorCode.trim() === "") {
+        res.status(400).json({ error: "contractorCode is required", field: "contractorCode" });
+        return;
+      }
+      const parsed = parseSlotInput(body);
+      if (!parsed.ok) {
+        res.status(parsed.status).json({ error: parsed.error, field: parsed.field });
+        return;
+      }
+      const result = await dispatchJob(client, req.params.reference, contractorCode, parsed.data);
+      if (!result.ok) {
+        res.status(result.status).json({ error: result.error, field: result.field });
+        return;
+      }
+      await sendDispatchNotifications(client, result);
+
+      const fresh = await loadJob(client, result.jobReference);
+      if (!fresh) {
+        res.status(500).json({ error: "internal error" });
+        return;
+      }
+      res.status(201).json({
+        job: await jobDetail(client, fresh, req.authUser?.id ?? ""),
+        toast: `${result.jobReference} dispatched to ${result.contractorFirstName}. Waiting for his answer.`,
+      });
+    })().catch(failWith(res, "POST /api/jobs/:reference/dispatch"));
+  });
+
+  // The Phase 2 stub (Dispatch Logic -- Phase 2): nothing calls it, no badge renders.
+  router.get(
+    "/:reference/suggested-contractors",
+    requireRole(Role.ops),
+    (_req: WithReference, res: Response) => {
+      res.json({ suggestions: [] });
     },
   );
 

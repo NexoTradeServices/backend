@@ -134,12 +134,8 @@ export function startOfWeekUtc(zone: string, weekStartDay: Weekday, moment: Date
   return zonedTimeToUtc(zone, addDays(todayYmd, -daysSinceStart));
 }
 
-/**
- * `moment` rendered for a person, in `zone`, labelled -- e.g. `8:00am AWST`.
- * Never the machine's zone or the browser's; always the job's or the
- * business's, passed in by the caller.
- */
-export function formatLabelled(zone: string, moment: Date): string {
+/** `8:00am` -- the hour/minute/meridiem alone, no zone name. */
+function hourMinuteLabel(zone: string, moment: Date): string {
   const timeParts = new Intl.DateTimeFormat("en-AU", {
     timeZone: zone,
     hour: "numeric",
@@ -147,15 +143,39 @@ export function formatLabelled(zone: string, moment: Date): string {
     hour12: true,
   }).formatToParts(moment);
   const part = (type: string): string => timeParts.find((entry) => entry.type === type)?.value ?? "";
+  return `${part("hour")}:${part("minute")}${part("dayPeriod")}`;
+}
 
+/** `AWST` -- the zone's short name at this instant (it can differ across a DST boundary). */
+function zoneAbbreviation(zone: string, moment: Date): string {
   const zoneParts = new Intl.DateTimeFormat("en-AU", {
     timeZone: zone,
     timeZoneName: "short",
     hour: "numeric",
   }).formatToParts(moment);
-  const zoneName = zoneParts.find((entry) => entry.type === "timeZoneName")?.value ?? zone;
+  return zoneParts.find((entry) => entry.type === "timeZoneName")?.value ?? zone;
+}
 
-  return `${part("hour")}:${part("minute")}${part("dayPeriod")} ${zoneName}`;
+/**
+ * `moment` rendered for a person, in `zone`, labelled -- e.g. `8:00am AWST`.
+ * Never the machine's zone or the browser's; always the job's or the
+ * business's, passed in by the caller.
+ */
+export function formatLabelled(zone: string, moment: Date): string {
+  return `${hourMinuteLabel(zone, moment)} ${zoneAbbreviation(zone, moment)}`;
+}
+
+/**
+ * `start`-`end` rendered for a person, in `zone`, labelled once -- `7:00-8:00am AWST`.
+ * A shared meridiem is dropped from the first time (Feature 4002, the
+ * candidate row's Busy reason and the calendar day view's blocks); a range
+ * crossing midday reads both in full, `11:30am-1:00pm AWST`.
+ */
+export function formatTimeRangeLabel(zone: string, start: Date, end: Date): string {
+  const a = hourMinuteLabel(zone, start);
+  const b = hourMinuteLabel(zone, end);
+  const merged = a.slice(-2) === b.slice(-2) ? `${a.slice(0, -2)}-${b}` : `${a}-${b}`;
+  return `${merged} ${zoneAbbreviation(zone, end)}`;
 }
 
 /**
@@ -238,6 +258,49 @@ export function formatDateTimeLabel(zone: string, moment: Date, now: Date = new 
  */
 export function formatPlainDate(date: Date): string {
   return formatDateLabel("UTC", date);
+}
+
+/**
+ * A plain DATE, without its weekday -- `14/09/26` (Feature 4002, the
+ * licence-expiry reason on a greyed candidate row: "Electrical licence
+ * expires 14/09/26, before this slot"). Read in UTC, same as formatPlainDate.
+ */
+export function formatPlainDateShort(date: Date): string {
+  const { year, month, day } = ymdIn("UTC", date);
+  const dd = String(day).padStart(2, "0");
+  const mm = String(month).padStart(2, "0");
+  const yy = String(year % 100).padStart(2, "0");
+  return `${dd}/${mm}/${yy}`;
+}
+
+/**
+ * The real UTC instant at which `zone`'s wall clock reads `hour:minute` on
+ * `dateOnly` (`YYYY-MM-DD`) -- Feature 4002, turning the dispatch page's
+ * picked day + half-hour into a real moment (`Assignment.proposedSlot`,
+ * the calendar hold, the busy-overlap check). `dateOnly` is a calendar date
+ * in `zone`'s own wall clock, never re-zoned itself.
+ */
+export function zonedDateTimeToUtc(zone: string, dateOnly: string, hour: number, minute: number): Date {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateOnly);
+  if (!match) {
+    throw new Error(`"${dateOnly}" is not a YYYY-MM-DD date`);
+  }
+  const [, year, month, day] = match;
+  return zonedTimeToUtc(zone, { year: Number(year), month: Number(month), day: Number(day) }, hour, minute);
+}
+
+/**
+ * `dateOnly` (`YYYY-MM-DD`) as the plain-DATE UTC-midnight instant the
+ * database would store it at -- Feature 4002's dispatch guard: "run with now
+ * set to UTC midnight of the slot's local date" (Dispatch Logic), so it
+ * compares directly against `licenceExpiry` and `insuranceExpiry`, which are
+ * stored the same way (a plain DATE carries no zone).
+ */
+export function dateOnlyAsUtcMidnight(dateOnly: string): Date {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) {
+    throw new Error(`"${dateOnly}" is not a YYYY-MM-DD date`);
+  }
+  return new Date(`${dateOnly}T00:00:00.000Z`);
 }
 
 /**

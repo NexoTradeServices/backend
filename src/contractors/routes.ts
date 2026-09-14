@@ -20,6 +20,7 @@ import { Role } from "../generated/prisma/enums.js";
 import { nextReference } from "../db/reference.js";
 import { readyToDispatch, type ReadyInput } from "./ready.js";
 import { parseServiceAreaInput, saveServiceArea, serviceAreaDtoOf } from "./service-area.js";
+import { loadContractorDay } from "./day.js";
 
 // ---------------------------------------------------------------------------
 // Shapes
@@ -763,6 +764,36 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
         res.json(serviceAreaDtoOf(full));
       })().catch((error: unknown) => {
         console.error("PUT /api/contractors/:code/service-area failed", error);
+        res.status(500).json({ error: "internal error" });
+      });
+    },
+  );
+
+  // Feature 4002, plan decision 1: the day view under a picked candidate --
+  // ops only, reused by 2004's calendar screen.
+  router.get(
+    "/:code/day",
+    requireRole(Role.ops),
+    (req: Request<{ code: string }>, res: Response) => {
+      void (async () => {
+        const date = req.query["date"];
+        if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+          res.status(400).json({ error: "date must be a YYYY-MM-DD date" });
+          return;
+        }
+        const contractor = await client.contractor.findUnique({ where: { code: req.params.code } });
+        if (!contractor) {
+          res.status(404).json({ error: "not found" });
+          return;
+        }
+        const settings = await client.platformSettings.findFirst({ select: { timezone: true } });
+        if (!settings) {
+          res.status(503).json({ error: "the day view is unavailable right now" });
+          return;
+        }
+        res.json({ blocks: await loadContractorDay(client, contractor.id, date, settings.timezone) });
+      })().catch((error: unknown) => {
+        console.error("GET /api/contractors/:code/day failed", error);
         res.status(500).json({ error: "internal error" });
       });
     },

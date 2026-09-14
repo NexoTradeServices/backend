@@ -728,6 +728,11 @@ describe("AC13-AC18 -- the Addresses card's one Save", () => {
     const mike = await signInCookie("mike@idelta.com.au");
     expect((await detail(mike, "JOB-1042")).siteLocked).toBe(true);
     const billingBefore = (await db.customer.findUniqueOrThrow({ where: { code: "CUS-1050" } })).billingAddress;
+    // Feature 4002, plan decision 16 (AC37): the fixture seed now gives every
+    // dispatched fixture job the site copy Dispatch itself would have
+    // written, so JOB-1042 already carries Sarah's billing address as its site.
+    const siteBefore = (await db.job.findUniqueOrThrow({ where: { reference: "JOB-1042" } })).siteAddress;
+    expect(siteBefore).toEqual(billingBefore);
 
     const res = await saveAddresses(mike, "JOB-1042", {
       billingAddress: SARAH_RENTAL,
@@ -737,7 +742,7 @@ describe("AC13-AC18 -- the Addresses card's one Save", () => {
     expect((res.body as { field?: string }).field).toBe("siteAddress");
 
     const stored = await db.job.findUniqueOrThrow({ where: { reference: "JOB-1042" } });
-    expect(stored.siteAddress).toBeNull();
+    expect(stored.siteAddress).toEqual(siteBefore);
     expect(stored.postcode).toBe("6163");
     expect((await db.customer.findUniqueOrThrow({ where: { code: "CUS-1050" } })).billingAddress).toEqual(billingBefore);
   });
