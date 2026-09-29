@@ -17,6 +17,13 @@
 import type { PrismaClient } from "../db/client.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { asAddress, sameAddress, suburbOf, type Address } from "./shared.js";
+import {
+  asSiteContact,
+  isClosed,
+  parseSiteContact,
+  sameSiteContact,
+  type SiteContactInput,
+} from "./site-contact.js";
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim() !== "";
@@ -60,6 +67,8 @@ export interface AddressesInput {
   billing: Address | undefined;
   /** undefined = leave the job site as it is. */
   site: SiteInput | undefined;
+  /** undefined = leave the site contact as it is; null = clear it (Feature 4008). */
+  siteContact: SiteContactInput;
 }
 
 export type AddressFailure = { ok: false; status: number; error: string; field?: string };
@@ -99,7 +108,10 @@ export function parseAddressesInput(body: unknown): { ok: true; data: AddressesI
     }
   }
 
-  return { ok: true, data: { billing, site } };
+  const siteContact = parseSiteContact(b["siteContact"]);
+  if (!siteContact.ok) return siteContact;
+
+  return { ok: true, data: { billing, site, siteContact: siteContact.data } };
 }
 
 export interface SaveOutcome {
@@ -143,6 +155,19 @@ export async function saveAddresses(
         });
       }
 
+      // Feature 4008, plan decision 4: a closed job refuses a site contact
+      // change, whole -- nothing in the request is written.
+      const contactNow = asSiteContact(job.siteContact);
+      const contactChanges = input.siteContact !== undefined && !sameSiteContact(contactNow, input.siteContact);
+      if (contactChanges && isClosed(job.status)) {
+        throw new Refused({
+          ok: false,
+          status: 409,
+          error: "The site contact cannot change once the job is closed.",
+          field: "siteContact",
+        });
+      }
+
       // V8: a job past new with no site of its own is at the billing address
       // it was dispatched against. Before the billing changes, that address
       // is written onto each such job of the customer's -- this one included
@@ -156,6 +181,14 @@ export async function saveAddresses(
 
       if (input.billing !== undefined) {
         await tx.customer.update({ where: { id: job.customerId }, data: { billingAddress: input.billing } });
+      }
+
+      // A change sends nothing (decision 5, AC8) -- no notification is asked here.
+      if (contactChanges) {
+        await tx.job.update({
+          where: { id: job.id },
+          data: { siteContact: input.siteContact === null || input.siteContact === undefined ? Prisma.JsonNull : { ...input.siteContact } },
+        });
       }
 
       let moved: SaveOutcome["moved"] = null;

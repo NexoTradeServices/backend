@@ -6,7 +6,7 @@
 import type { NotificationTemplate } from "../types.js";
 import { fill } from "./render.js";
 
-const TEXT = `New job for you, {{firstName}}. {{trade}}, {{jobReference}}, {{slotLabel}} at {{street}}, {{suburb}}. Accept or decline: {{linkUrl}} -- {{platformName}}`;
+const TEXT = `New job for you, {{firstName}}. {{trade}}, {{jobReference}}, {{slotLabel}} at {{street}}, {{suburb}}. Site contact: {{siteContact}}. Accept or decline: {{linkUrl}} -- {{platformName}}`;
 
 export const jobDispatchedSms: NotificationTemplate = {
   type: "job_dispatched",

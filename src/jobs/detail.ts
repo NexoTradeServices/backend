@@ -7,6 +7,8 @@ import type { PrismaClient } from "../db/client.js";
 import type { JobStatus } from "../generated/prisma/enums.js";
 import { formatDateTimeLabel, formatPlainDate } from "../time/index.js";
 import { editableForSeconds, readNotes } from "./notes.js";
+import { jobMessages, type MessageView } from "./messages.js";
+import { asSiteContact, isClosed, type SiteContactView } from "./site-contact.js";
 import { isServiceLevelMultipliers, priceLine } from "./dispatch-level.js";
 import {
   WINDOW_LABELS,
@@ -59,6 +61,10 @@ export interface JobDetail {
   siteSameAsBilling: boolean;
   /** Ops job actions - Edit: the site freezes once the job is dispatched. */
   siteLocked: boolean;
+  /** Feature 4008: who lets the contractor in; null = the customer is the contact. */
+  siteContact: SiteContactView | null;
+  /** Plan decision 4: completed or cancelled -- the site contact is read-only. */
+  closed: boolean;
   contractor: ContractorView | null;
   /** AC29: the level and its price, shown once the job is dispatched (Job.serviceLevel set). */
   serviceLevel: string | null;
@@ -67,6 +73,8 @@ export interface JobDetail {
   canDispatch: boolean;
   dispatchBlockedReason: string | null;
   notes: NoteView[];
+  /** Feature 4008: every message sent about the job, newest first. */
+  messages: MessageView[];
 }
 
 export async function loadJob(client: PrismaClient, reference: string): Promise<JobWithRelations | null> {
@@ -103,6 +111,10 @@ export async function jobDetail(
         )
       : null;
 
+  // The business clock (Data Model / Time): PlatformSettings.timezone.
+  const settings = await client.platformSettings.findFirst({ select: { timezone: true } });
+  const messages = await jobMessages(client, job.id, settings?.timezone ?? job.timezone);
+
   return {
     reference: job.reference,
     status: job.status,
@@ -125,6 +137,8 @@ export async function jobDetail(
     siteAddress,
     siteSameAsBilling: siteAddress === null || sameAddress(siteAddress, billingAddress),
     siteLocked: job.status !== "new",
+    siteContact: asSiteContact(job.siteContact),
+    closed: isClosed(job.status),
     contractor: contractorView(job, now),
     serviceLevel: job.serviceLevel,
     priceLine: price,
@@ -141,5 +155,6 @@ export async function jobDetail(
         edited: note.editedAt !== undefined,
         editableForSeconds: editableForSeconds(note, viewerId, now),
       })),
+    messages,
   };
 }

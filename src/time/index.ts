@@ -252,6 +252,18 @@ export function formatDateTimeLabel(zone: string, moment: Date, now: Date = new 
 }
 
 /**
+ * `moment` as a numeric date and time, no zone name -- `29/09/26 10:14am`
+ * (Feature 4008, the job page's Messages card, on the business clock).
+ */
+export function formatShortDateTime(zone: string, moment: Date): string {
+  const { year, month, day } = ymdIn(zone, moment);
+  const dd = String(day).padStart(2, "0");
+  const mm = String(month).padStart(2, "0");
+  const yy = String(year % 100).padStart(2, "0");
+  return `${dd}/${mm}/${yy} ${hourMinuteLabel(zone, moment)}`;
+}
+
+/**
  * A plain DATE (preferredDate, an expiry) for a person -- `Fri 11/09/26`.
  * A plain date carries no zone and is stored at UTC midnight, so it is read
  * in UTC, the frame it is stored in: no zone conversion happens here.
