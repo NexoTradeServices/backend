@@ -1,0 +1,75 @@
+# Local development: Postgres 18 + PostGIS, and the backend.
+#   docker compose up          (from this folder: database + backend)
+# To run the frontend too, start from ../frontend instead.
+# Prod does NOT use this file: Fly builds ./Dockerfile via fly.toml.
+#
+# One-time setup on a new machine:  docker network create edge
+# Tests (vitest; tests/setup-env.ts switches to TEST_DATABASE_URL):
+#   docker compose run --rm ts-backend npm test
+name: tradeservice
+
+services:
+  ts-db:
+    # Same image as CI (.github/workflows/ci.yml).
+    image: postgis/postgis:18-3.6
+    environment:
+      # Dev-only superuser, same as CI. The app never connects as it.
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      # Postgres 18 images keep data under /var/lib/postgresql/18/...;
+      # mounting the old .../data path makes the server refuse to start.
+      - ts-db-data:/var/lib/postgresql
+    configs:
+      - source: ts-db-init
+        target: /docker-entrypoint-initdb.d/20-tradeservice.sql
+    healthcheck:
+      # -h 127.0.0.1: the init-time server listens on the socket only, so this
+      # stays unhealthy until init (role, databases, PostGIS) has finished.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "tradeservice", "-d", "tradeservice_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # No ports published and not on "edge": only the backend can reach it.
+
+  ts-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    init: true
+    volumes:
+      - .:/app
+      - ts-backend-node-modules:/app/node_modules
+    environment:
+      # .env is loaded with dotenv/config (never overrides vars already set),
+      # so these point the app at the container database without editing .env.
+      DATABASE_URL: postgresql://tradeservice:tradeservice@ts-db:5432/tradeservice_dev
+      TEST_DATABASE_URL: postgresql://tradeservice:tradeservice@ts-db:5432/tradeservice_test
+    depends_on:
+      ts-db:
+        condition: service_healthy
+    networks:
+      - default
+      - edge
+
+configs:
+  # Runs once, on an empty data volume. Mirrors CI and setup/01: the app role
+  # is NOT a superuser (tests drop every table it owns, and it must never own
+  # PostGIS's spatial_ref_sys), and PostGIS is created by the superuser
+  # because migrations can't (see prisma/migrations/*_init).
+  ts-db-init:
+    content: |
+      CREATE ROLE tradeservice LOGIN PASSWORD 'tradeservice';
+      CREATE DATABASE tradeservice_dev OWNER tradeservice;
+      CREATE DATABASE tradeservice_test OWNER tradeservice;
+      \connect tradeservice_dev
+      CREATE EXTENSION IF NOT EXISTS postgis;
+      \connect tradeservice_test
+      CREATE EXTENSION IF NOT EXISTS postgis;
+
+volumes:
+  ts-db-data:
+  ts-backend-node-modules:
+
+networks:
+  edge:
+    external: true

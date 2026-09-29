@@ -1,0 +1,21 @@
+# Local development image, used only by compose.yaml.
+# Prod does NOT use this file: Fly builds ./Dockerfile (see fly.toml), and that
+# Dockerfile copies only package*.json, tsconfig.json, prisma/ and src/.
+# node:22 follows prod's node:22-slim; the full image also carries openssl,
+# which the Prisma migrate engine needs.
+FROM node:22
+
+WORKDIR /app
+
+# Pre-create the dir that becomes a named volume so it is owned by the "node"
+# user (uid 1000), not root. Source code is bind-mounted at runtime.
+RUN mkdir -p /app/node_modules && chown -R node:node /app
+
+USER node
+
+EXPOSE 8080
+
+# Install deps only when package-lock.json changed (npm ci never rewrites the
+# lock file). src/generated is gitignored, so generate the Prisma client
+# before starting tsx watch.
+CMD ["sh", "-c", "h=$(sha1sum package-lock.json | cut -d' ' -f1); [ \"$(cat node_modules/.lockhash 2>/dev/null)\" = \"$h\" ] || { npm ci && echo \"$h\" > node_modules/.lockhash; }; npx prisma generate && exec npm run dev"]
