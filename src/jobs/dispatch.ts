@@ -12,6 +12,7 @@ import { zonedDateTimeToUtc, formatSlotLabel } from "../time/index.js";
 import { serviceLevelFor, priceFor, isServiceLevelMultipliers, type TierRates } from "./dispatch-level.js";
 import { formatDollars } from "../enquiries/money.js";
 import { loadCandidates, guardReason, readyInputOf, type CandidatesResult } from "./candidates.js";
+import { siteContactLine } from "./site-contact.js";
 import { asAddress, suburbOf, effectiveAddress, NO_ADDRESS_REASON, type Address } from "./shared.js";
 
 const WINDOW_START_MINUTES: Record<string, number> = { morning: 420, afternoon: 720, evening: 1020 };
@@ -24,6 +25,7 @@ interface DispatchJobRow {
   postcode: string;
   serviceLocation: unknown;
   siteAddress: unknown;
+  siteContact: unknown;
   customerCalloutRate: number;
   customerStandardRate: number;
   description: string | null;
@@ -169,6 +171,8 @@ export interface DispatchSuccess {
   holdEnd: Date;
   level: "normal" | "weekend" | "emergency";
   siteAddress: Address;
+  /** Who to ask for at the site (Feature 4008, decision 6), read inside the dispatch transaction. */
+  siteContactLine: string;
 }
 
 class Refused extends Error {
@@ -307,6 +311,7 @@ export async function dispatchJob(
         holdEnd: end,
         level,
         siteAddress: updatedSite,
+        siteContactLine: siteContactLine(job.siteContact, job.customer.name),
       };
     });
     return result;
@@ -329,6 +334,7 @@ export async function sendDispatchNotifications(client: PrismaClient, success: D
     street: address.street,
     suburb: address.suburb,
     slotLabel: formatSlotLabel(success.jobTimezone, success.proposedSlot),
+    siteContact: success.siteContactLine,
   };
   for (const channel of ["email", "sms"] as const) {
     await sendNotification(

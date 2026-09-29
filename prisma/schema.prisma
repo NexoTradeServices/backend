@@ -167,6 +167,9 @@ enum NotificationRecipientType {
   /// The account holder as such -- address is User.email, whatever the role.
   /// See Notifications / Account mail vs business mail.
   user
+  /// Whoever lets the contractor in (Feature 4008) -- named in the row's
+  /// context under recipientName; recipientId is the job's id.
+  site_contact
 }
 
 /// Shared by Notification and Suppression.
@@ -570,6 +573,11 @@ model Job {
   /// WHERE THE CONTRACTOR PARKS THE VAN -- full street address, ops-entered on
   /// the confirming call: { street, suburb, state, country, postcode, lat, lng, placeId }
   siteAddress          Json?
+  /// WHO LETS THE CONTRACTOR IN, ops-entered on the confirming call
+  /// (Feature 4008): { name, phone } or { name, phone, email }, each trimmed,
+  /// an empty email left out. Empty = the customer is the contact. Fixable
+  /// until the job is completed or cancelled -- not frozen at dispatch.
+  siteContact          Json?
   /// IANA name (Australia/Perth). FROZEN at job creation from serviceLocation's
   /// state, never typed; every time this job shows or sends renders in it --
   /// see Data Model / Time. The enquiry-form creation helper (3001) is the

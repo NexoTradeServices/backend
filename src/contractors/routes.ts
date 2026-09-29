@@ -89,7 +89,7 @@ type ParseResult = { ok: true; data: ContractorInput } | { ok: false } & FieldEr
 // Validation
 // ---------------------------------------------------------------------------
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+export const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 /** The ATO's own check-digit algorithm (decision 10). */

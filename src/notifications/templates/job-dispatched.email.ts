@@ -2,7 +2,7 @@
 // Notifications / Transactional messages ("Job dispatched", Contractor); AC30.
 //
 // Plan decision 12: first name, job reference, trade, the site's street and
-// suburb, the slot (labelled AWST), the signature from platformName. The
+// suburb, the slot (labelled AWST), the site contact line (Feature 4008), the signature from platformName. The
 // link is a respond capability link, minted by the dispatcher at send time
 // and rendered as {{linkUrl}}.
 import type { NotificationTemplate } from "../types.js";
@@ -15,6 +15,7 @@ New job for you: {{jobReference}}.
 Trade: {{trade}}
 When: {{slotLabel}}
 Where: {{street}}, {{suburb}}
+Site contact: {{siteContact}}
 
 Accept or decline: {{linkUrl}}
 
@@ -24,7 +25,8 @@ const HTML = `<p>Hi {{firstName}},</p>
 <p>New job for you: <strong>{{jobReference}}</strong>.</p>
 <p>Trade: {{trade}}<br>
 When: {{slotLabel}}<br>
-Where: {{street}}, {{suburb}}</p>
+Where: {{street}}, {{suburb}}<br>
+Site contact: {{siteContact}}</p>
 <p><a href="{{linkUrl}}">Accept or decline</a></p>
 <p>-- {{platformName}}</p>`;
 

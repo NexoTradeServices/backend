@@ -755,6 +755,8 @@ describe("AC30-AC33 -- the dispatch messages", () => {
     expect(mail?.message.text).toContain("Plumbing");
     expect(mail?.message.text).toContain("7:00am AWST");
     expect(mail?.message.text).toMatch(/\/a\//);
+    // Feature 4008 sweep: the line who to ask for -- no site contact, so the customer's name.
+    expect(mail?.message.text).toContain("Site contact: Sarah Chen");
   });
 
   test("AC31: Bob is texted the same facts and link -- read back through the interim page (no ClickSend in this environment)", async () => {
@@ -769,6 +771,8 @@ describe("AC30-AC33 -- the dispatch messages", () => {
     expect(bobText?.text).toContain(job.reference);
     expect(bobText?.text).toContain("Plumbing");
     expect(bobText?.text).toMatch(/\/a\//);
+    // Feature 4008 sweep: the same line in the text.
+    expect(bobText?.text).toContain("Site contact: Sarah Chen");
   });
 
   test("AC32: the link is a respond token for the assignment, expiring at the slot's start", async () => {

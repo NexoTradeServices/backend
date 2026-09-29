@@ -556,6 +556,15 @@ export async function seedFixtures(
         });
       }
 
+      // Feature 4008, AC19: Sarah is at work on Thursday, so her neighbour
+      // Lena Park lets Bob in -- JOB-1042's site contact, when it has none.
+      if (fixture.reference === "JOB-1042" && job.siteContact === null) {
+        await client.job.update({
+          where: { id: job.id },
+          data: { siteContact: { name: "Lena Park", phone: "0400 002 050", email: "lena@idelta.com.au" } },
+        });
+      }
+
       // JOB-1042's hold and JOB-1051's booking, when missing (AC37) --
       // JOB-1039 stays without one on purpose: an on-hold job is
       // recognizable precisely by having no future block (Calendar &
