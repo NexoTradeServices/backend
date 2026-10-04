@@ -96,6 +96,12 @@ export interface QueueRow {
   /** Closed jobs only: when it finished or was cancelled. */
   closedLabel: string | null;
   contractor: ContractorView | null;
+  /**
+   * Feature 4003 (plan decision 9): derived, never stored -- the job waits at
+   * `new` and its latest assignment is `declined`. Gone the moment Mike
+   * dispatches again, since the latest assignment is then a live one.
+   */
+  declined: { by: string; note: string | null } | null;
 }
 
 export interface QueueResult {
@@ -142,7 +148,7 @@ function closedLabelOf(job: JobWithRelations): string | null {
   return null;
 }
 
-export function toQueueRow(job: JobWithRelations, now: Date): QueueRow {
+export function toQueueRow(job: JobWithRelations, now: Date, declined: QueueRow["declined"] = null): QueueRow {
   return {
     reference: job.reference,
     status: job.status,
@@ -159,7 +165,27 @@ export function toQueueRow(job: JobWithRelations, now: Date): QueueRow {
     noSiteAddress: job.status === "new" && job.siteAddress === null,
     closedLabel: closedLabelOf(job),
     contractor: contractorView(job, now),
+    declined,
   };
+}
+
+/** Plan decision 9: the badge for each job in `jobs` that waits at new behind a decline. */
+async function declinedBadges(client: PrismaClient, jobs: JobWithRelations[]): Promise<Map<string, QueueRow["declined"]>> {
+  const waiting = jobs.filter((job) => job.status === "new").map((job) => job.id);
+  const badges = new Map<string, QueueRow["declined"]>();
+  if (waiting.length === 0) return badges;
+  const rows = await client.assignment.findMany({
+    where: { jobId: { in: waiting } },
+    orderBy: [{ dispatchedAt: "desc" }, { id: "desc" }],
+    select: { jobId: true, status: true, declineNote: true, contractor: { select: { name: true } } },
+  });
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (seen.has(row.jobId)) continue;
+    seen.add(row.jobId);
+    if (row.status === "declined") badges.set(row.jobId, { by: row.contractor.name, note: row.declineNote });
+  }
+  return badges;
 }
 
 function escapeLike(text: string): string {
@@ -239,8 +265,9 @@ export async function listQueue(
     page = all.slice(query.offset, query.offset + query.limit);
   }
 
+  const badges = await declinedBadges(client, page);
   return {
-    rows: page.map((job) => toQueueRow(job, now)),
+    rows: page.map((job) => toQueueRow(job, now, badges.get(job.id) ?? null)),
     total,
     hasMore: query.offset + page.length < total,
     counts,

@@ -3,6 +3,7 @@
 // The design's cadence discipline keeps SMS for time-sensitive events only
 // (dispatch, slot confirmation); that is a decision each sending feature makes
 // by choosing this channel, not something this component polices.
+import { asSiteContact } from "../../jobs/site-contact.js";
 import type { AddressLookup, ChannelComponent } from "../types.js";
 
 /** One GSM-7 segment is 160 characters; a longer body is split and billed twice. */
@@ -35,6 +36,19 @@ export const smsChannel: ChannelComponent = {
     // per guiding principle 8, never a crash, never silence.
     if (recipientType === "user") {
       return { reason: `user ${recipientId} has no phone -- a User carries no phone number` };
+    }
+
+    // Feature 4003, plan decision 6: the site contact's phone, read off the
+    // job at send time (recipientId = the job's id). The text is always asked.
+    if (recipientType === "site_contact") {
+      const job = await context.client.job.findUnique({
+        where: { id: recipientId },
+        select: { siteContact: true },
+      });
+      if (job === null) return { reason: `no job ${recipientId}` };
+      const contact = asSiteContact(job.siteContact);
+      if (contact === null) return { reason: `job ${recipientId} has no site contact` };
+      return { address: contact.phone };
     }
 
     // Ops has one number, and the design names it: PlatformSettings.operatorPhone

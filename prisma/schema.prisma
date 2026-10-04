@@ -675,6 +675,11 @@ model Assignment {
   settlementId           String?
   dispatchedAt           DateTime         @default(now())
   acceptedAt             DateTime?
+  /// when the contractor declined; the WHO is this assignment's contractor
+  /// (Feature 4003)
+  declinedAt             DateTime?
+  /// his optional note at decline, never required (Feature 4003)
+  declineNote            String?
   /// system: the moment Complete was pressed
   completedAt            DateTime?
   /// AUDIT pair: who pulled the contractor off, and when. Review finding
