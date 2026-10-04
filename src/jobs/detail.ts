@@ -5,7 +5,7 @@
 // the customer's contact, the two addresses, and the notes log newest first.
 import type { PrismaClient } from "../db/client.js";
 import type { JobStatus } from "../generated/prisma/enums.js";
-import { formatDateTimeLabel, formatPlainDate } from "../time/index.js";
+import { formatDateTimeLabel, formatPlainDate, formatSlotLabel } from "../time/index.js";
 import { editableForSeconds, readNotes } from "./notes.js";
 import { jobMessages, type MessageView } from "./messages.js";
 import { asSiteContact, isClosed, type SiteContactView } from "./site-contact.js";
@@ -34,6 +34,17 @@ export interface NoteView {
   edited: boolean;
   /** Seconds left for THIS viewer to fix it; 0 = the page offers no Edit. */
   editableForSeconds: number;
+}
+
+export interface EarlierBooking {
+  contractorName: string;
+  contractorCode: string;
+  /** "Declined" -- 4006's cancelled bookings join this list under their own word. */
+  what: string;
+  /** When it happened, in the job's zone. */
+  whenLabel: string;
+  slotLabel: string | null;
+  note: string | null;
 }
 
 export interface JobDetail {
@@ -66,6 +77,8 @@ export interface JobDetail {
   /** Plan decision 4: completed or cancelled -- the site contact is read-only. */
   closed: boolean;
   contractor: ContractorView | null;
+  /** Feature 4003 (plan decision 10): every assignment but the one in play, newest first. */
+  earlierBookings: EarlierBooking[];
   /** AC29: the level and its price, shown once the job is dispatched (Job.serviceLevel set). */
   serviceLevel: string | null;
   priceLine: string | null;
@@ -81,9 +94,33 @@ export async function loadJob(client: PrismaClient, reference: string): Promise<
   return client.job.findUnique({ where: { reference }, include: jobInclude });
 }
 
-function answersOf(selectedOptions: unknown): string[] {
+export function answersOf(selectedOptions: unknown): string[] {
   if (!Array.isArray(selectedOptions)) return [];
   return selectedOptions.filter((entry): entry is string => typeof entry === "string");
+}
+
+/**
+ * Plan decision 10: every assignment on the job except the one in play,
+ * newest first -- the contractor's name and code, what happened and when,
+ * the slot, and his note when there is one. 4003 makes only declined ones.
+ */
+async function earlierBookingsOf(client: PrismaClient, job: JobWithRelations, now: Date): Promise<EarlierBooking[]> {
+  const inPlay = job.assignments[0]?.id;
+  const rows = await client.assignment.findMany({
+    where: { jobId: job.id, status: "declined", ...(inPlay === undefined ? {} : { id: { not: inPlay } }) },
+    include: { contractor: { select: { name: true, code: true } } },
+  });
+  return rows
+    .map((row) => ({ row, at: row.declinedAt ?? row.dispatchedAt }))
+    .sort((a, b) => b.at.getTime() - a.at.getTime() || b.row.id.localeCompare(a.row.id))
+    .map(({ row, at }) => ({
+      contractorName: row.contractor.name,
+      contractorCode: row.contractor.code,
+      what: "Declined",
+      whenLabel: formatDateTimeLabel(job.timezone, at, now),
+      slotLabel: row.proposedSlot === null ? null : formatSlotLabel(job.timezone, row.proposedSlot, now),
+      note: row.declineNote,
+    }));
 }
 
 export async function jobDetail(
@@ -113,6 +150,7 @@ export async function jobDetail(
 
   // The business clock (Data Model / Time): PlatformSettings.timezone.
   const settings = await client.platformSettings.findFirst({ select: { timezone: true } });
+  const earlierBookings = await earlierBookingsOf(client, job, now);
   const messages = await jobMessages(client, job.id, settings?.timezone ?? job.timezone);
 
   return {
@@ -140,6 +178,7 @@ export async function jobDetail(
     siteContact: asSiteContact(job.siteContact),
     closed: isClosed(job.status),
     contractor: contractorView(job, now),
+    earlierBookings,
     serviceLevel: job.serviceLevel,
     priceLine: price,
     canDispatch: job.status === "new" && hasAddress,

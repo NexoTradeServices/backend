@@ -29,6 +29,8 @@ const TYPE_NAMES: Record<string, string> = {
   enquiry_confirmation: "Enquiry received",
   new_job_request: "New job request",
   job_dispatched: "Job dispatched",
+  slot_confirmed: "Slot confirmed",
+  contractor_declined: "Contractor declined",
 };
 
 const STATUS_LABELS: Record<NotificationStatus, string> = {

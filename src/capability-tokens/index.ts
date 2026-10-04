@@ -7,7 +7,9 @@
 // are not this feature's job -- see the plan's Scope.
 export {
   assertLinkSpec,
+  burnByAssignment,
   consumeCapabilityToken,
+  findCapabilityToken,
   mintCapabilityLink,
   revokeByAssignment,
   revokeByJob,

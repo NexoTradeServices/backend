@@ -11,10 +11,12 @@
 import type { PrismaClient } from "../db/client.js";
 import { DEV_SMS_TEXT_CONTEXT_KEY } from "./dispatcher.js";
 import { formatDateTimeLabel } from "../time/index.js";
+import { asSiteContact } from "../jobs/site-contact.js";
 
 /** "job_dispatched" -> "dispatched" -- the step name a block is headed with. */
 const STEP_LABELS: Record<string, string> = {
   job_dispatched: "dispatched",
+  slot_confirmed: "slot confirmed",
 };
 
 function stepLabelOf(type: string): string {
@@ -28,7 +30,7 @@ function stepKeyOf(idempotencyKey: string): string {
 
 export interface DevTextRow {
   id: string;
-  recipientBadge: "CONTRACTOR SMS" | "CUSTOMER SMS" | "OPS SMS";
+  recipientBadge: "CONTRACTOR SMS" | "CUSTOMER SMS" | "SITE CONTACT SMS" | "OPS SMS";
   toName: string | null;
   toNumber: string;
   text: string;
@@ -46,13 +48,15 @@ const LATEST = 50;
 
 interface RawRow {
   id: string;
-  recipientType: "customer" | "contractor" | "ops" | "user";
+  recipientType: "customer" | "contractor" | "ops" | "user" | "site_contact";
   recipientId: string;
   type: string;
   idempotencyKey: string;
   jobId: string | null;
   jobReference: string | null;
   jobTimezone: string | null;
+  jobSiteContact: unknown;
+  recipientName: string | null;
   at: Date;
   text: string;
 }
@@ -60,7 +64,8 @@ interface RawRow {
 export async function loadDevTextBlocks(client: PrismaClient, now: Date = new Date()): Promise<DevTextBlock[]> {
   const rows = await client.$queryRaw<RawRow[]>`
     SELECT n.id, n."recipientType", n."recipientId", n.type, n."idempotencyKey", n."jobId",
-           j.reference AS "jobReference", j.timezone AS "jobTimezone",
+           j.reference AS "jobReference", j.timezone AS "jobTimezone", j."siteContact" AS "jobSiteContact",
+           n.context->>'recipientName' AS "recipientName",
            COALESCE(n."sentAt", n."createdAt") AS "at",
            n.context->>${DEV_SMS_TEXT_CONTEXT_KEY} AS text
       FROM "Notification" n
@@ -106,6 +111,13 @@ export async function loadDevTextBlocks(client: PrismaClient, now: Date = new Da
       toName = c?.name ?? null;
       toNumber = c?.phone ?? "";
       recipientBadge = "CONTRACTOR SMS";
+    } else if (row.recipientType === "site_contact") {
+      // Feature 4003, AC27: reached through the job -- her number is read off
+      // the job's site contact, her name is the one the row was asked with.
+      const contact = asSiteContact(row.jobSiteContact);
+      toName = row.recipientName ?? contact?.name ?? null;
+      toNumber = contact?.phone ?? "";
+      recipientBadge = "SITE CONTACT SMS";
     } else if (row.recipientType === "customer") {
       const c = customerById.get(row.recipientId);
       toName = c?.name ?? null;

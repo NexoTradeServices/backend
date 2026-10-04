@@ -208,3 +208,31 @@ export async function tightenExpiryByJob(
   });
   return count;
 }
+
+/**
+ * Feature 4003: the row behind a raw token, whatever state it is in, so a
+ * dead link can say WHY it is dead (used / expired / wrong type) rather than
+ * only that it failed. Read-only. Null when no row holds this hash.
+ */
+export async function findCapabilityToken(client: CapabilityTokenDb, rawToken: string) {
+  return client.capabilityToken.findUnique({ where: { tokenHash: sha256Hex(rawToken) } });
+}
+
+/**
+ * BKLG-027 (Feature 4003): burn every unspent token of these types on an
+ * assignment -- usedAt stamped, never deleted, so the other link can still
+ * say "Already answered" (row deletion is revocation; this is not that).
+ * Runs inside the answer's own transaction. Returns how many were burned.
+ */
+export async function burnByAssignment(
+  client: CapabilityTokenDb,
+  assignmentId: string,
+  types: CapabilityTokenType[],
+  at: Date = new Date(),
+): Promise<number> {
+  const { count } = await client.capabilityToken.updateMany({
+    where: { assignmentId, usedAt: null, type: { in: types } },
+    data: { usedAt: at },
+  });
+  return count;
+}

@@ -4,6 +4,7 @@
 // channel goes for a given recipient, and what this channel will not carry. A
 // new channel (push, WhatsApp, in-app) is a new file beside this one -- never
 // logic somewhere else in the app.
+import { asSiteContact } from "../../jobs/site-contact.js";
 import type { AddressLookup, ChannelComponent } from "../types.js";
 
 export const emailChannel: ChannelComponent = {
@@ -38,6 +39,25 @@ export const emailChannel: ChannelComponent = {
       });
       if (user === null) return { reason: `no user ${recipientId}` };
       return { address: user.email };
+    }
+
+    // Feature 4003, plan decision 6: a site contact is reached through the
+    // JOB (recipientId = the job's id), at send time -- Mike can fix her
+    // details until the job closes, so the address is never copied onto the
+    // row. No email on file is a reason, never a guess; the asker does not
+    // ask the email channel at all in that case.
+    if (recipientType === "site_contact") {
+      const job = await context.client.job.findUnique({
+        where: { id: recipientId },
+        select: { siteContact: true },
+      });
+      if (job === null) return { reason: `no job ${recipientId}` };
+      const contact = asSiteContact(job.siteContact);
+      if (contact === null) return { reason: `job ${recipientId} has no site contact` };
+      if (contact.email === null || contact.email.trim() === "") {
+        return { reason: `the site contact on job ${recipientId} gave no email address` };
+      }
+      return { address: contact.email };
     }
 
     // Feature 3001, AC6, BKLG-004: the four Ops rows all land in ONE shared
