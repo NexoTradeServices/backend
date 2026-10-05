@@ -766,6 +766,8 @@ model Attachment {
   uploadedByRole UploadedByRole
   /// Cloudinary public id (ADR 0000)
   storageKey     String
+  /// the name the file had on the person's device
+  fileName       String
   caption        String?
   createdAt      DateTime       @default(now())
 

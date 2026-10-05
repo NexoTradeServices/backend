@@ -23,6 +23,7 @@ import {
   findCapabilityToken,
 } from "../capability-tokens/index.js";
 import { formatDateLabel, formatDateTimeLabel, formatSlotLabel } from "../time/index.js";
+import { customerPhotosOf, type PhotoView } from "../photos/cloudinary.js";
 import { answersOf } from "../jobs/detail.js";
 import { readNotes } from "../jobs/notes.js";
 import { asSiteContact } from "../jobs/site-contact.js";
@@ -53,6 +54,8 @@ export interface RespondOpen {
   customerFirstName: string;
   description: string | null;
   answers: string[];
+  /** Feature 3003: the customer's enquiry photos, oldest first. */
+  photos: PhotoView[];
   /** The office's Instruction notes only (plan decision 12), newest first. */
   instructions: { authorFirstName: string; dateLabel: string; note: string }[];
 }
@@ -190,6 +193,7 @@ async function openView(db: Db, assignment: LoadedAssignment, now: Date): Promis
     customerFirstName: job.customer.name.split(" ")[0] ?? job.customer.name,
     description: job.description,
     answers: answersOf(job.selectedOptions),
+    photos: await customerPhotosOf(db, job.id),
     instructions: [...instructionNotes]
       .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
       .map((note) => ({

@@ -27,8 +27,9 @@
 // AC25 a link that does not exist reads "doesn't work" with the office number
 // AC26 (frontend e2e: respond.spec.ts) tapping Decline shows the note box; Back sends nothing
 // AC27 the Texts sent page shows Lena's slot-confirmed text under JOB-1042
+// 3003 AC12 (back half) the respond read carries the customer's photos; none when the job has none
 // AC28 the Messages card names the two new types "Slot confirmed" and "Contractor declined"
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import express, { type Express } from "express";
 import request from "supertest";
 import { toNodeHandler } from "better-auth/node";
@@ -92,6 +93,7 @@ interface Read {
   contactIsSiteContact?: boolean;
   description?: string | null;
   answers?: string[];
+  photos?: { fileName: string; thumbnailUrl: string; fullUrl: string }[];
   instructions?: { authorFirstName: string; dateLabel: string; note: string }[];
   answer?: string;
   answeredAtLabel?: string;
@@ -261,6 +263,35 @@ describe("the respond read", () => {
     const raw = JSON.stringify(res.body);
     expect(raw).not.toContain("0400 002 050");
     expect(raw).not.toContain("lena@idelta.com.au");
+  });
+
+  test("3003 AC12: the read carries Sarah's photos, oldest first; a job with none carries an empty list", async () => {
+    vi.stubEnv("CLOUDINARY_CLOUD_NAME", "test-cloud");
+    try {
+      const { jobId, assignmentId } = await job1042();
+      const token = await link(assignmentId);
+      expect(((await readLink(token)).body as Read).photos).toEqual([]);
+
+      await db.attachment.create({
+        data: {
+          jobId,
+          uploadedByRole: "customer",
+          storageKey: "tradeservice/enquiry-photos/tap-aaa",
+          fileName: "leaking mixer tap.jpg",
+        },
+      });
+      const body = (await readLink(token)).body as Read;
+      expect(body.photos).toEqual([
+        {
+          fileName: "leaking mixer tap.jpg",
+          thumbnailUrl:
+            "https://res.cloudinary.com/test-cloud/image/upload/c_fill,g_auto,w_240,h_240,f_auto,q_auto/tradeservice/enquiry-photos/tap-aaa",
+          fullUrl: "https://res.cloudinary.com/test-cloud/image/upload/f_auto,q_auto/tradeservice/enquiry-photos/tap-aaa",
+        },
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   test("AC3: a job with no site contact names the customer", async () => {
