@@ -18,6 +18,12 @@
 // AC9  PreferredWindow carries no `specific` value and preferredDate is
 //      NOT NULL, proven against the migrated schema and the seeded fixtures
 // AC11 an empty prefilledFields trade saves with selectedOptions empty
+//
+// Feature 3003 -- enquiry photos (the enquiry endpoint's half)
+// 3003 AC1  an enquiry with two photos writes two customer Attachment rows
+// 3003 AC2  an enquiry with no photos writes no Attachment rows
+// 3003 AC3  six photos, a foreign folder, or a missing file name -> 400
+//           field "photos", no job
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import express, { type Express } from "express";
 import request from "supertest";
@@ -314,5 +320,77 @@ describe("GET /api/enquiries/form-data", () => {
       "Is the hot water gas or electric?",
     ]);
     expect(plumbing?.customerCalloutRate).toBe(25_000);
+  });
+});
+
+describe("Feature 3003 -- enquiry photos", () => {
+  const KEY_ONE = "tradeservice/enquiry-photos/leaking-tap-aaa111";
+  const KEY_TWO = "tradeservice/enquiry-photos/under-the-sink-bbb222";
+
+  test("3003 AC1: two photos write two Attachment rows -- customer, no assignment, public id and file name", async () => {
+    const res = await request(app)
+      .post("/api/enquiries")
+      .send(
+        validBody({
+          name: "Sarah Chen",
+          email: "sarah@idelta.com.au",
+          photos: [
+            { storageKey: KEY_ONE, fileName: "IMG_2041 leaking mixer tap.heic" },
+            { storageKey: KEY_TWO, fileName: "under-the-sink.jpg" },
+          ],
+        }),
+      );
+    expect(res.status).toBe(201);
+    const reference = (res.body as EnquiryResponseBody).reference as string;
+
+    const job = await db.job.findUniqueOrThrow({ where: { reference } });
+    const rows = await db.attachment.findMany({ where: { jobId: job.id }, orderBy: { storageKey: "asc" } });
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.uploadedByRole).toBe("customer");
+      expect(row.assignmentId).toBeNull();
+    }
+    expect(rows.map((row) => [row.storageKey, row.fileName])).toEqual([
+      [KEY_ONE, "IMG_2041 leaking mixer tap.heic"],
+      [KEY_TWO, "under-the-sink.jpg"],
+    ]);
+  });
+
+  test("3003 AC2: an enquiry with no photos writes no Attachment rows, with the key absent or empty", async () => {
+    const without = await request(app).post("/api/enquiries").send(validBody());
+    expect(without.status).toBe(201);
+    const empty = await request(app)
+      .post("/api/enquiries")
+      .send(validBody({ email: "karl2@idelta.com.au", photos: [] }));
+    expect(empty.status).toBe(201);
+    expect(await db.attachment.count()).toBe(0);
+  });
+
+  test("3003 AC3: six photos is refused with field photos and no job is created", async () => {
+    const jobsBefore = await db.job.count();
+    const photos = Array.from({ length: 6 }, (_, i) => ({
+      storageKey: `tradeservice/enquiry-photos/p${String(i)}`,
+      fileName: `p${String(i)}.jpg`,
+    }));
+    const res = await request(app).post("/api/enquiries").send(validBody({ photos }));
+    expect(res.status).toBe(400);
+    expect((res.body as EnquiryResponseBody).field).toBe("photos");
+    expect(await db.job.count()).toBe(jobsBefore);
+    expect(await db.attachment.count()).toBe(0);
+  });
+
+  test.each([
+    ["outside the enquiry-photos folder", { storageKey: "someone-else/folder/tap", fileName: "tap.jpg" }],
+    ["the folder itself, no file", { storageKey: "tradeservice/enquiry-photos/", fileName: "tap.jpg" }],
+    ["climbing out of the folder", { storageKey: "tradeservice/enquiry-photos/../work-photos/tap", fileName: "tap.jpg" }],
+    ["no file name", { storageKey: KEY_ONE }],
+    ["a blank file name", { storageKey: KEY_ONE, fileName: "   " }],
+  ])("3003 AC3: a photo %s is refused with field photos and no job is created", async (_label, photo) => {
+    const jobsBefore = await db.job.count();
+    const res = await request(app).post("/api/enquiries").send(validBody({ photos: [photo] }));
+    expect(res.status).toBe(400);
+    expect((res.body as EnquiryResponseBody).field).toBe("photos");
+    expect(await db.job.count()).toBe(jobsBefore);
+    expect(await db.attachment.count()).toBe(0);
   });
 });

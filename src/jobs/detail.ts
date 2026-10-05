@@ -6,6 +6,7 @@
 import type { PrismaClient } from "../db/client.js";
 import type { JobStatus } from "../generated/prisma/enums.js";
 import { formatDateTimeLabel, formatPlainDate, formatSlotLabel } from "../time/index.js";
+import { customerPhotosOf, type PhotoView } from "../photos/cloudinary.js";
 import { editableForSeconds, readNotes } from "./notes.js";
 import { jobMessages, type MessageView } from "./messages.js";
 import { asSiteContact, isClosed, type SiteContactView } from "./site-contact.js";
@@ -60,6 +61,8 @@ export interface JobDetail {
   description: string | null;
   /** Each answered question as saved, "<question>: <answer>", in the trade's order. */
   answers: string[];
+  /** Feature 3003: the customer's enquiry photos, oldest first. */
+  photos: PhotoView[];
   customer: {
     code: string;
     name: string;
@@ -165,6 +168,7 @@ export async function jobDetail(
     receivedLabel: formatDateTimeLabel(job.timezone, job.createdAt, now),
     description: job.description,
     answers: answersOf(job.selectedOptions),
+    photos: await customerPhotosOf(client, job.id),
     customer: {
       code: job.customer.code,
       name: job.customer.name,

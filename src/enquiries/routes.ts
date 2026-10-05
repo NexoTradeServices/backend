@@ -18,6 +18,15 @@ import { zoneForState, isWeekend } from "../time/index.js";
 import { sendNotification } from "../notifications/index.js";
 import { formatDollars } from "./money.js";
 import { verifyRecaptcha, type RecaptchaVerdict } from "./recaptcha.js";
+import {
+  isEnquiryPhotoKey,
+  readCloudinaryConfig,
+  signEnquiryPhotoUpload,
+  type CloudinaryConfig,
+} from "../photos/cloudinary.js";
+
+/** Feature 3003: at most this many photos on one enquiry. */
+export const MAX_ENQUIRY_PHOTOS = 5;
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PREFERRED_WINDOWS: readonly PreferredWindow[] = ["morning", "afternoon", "evening"];
@@ -50,6 +59,7 @@ interface EnquiryInput {
   description: string;
   marketingEmail: boolean;
   marketingSms: boolean;
+  photos: { storageKey: string; fileName: string }[];
   recaptchaToken: string | undefined;
 }
 
@@ -99,7 +109,22 @@ function parseLocation(value: unknown): Location | null {
   };
 }
 
-/** AC8: every field required except the two marketing checkboxes. */
+/** Feature 3003 AC3: an optional list, at most five, each one of ours with a file name. */
+function parsePhotos(value: unknown): { storageKey: string; fileName: string }[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > MAX_ENQUIRY_PHOTOS) return null;
+  const photos: { storageKey: string; fileName: string }[] = [];
+  for (const entry of value as unknown[]) {
+    if (entry === null || typeof entry !== "object") return null;
+    const p = entry as Record<string, unknown>;
+    if (!isNonEmptyString(p["storageKey"]) || !isEnquiryPhotoKey(p["storageKey"].trim())) return null;
+    if (!isNonEmptyString(p["fileName"])) return null;
+    photos.push({ storageKey: p["storageKey"].trim(), fileName: p["fileName"].trim() });
+  }
+  return photos;
+}
+
+/** AC8: every field required except the two marketing checkboxes and the photos. */
 function parseEnquiryInput(body: unknown): ParseResult {
   if (body === null || typeof body !== "object") {
     return { ok: false, error: "request body must be an object" };
@@ -154,6 +179,11 @@ function parseEnquiryInput(body: unknown): ParseResult {
     return { ok: false, error: "marketingEmail and marketingSms must be booleans", field: "marketingEmail" };
   }
 
+  const photos = parsePhotos(b["photos"]);
+  if (photos === null) {
+    return { ok: false, error: "photos must be at most 5 photos uploaded through the form, each with a file name", field: "photos" };
+  }
+
   const recaptchaToken = b["recaptchaToken"];
   if (recaptchaToken !== undefined && typeof recaptchaToken !== "string") {
     return { ok: false, error: "recaptchaToken must be a string when present", field: "recaptchaToken" };
@@ -173,6 +203,7 @@ function parseEnquiryInput(body: unknown): ParseResult {
       description: b["description"].trim(),
       marketingEmail,
       marketingSms,
+      photos,
       recaptchaToken,
     },
   };
@@ -181,11 +212,26 @@ function parseEnquiryInput(body: unknown): ParseResult {
 export interface EnquiryRoutesOptions {
   /** Swappable in tests -- see notifications/providers/registry.ts for the same seam. */
   verifyRecaptcha?: (token: string | undefined) => Promise<RecaptchaVerdict>;
+  /** Feature 3003: the Cloudinary settings, or null for "not set up". Same seam, same reason. */
+  cloudinaryConfig?: () => CloudinaryConfig | null;
 }
 
 export function enquiryRoutes(client: PrismaClient, options: EnquiryRoutesOptions = {}): Router {
   const router = createRouter();
   const checkRecaptcha = options.verifyRecaptcha ?? verifyRecaptcha;
+  const cloudinaryConfig = options.cloudinaryConfig ?? readCloudinaryConfig;
+
+  // Feature 3003 AC4: a signed direct upload for the enquiry-photos folder.
+  // Public -- Sarah has no login. The API secret never leaves this process;
+  // not set up answers 503 and the form turns that into its warning line.
+  router.post("/photo-signature", (_req: Request, res: Response) => {
+    const config = cloudinaryConfig();
+    if (config === null) {
+      res.status(503).json({ error: "photo upload is unavailable" });
+      return;
+    }
+    res.json(signEnquiryPhotoUpload(config));
+  });
 
   router.get("/form-data", (_req: Request, res: Response) => {
     void (async () => {
@@ -302,6 +348,18 @@ export function enquiryRoutes(client: PrismaClient, options: EnquiryRoutesOption
             preferredDate: preferredDateValue,
           },
         });
+
+        if (input.photos.length > 0) {
+          await tx.attachment.createMany({
+            data: input.photos.map((photo) => ({
+              jobId: createdJob.id,
+              assignmentId: null,
+              uploadedByRole: "customer" as const,
+              storageKey: photo.storageKey,
+              fileName: photo.fileName,
+            })),
+          });
+        }
 
         if (input.marketingEmail || input.marketingSms) {
           await tx.customer.update({

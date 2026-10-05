@@ -22,8 +22,10 @@
 // AC22 after 10 minutes the edit is refused and no Edit is offered
 // AC23 the owner cannot edit Mike's note
 // AC24 the new-job-request email carries <web origin>/ops/jobs/<reference>
+// 3003 AC11 (back half) the job read carries the customer's photos -- file
+//      name, thumbnail and full URLs, oldest first; none for a job without
 // AC26 (BKLG-023) a fresh base seed gives Plumbing the six questions
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import express, { type Express } from "express";
 import request from "supertest";
 import { toNodeHandler } from "better-auth/node";
@@ -584,6 +586,61 @@ describe("AC11 -- the request, read-only", () => {
     const mike = await signInCookie("mike@idelta.com.au");
     expect((await detail(mike, "JOB-1042")).answers).toEqual([]);
     expect((await request(app).get("/api/jobs/JOB-9999").set("Cookie", mike)).status).toBe(404);
+  });
+});
+
+describe("3003 AC11 -- the customer's photos on the job read", () => {
+  test("3003 AC11: Sarah's photos come back oldest first with file name, thumbnail and full URLs; a job without has none", async () => {
+    vi.stubEnv("CLOUDINARY_CLOUD_NAME", "test-cloud");
+    try {
+      const mike = await signInCookie("mike@idelta.com.au");
+      const job = await db.job.findUniqueOrThrow({ where: { reference: "JOB-1042" } });
+      await db.attachment.create({
+        data: {
+          jobId: job.id,
+          uploadedByRole: "customer",
+          storageKey: "tradeservice/enquiry-photos/second-bbb",
+          fileName: "under the sink.jpg",
+          createdAt: new Date("2026-09-10T02:00:00Z"),
+        },
+      });
+      await db.attachment.create({
+        data: {
+          jobId: job.id,
+          uploadedByRole: "customer",
+          storageKey: "tradeservice/enquiry-photos/first-aaa",
+          fileName: "leaking mixer tap.heic",
+          createdAt: new Date("2026-09-10T01:00:00Z"),
+        },
+      });
+      // A contractor's photo on the same job is not the customer's.
+      await db.attachment.create({
+        data: { jobId: job.id, uploadedByRole: "contractor", storageKey: "work/after-ccc", fileName: "after.jpg" },
+      });
+
+      const page = (await detail(mike, "JOB-1042")) as DetailBody & { photos: unknown };
+      expect(page.photos).toEqual([
+        {
+          fileName: "leaking mixer tap.heic",
+          thumbnailUrl:
+            "https://res.cloudinary.com/test-cloud/image/upload/c_fill,g_auto,w_240,h_240,f_auto,q_auto/tradeservice/enquiry-photos/first-aaa",
+          fullUrl:
+            "https://res.cloudinary.com/test-cloud/image/upload/f_auto,q_auto/tradeservice/enquiry-photos/first-aaa",
+        },
+        {
+          fileName: "under the sink.jpg",
+          thumbnailUrl:
+            "https://res.cloudinary.com/test-cloud/image/upload/c_fill,g_auto,w_240,h_240,f_auto,q_auto/tradeservice/enquiry-photos/second-bbb",
+          fullUrl:
+            "https://res.cloudinary.com/test-cloud/image/upload/f_auto,q_auto/tradeservice/enquiry-photos/second-bbb",
+        },
+      ]);
+
+      const fresh = await makeJob();
+      expect(((await detail(mike, fresh.reference)) as DetailBody & { photos: unknown }).photos).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 
