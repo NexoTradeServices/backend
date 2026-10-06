@@ -11,6 +11,7 @@
 // never stored.
 import type { PrismaClient } from "../db/client.js";
 import type { ContractorStatus } from "../generated/prisma/enums.js";
+import { currentAgreementLabel } from "../agreements/current.js";
 import { readyToDispatch, type ReadyInput } from "../contractors/ready.js";
 import { dateOnlyAsUtcMidnight, formatTimeRangeLabel, formatPlainDateShort } from "../time/index.js";
 
@@ -73,10 +74,11 @@ export interface ContractorForGuard {
   emergencyContactPhone: string | null;
   specialties: { status: ContractorStatus; licenceExpiry: Date }[];
   servedPostcodeCount: number;
+  agreementVersion: string | null;
 }
 
 /** Exported so the dispatch write path (a separate transaction, its own load shape) builds the same `ReadyInput` -- one derivation, never a second copy. */
-export function readyInputOf(contractor: ContractorForGuard): ReadyInput {
+export function readyInputOf(contractor: ContractorForGuard, currentAgreementVersion: string | null): ReadyInput {
   return {
     businessName: contractor.businessName,
     abn: contractor.abn,
@@ -92,6 +94,8 @@ export function readyInputOf(contractor: ContractorForGuard): ReadyInput {
     emergencyContactPhone: contractor.emergencyContactPhone,
     specialties: contractor.specialties.map((s) => ({ status: s.status, licenceExpiry: s.licenceExpiry })),
     servedPostcodeCount: contractor.servedPostcodeCount,
+    agreementVersion: contractor.agreementVersion,
+    currentAgreementVersion,
   };
 }
 
@@ -211,6 +215,7 @@ export interface CandidatesInput {
 export async function loadCandidates(client: PrismaClient, input: CandidatesInput): Promise<CandidatesResult> {
   const contractors = await loadContractorsForTrade(client, input.job.trade);
   const ids = contractors.map((c) => c.id);
+  const agreementLabel = await currentAgreementLabel(client);
   const [distances, busy] = await Promise.all([
     distancesFor(client, ids, input.job),
     busyFor(client, ids, input.holdStart, input.holdEnd),
@@ -230,7 +235,7 @@ export async function loadCandidates(client: PrismaClient, input: CandidatesInpu
     if (!specialty) continue; // not a candidate at all
 
     const guarded = guardReason(
-      readyInputOf({ ...contractor, servedPostcodeCount: contractor.servedPostcodes.length }),
+      readyInputOf({ ...contractor, servedPostcodeCount: contractor.servedPostcodes.length }, agreementLabel),
       specialty,
       input.job.trade,
       guardNow,

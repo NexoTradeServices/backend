@@ -12,6 +12,7 @@ import { requireRole } from "../auth/middleware.js";
 import { Role } from "../generated/prisma/enums.js";
 import type { AssignmentStatus, JobStatus } from "../generated/prisma/enums.js";
 import { formatSlotLabel } from "../time/index.js";
+import { currentAgreementLabel } from "../agreements/current.js";
 import { readyToDispatch, type ReadyInput } from "./ready.js";
 
 async function loadOwnContractor(client: PrismaClient, userId: string) {
@@ -21,7 +22,10 @@ async function loadOwnContractor(client: PrismaClient, userId: string) {
   });
 }
 
-function readyInputOf(contractor: NonNullable<Awaited<ReturnType<typeof loadOwnContractor>>>): ReadyInput {
+function readyInputOf(
+  contractor: NonNullable<Awaited<ReturnType<typeof loadOwnContractor>>>,
+  currentAgreementVersion: string | null,
+): ReadyInput {
   return {
     businessName: contractor.businessName,
     abn: contractor.abn,
@@ -37,6 +41,8 @@ function readyInputOf(contractor: NonNullable<Awaited<ReturnType<typeof loadOwnC
     emergencyContactPhone: contractor.emergencyContactPhone,
     specialties: contractor.specialties.map((s) => ({ status: s.status, licenceExpiry: s.licenceExpiry })),
     servedPostcodeCount: contractor._count.servedPostcodes,
+    agreementVersion: contractor.agreementVersion,
+    currentAgreementVersion,
   };
 }
 
@@ -83,7 +89,7 @@ export function contractorDashboardRoutes(client: PrismaClient): Router {
         return;
       }
 
-      const { ready, missing } = readyToDispatch(readyInputOf(contractor));
+      const { ready, missing } = readyToDispatch(readyInputOf(contractor, await currentAgreementLabel(client)));
 
       // AC1: assigned, accepted or in_progress only -- a declined, cancelled
       // or completed assignment never appears (they are the job's history,

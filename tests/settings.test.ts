@@ -22,12 +22,16 @@ import { seedAuthFixtures, DEV_PASSWORD } from "../src/db/seed/auth.js";
 import { buildAuth, type Auth } from "../src/auth/config.js";
 import { attachSession } from "../src/auth/middleware.js";
 import { authRoutes } from "../src/auth/routes.js";
+import { Prisma } from "../src/generated/prisma/client.js";
 import { settingsRoutes } from "../src/settings/routes.js";
+import { agreementRoutes } from "../src/agreements/routes.js";
+import { fakeStorage, makePdf } from "./helpers/agreements.js";
 import type { PrismaClient } from "../src/db/client.js";
 
 let db: PrismaClient;
 let auth: Auth;
 let app: Express;
+const storage = fakeStorage();
 
 const OPERATOR_EMAIL_MIGRATION_SQL = new URL(
   "../prisma/migrations/20260901140000_platform_settings_operator_email/migration.sql",
@@ -39,6 +43,8 @@ function validBody(overrides: Record<string, unknown> = {}): Record<string, unkn
   return {
     gstRegistered: false,
     businessAbn: null,
+    legalEntityName: "Trade Services",
+    businessAddress: null,
     gstRatePercent: 10,
     paymentTermsDays: 7,
     serviceReachKm: 25,
@@ -87,10 +93,13 @@ beforeAll(() => {
   app.use("/api", authRoutes(db));
   app.use(express.json());
   app.use("/api/settings", settingsRoutes(db));
+  app.use("/api", agreementRoutes(db, { storage: () => storage }));
 });
 
 beforeEach(async () => {
   await truncateAll(db);
+  storage.files.clear();
+  storage.down = false;
 });
 
 afterAll(async () => {
@@ -240,5 +249,156 @@ describe("AC6 -- operatorEmail, backfilled and editable", () => {
 
     const settings = await db.platformSettings.findFirstOrThrow();
     expect(settings.operatorEmail).toBe("admin@idelta.com.au");
+  });
+});
+
+// Feature 2006 -- the legal identity and the agreement's publishing
+const PERTH_ADDRESS = {
+  street: "1 Hay Street",
+  suburb: "Perth",
+  state: "WA",
+  country: "Australia",
+  postcode: "6000",
+  lat: -31.9505,
+  lng: 115.8605,
+  placeId: "fixture-place-hay-street",
+};
+
+describe("2006 AC2 -- the legal identity fields", () => {
+  test("AC2: the seed carries the placeholders; the owner saves both fields and they come back on reload", async () => {
+    await seedCast();
+    const cookie = await signInCookie("owner@idelta.com.au");
+
+    const before = await request(app).get("/api/settings").set("Cookie", cookie);
+    expect(before.body).toMatchObject({ legalEntityName: "Trade Services", businessAbn: "123456789" });
+    expect((before.body as { businessAddress: { street: string } }).businessAddress.street).toBe("1 Hay Street");
+
+    const put = await request(app)
+      .put("/api/settings")
+      .set("Cookie", cookie)
+      .send(validBody({ legalEntityName: "Trade Services Pty Ltd", businessAbn: "51 824 753 556", businessAddress: PERTH_ADDRESS }));
+    expect(put.status).toBe(200);
+
+    const after = await request(app).get("/api/settings").set("Cookie", cookie);
+    expect(after.body).toMatchObject({ legalEntityName: "Trade Services Pty Ltd", businessAddress: PERTH_ADDRESS });
+  });
+
+  test("AC2: an empty legal name or a typed-in (unpicked) address is refused", async () => {
+    await seedCast();
+    const cookie = await signInCookie("owner@idelta.com.au");
+    const empty = await request(app).put("/api/settings").set("Cookie", cookie).send(validBody({ legalEntityName: "  " }));
+    expect(empty.status).toBe(400);
+    expect((empty.body as { field: string }).field).toBe("legalEntityName");
+    const typed = await request(app).put("/api/settings").set("Cookie", cookie).send(validBody({ businessAddress: { street: "1 Hay" } }));
+    expect(typed.status).toBe(400);
+    expect((typed.body as { field: string }).field).toBe("businessAddress");
+  });
+
+  test("AC2: Mike (ops) cannot read or write either field", async () => {
+    await seedCast();
+    const cookie = await signInCookie("mike@idelta.com.au");
+    expect((await request(app).get("/api/settings").set("Cookie", cookie)).status).toBe(403);
+    expect((await request(app).put("/api/settings").set("Cookie", cookie).send(validBody({ legalEntityName: "X" }))).status).toBe(403);
+  });
+});
+
+describe("2006 AC3 -- publishing a version", () => {
+  async function publishAs(cookie: string, label: string, body: Buffer | string, query = `label=${label}`): Promise<request.Response> {
+    return request(app).post(`/api/agreements?${query}`).set("Cookie", cookie).set("Content-Type", "application/pdf").send(body);
+  }
+
+  test("AC3: version 1 holds the label, the file's SHA-256, the Cloudinary key, when and by whom, and lists as Current", async () => {
+    await seedCast();
+    const cookie = await signInCookie("owner@idelta.com.au");
+    const pdf = await makePdf("one");
+    const res = await publishAs(cookie, "1", pdf);
+    expect(res.status).toBe(201);
+
+    const row = await db.contractorAgreementVersion.findFirstOrThrow({ include: { issuedBy: true } });
+    expect(row.version).toBe("1");
+    expect(row.documentHash).toBe((await import("node:crypto")).createHash("sha256").update(pdf).digest("hex"));
+    expect(storage.files.has(row.storageKey)).toBe(true);
+    expect(row.storageKey).toMatch(/^tradeservice\/agreements\//);
+    expect(row.issuedBy.email).toBe("owner@idelta.com.au");
+    expect(Math.abs(row.issuedAt.getTime() - Date.now())).toBeLessThan(60_000);
+
+    const list = await request(app).get("/api/agreements").set("Cookie", cookie);
+    expect(list.body).toMatchObject({ versions: [{ version: "1", current: true, issuedBy: row.issuedBy.name }] });
+  });
+
+  test("AC3: only the owner publishes or lists; Mike is refused", async () => {
+    await seedCast();
+    const mike = await signInCookie("mike@idelta.com.au");
+    expect((await publishAs(mike, "1", await makePdf())).status).toBe(403);
+    expect((await request(app).get("/api/agreements").set("Cookie", mike)).status).toBe(403);
+  });
+});
+
+describe("2006 AC4 -- the refusals, each writing nothing", () => {
+  async function refused(
+    label: string,
+    body: Buffer | string,
+    message: string,
+    field: string,
+    status?: number,
+  ): Promise<void> {
+    const cookie = await signInCookie("owner@idelta.com.au");
+    const res = await request(app)
+      .post(`/api/agreements?label=${encodeURIComponent(label)}`)
+      .set("Cookie", cookie)
+      .set("Content-Type", "application/pdf")
+      .send(body);
+    expect(res.status).toBe(status ?? 400);
+    expect(res.body).toMatchObject({ error: message, field });
+    expect(await db.contractorAgreementVersion.count()).toBe(0);
+  }
+
+  test("AC4: a file that is not a PDF - by its content, even named .pdf", async () => {
+    await seedCast();
+    await refused("1", "this is not a pdf, whatever its name says", "That isn't a PDF - choose a PDF file.", "file");
+  });
+
+  test("AC4: a file over 10MB", async () => {
+    await seedCast();
+    const big = Buffer.concat([await makePdf(), Buffer.alloc(10 * 1024 * 1024 + 1)]);
+    await refused("1", big, "That file is over 10MB - choose a smaller PDF.", "file");
+  });
+
+  test("AC4: an empty label, and an already-used one", async () => {
+    await seedCast();
+    await refused("  ", await makePdf(), "Enter a version label.", "version");
+    const cookie = await signInCookie("owner@idelta.com.au");
+    await request(app).post("/api/agreements?label=1").set("Cookie", cookie).set("Content-Type", "application/pdf").send(await makePdf());
+    const again = await request(app).post("/api/agreements?label=1").set("Cookie", cookie).set("Content-Type", "application/pdf").send(await makePdf("two"));
+    expect(again.status).toBe(409);
+    expect(again.body).toMatchObject({ field: "version" });
+    expect(await db.contractorAgreementVersion.count()).toBe(1);
+  });
+
+  test("AC4: an incomplete legal identity", async () => {
+    await seedCast();
+    await db.platformSettings.updateMany({ data: { businessAbn: null } });
+    await refused("1", await makePdf(), "Fill in the legal name, ABN and address in Settings first", "legalIdentity", 409);
+    await db.platformSettings.updateMany({ data: { businessAbn: "123456789", businessAddress: Prisma.DbNull } });
+    await refused("1", await makePdf(), "Fill in the legal name, ABN and address in Settings first", "legalIdentity", 409);
+  });
+
+  test("AC4: Cloudinary unavailable", async () => {
+    await seedCast();
+    storage.down = true;
+    await refused("1", await makePdf(), "Couldn't store the file - try again shortly", "file", 503);
+  });
+});
+
+describe("2006 AC5 -- the count the dialog shows", () => {
+  test("AC5: the list carries the number of ACTIVE contractors the publish will stop", async () => {
+    await seedCast();
+    const cookie = await signInCookie("owner@idelta.com.au");
+    const all = await db.contractor.count({ where: { status: "active" } });
+    expect(all).toBeGreaterThanOrEqual(3);
+    expect((await request(app).get("/api/agreements").set("Cookie", cookie)).body).toMatchObject({ activeContractors: all });
+
+    await db.contractor.update({ where: { code: "CON-030" }, data: { status: "suspended" } });
+    expect((await request(app).get("/api/agreements").set("Cookie", cookie)).body).toMatchObject({ activeContractors: all - 1 });
   });
 });

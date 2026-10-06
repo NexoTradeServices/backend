@@ -41,6 +41,10 @@ export interface ReadyInput {
   emergencyContactPhone: string | null;
   specialties: ReadySpecialty[];
   servedPostcodeCount: number;
+  /** the version label the contractor last accepted (Contractor.agreementVersion) */
+  agreementVersion: string | null;
+  /** the label of the latest published agreement, or null while none is published -- Feature 2006 */
+  currentAgreementVersion: string | null;
 }
 
 /** Whose pen fixes this item -- Managing the contractor record / Pens. */
@@ -144,6 +148,20 @@ export function readyToDispatch(input: ReadyInput, now: Date = new Date()): Read
       copy: "service area (not set up yet)",
       pen: "own",
       route: "/contractor/service-area",
+      blocking: true,
+    });
+  }
+
+  // Feature 2006: nothing is asked until a version is published; once one is,
+  // a contractor who has not accepted THAT one (publishing a new version
+  // reopens it for everybody) is held back from new dispatch. Booked work is
+  // untouched -- readiness only guards the dispatch.
+  if (input.currentAgreementVersion !== null && input.agreementVersion !== input.currentAgreementVersion) {
+    missing.push({
+      key: "agreement",
+      copy: "contractor agreement (not accepted)",
+      pen: "own",
+      route: "/contractor/agreement",
       blocking: true,
     });
   }

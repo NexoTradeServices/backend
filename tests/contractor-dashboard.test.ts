@@ -77,6 +77,14 @@ async function seedCast(): Promise<void> {
   await seedAuthFixtures(db);
 }
 
+/** Feature 2006: a published agreement, written straight to the table (the publish endpoint is tested in tests/contractor-agreement.test.ts). */
+async function publishAgreement(label: string): Promise<{ id: string }> {
+  const owner = await db.user.findUniqueOrThrow({ where: { email: "owner@idelta.com.au" } });
+  return db.contractorAgreementVersion.create({
+    data: { version: label, storageKey: `tradeservice/agreements/${label}.pdf`, documentHash: "ab".repeat(32), issuedByUserId: owner.id },
+  });
+}
+
 function cookieHeader(res: request.Response): string {
   const raw = res.headers["set-cookie"] as string[] | string | undefined;
   const cookies: string[] = Array.isArray(raw) ? raw : raw ? [raw] : [];
@@ -331,5 +339,29 @@ describe("AC12 -- the fixture seed's job/assignment shape", () => {
     const assignments = await db.assignment.findMany({ where: { jobId: { in: jobs.map((j) => j.id) } } });
     expect(assignments).toHaveLength(3);
     expect(assignments.every((a) => a.contractorId === bob.id)).toBe(true);
+  });
+});
+
+describe("2006 AC7 -- the agreement item on Bob's dashboard", () => {
+  test("AC7: after version 1 is published Bob is Not ready, with the agreement item: own pen, blocking, linking to his page", async () => {
+    await publishAgreement("1");
+    const body = await dashboard(await signInCookie("bob@idelta.com.au"));
+    expect(body.ready).toBe(false);
+    expect(body.missing.find((item) => item.key === "agreement")).toEqual({
+      key: "agreement",
+      copy: "contractor agreement (not accepted)",
+      pen: "own",
+      route: "/contractor/agreement",
+      blocking: true,
+    });
+  });
+
+  test("AC7: once he has accepted that version the item is gone", async () => {
+    await publishAgreement("1");
+    const bob = await db.contractor.findUniqueOrThrow({ where: { code: "CON-014" } });
+    await db.contractor.update({ where: { id: bob.id }, data: { agreementVersion: "1", agreementAcceptedAt: new Date() } });
+    const body = await dashboard(await signInCookie("bob@idelta.com.au"));
+    expect(body.missing.map((item) => item.key)).not.toContain("agreement");
+    expect(body.ready).toBe(true);
   });
 });

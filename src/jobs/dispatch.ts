@@ -11,6 +11,7 @@ import { CapabilityTokenType } from "../capability-tokens/index.js";
 import { zonedDateTimeToUtc, formatSlotLabel } from "../time/index.js";
 import { serviceLevelFor, priceFor, isServiceLevelMultipliers, type TierRates } from "./dispatch-level.js";
 import { formatDollars } from "../enquiries/money.js";
+import { currentAgreementLabel } from "../agreements/current.js";
 import { loadCandidates, guardReason, readyInputOf, type CandidatesResult } from "./candidates.js";
 import { siteContactLine } from "./site-contact.js";
 import { asAddress, suburbOf, effectiveAddress, NO_ADDRESS_REASON, type Address } from "./shared.js";
@@ -245,7 +246,7 @@ export async function dispatchJob(
 
       const guardNow = new Date(`${slot.date}T00:00:00.000Z`);
       const guarded = guardReason(
-        readyInputOf({ ...contractor, servedPostcodeCount: contractor.servedPostcodes.length }),
+        readyInputOf({ ...contractor, servedPostcodeCount: contractor.servedPostcodes.length }, await currentAgreementLabel(tx)),
         specialty,
         job.serviceType.trade,
         guardNow,

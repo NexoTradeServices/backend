@@ -231,14 +231,15 @@ model User {
   contractor Contractor?
 
   // audit-pair back-relations (who did the thing)
-  gstStatusChanges         PlatformSettings[]     @relation("GstStatusChangedBy")
-  cancelledJobs            Job[]                  @relation("JobCancelledBy")
-  cancelledAssignments     Assignment[]           @relation("AssignmentCancelledBy")
-  voidedInvoices           Invoice[]              @relation("InvoiceVoidedBy")
-  approvedRefunds          Refund[]               @relation("RefundApprovedBy")
-  paidSettlements          ContractorSettlement[] @relation("SettlementPaidBy")
-  contractorStatusChanges  Contractor[]           @relation("ContractorStatusChangedBy")
-  specialtyStatusChanges   ContractorSpecialty[]  @relation("ContractorSpecialtyStatusChangedBy")
+  gstStatusChanges        PlatformSettings[]           @relation("GstStatusChangedBy")
+  cancelledJobs           Job[]                        @relation("JobCancelledBy")
+  cancelledAssignments    Assignment[]                 @relation("AssignmentCancelledBy")
+  voidedInvoices          Invoice[]                    @relation("InvoiceVoidedBy")
+  approvedRefunds         Refund[]                     @relation("RefundApprovedBy")
+  paidSettlements         ContractorSettlement[]       @relation("SettlementPaidBy")
+  contractorStatusChanges Contractor[]                 @relation("ContractorStatusChangedBy")
+  agreementVersionsIssued ContractorAgreementVersion[] @relation("AgreementIssuedBy")
+  specialtyStatusChanges  ContractorSpecialty[]        @relation("ContractorSpecialtyStatusChangedBy")
 }
 
 model Session {
@@ -306,6 +307,13 @@ model PlatformSettings {
   gstStatusChangedAt        DateTime?
   gstStatusChangedByUserId  String?
   businessAbn               String?
+  /// the LEGAL name -- printed on the contract record, invoices and credit
+  /// notes (Foundations / Brand identity, Three identities, one row). Feature
+  /// 2006; its migration fills the existing row with "Trade Services".
+  legalEntityName           String      @default("Trade Services")
+  /// the business's street address, Places shape like Customer.billingAddress:
+  /// { street, suburb, state, country, postcode, lat, lng, placeId }. Feature 2006.
+  businessAddress           Json?
   /// 10 (AU). Decimal, not Int -- it drives money math and must stay exact.
   gstRatePercent            Decimal     @db.Decimal(5, 2)
   /// stamps Invoice.dueAt at issue
@@ -347,6 +355,41 @@ model PlatformSettings {
   updatedAt                 DateTime    @updatedAt
 
   gstStatusChangedBy User? @relation("GstStatusChangedBy", fields: [gstStatusChangedByUserId], references: [id])
+}
+
+/// One published contractor agreement -- Feature 2006. A never-changed file;
+/// the latest `issuedAt` is the current version. Never edited or deleted.
+model ContractorAgreementVersion {
+  id             String   @id @default(uuid(7))
+  /// the owner's label ("1", "2") -- unique, and what Contractor.agreementVersion mirrors
+  version        String   @unique
+  /// the private Cloudinary public id
+  storageKey     String
+  /// SHA-256 of the file, hex
+  documentHash   String
+  issuedAt       DateTime @default(now())
+  issuedByUserId String
+
+  issuedBy    User                            @relation("AgreementIssuedBy", fields: [issuedByUserId], references: [id])
+  acceptances ContractorAgreementAcceptance[]
+}
+
+/// One contractor accepting one version -- Feature 2006. Never edited or
+/// deleted; the stamped record's key is the one write allowed after the row
+/// exists (empty only while Cloudinary was down at acceptance).
+model ContractorAgreementAcceptance {
+  id                 String   @id @default(uuid(7))
+  contractorId       String
+  agreementVersionId String
+  acceptedAt         DateTime @default(now())
+  acceptedFromIp     String
+  userAgent          String?
+  recordStorageKey   String?
+
+  contractor       Contractor                 @relation(fields: [contractorId], references: [id])
+  agreementVersion ContractorAgreementVersion @relation(fields: [agreementVersionId], references: [id])
+
+  @@unique([contractorId, agreementVersionId])
 }
 
 // ---------------------------------------------------------------------------
@@ -412,64 +455,65 @@ model Customer {
 // ---------------------------------------------------------------------------
 
 model Contractor {
-  id                String           @id @default(uuid(7))
+  id                    String           @id @default(uuid(7))
   /// human-readable CON-xxxx; system-generated, sequential
-  code              String           @unique
-  userId            String           @unique
-  name              String
-  businessName      String?
+  code                  String           @unique
+  userId                String           @unique
+  name                  String
+  businessName          String?
   /// [IMPL] the Data Model sketch shows this required, but the Contractor
   /// record table (Managing the contractor record, settled 03/09/26) marks
   /// ABN "optional" to save -- the table is the newer, more specific
   /// authority; the sketch's missing "?" reads as the sketch never having
   /// been updated when the table was settled. Feature 2001, plan decision 2.
-  abn               String?
+  abn                   String?
   /// set at onboarding; drives GST on their payouts
-  gstRegistered     Boolean          @default(false)
-  phone             String
-  email             String
+  gstRegistered         Boolean          @default(false)
+  phone                 String
+  email                 String
   emergencyContactName  String?
   emergencyContactPhone String?
   /// the contractor's OWN address, for the file -- nothing else reads it.
   /// Places pick, same shape as Customer.billingAddress:
   /// { street, suburb, state, country, postcode, lat, lng, placeId }
-  address           Json?
+  address               Json?
   /// the pin the service area is built around (Places pick):
   /// { suburb, state, country, postcode, lat, lng, placeId }. No postcode column --
   /// matching runs on ContractorServedPostcode rows. Empty until the service
   /// area page (2002) is saved once.
-  coreLocation      Json?
+  coreLocation          Json?
   /// last slider value, for "expand my area"
-  lastRadiusKm      Float?
-  insurer           String?
-  insurancePolicyNo String?
-  insuranceExpiry   DateTime?        @db.Date
-  payoutBsb         String?
-  payoutAccountNo   String?
-  payoutAccountName String?
-  status            ContractorStatus @default(active)
+  lastRadiusKm          Float?
+  insurer               String?
+  insurancePolicyNo     String?
+  insuranceExpiry       DateTime?        @db.Date
+  payoutBsb             String?
+  payoutAccountNo       String?
+  payoutAccountName     String?
+  status                ContractorStatus @default(active)
   /// AUDIT pair: who last changed status, and when -- Managing the
   /// contractor record
   statusChangedByUserId String?
   statusChangedAt       DateTime?
   /// the contractor agreement version accepted, and when -- click-to-accept
   /// on first login (leaf 2006); empty = not yet accepted
-  agreementVersion    String?
-  agreementAcceptedAt DateTime?
+  agreementVersion      String?
+  agreementAcceptedAt   DateTime?
   /// denormalized from Review
-  averageRating     Float?
-  reviewCount       Int?
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
+  averageRating         Float?
+  reviewCount           Int?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
 
-  user              User                       @relation(fields: [userId], references: [id])
-  statusChangedBy   User?                      @relation("ContractorStatusChangedBy", fields: [statusChangedByUserId], references: [id])
-  specialties       ContractorSpecialty[]
-  servedPostcodes   ContractorServedPostcode[]
-  reviews           Review[]
-  calendarEvents    CalendarEvent[]
-  assignments       Assignment[]
-  settlements       ContractorSettlement[]
+  user                 User                            @relation(fields: [userId], references: [id])
+  statusChangedBy      User?                           @relation("ContractorStatusChangedBy", fields: [statusChangedByUserId], references: [id])
+  specialties          ContractorSpecialty[]
+  servedPostcodes      ContractorServedPostcode[]
+  reviews              Review[]
+  calendarEvents       CalendarEvent[]
+  assignments          Assignment[]
+  settlements          ContractorSettlement[]
+  agreementAcceptances ContractorAgreementAcceptance[]
 }
 
 /// A contractor has many -- one per trade.
