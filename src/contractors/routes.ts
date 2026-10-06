@@ -18,6 +18,7 @@ import type { Auth } from "../auth/config.js";
 import { requireRole } from "../auth/middleware.js";
 import { Role } from "../generated/prisma/enums.js";
 import { nextReference } from "../db/reference.js";
+import { currentAgreementLabel } from "../agreements/current.js";
 import { readyToDispatch, type ReadyInput } from "./ready.js";
 import { parseServiceAreaInput, saveServiceArea, serviceAreaDtoOf } from "./service-area.js";
 import { loadContractorDay } from "./day.js";
@@ -344,7 +345,7 @@ function coreLocationSuburbOf(contractor: NonNullable<ContractorWithRelations>):
   return null;
 }
 
-function readyInputOf(contractor: NonNullable<ContractorWithRelations>): ReadyInput {
+function readyInputOf(contractor: NonNullable<ContractorWithRelations>, currentAgreementVersion: string | null): ReadyInput {
   return {
     businessName: contractor.businessName,
     abn: contractor.abn,
@@ -360,6 +361,8 @@ function readyInputOf(contractor: NonNullable<ContractorWithRelations>): ReadyIn
     emergencyContactPhone: contractor.emergencyContactPhone,
     specialties: contractor.specialties.map((s) => ({ status: s.status, licenceExpiry: s.licenceExpiry })),
     servedPostcodeCount: contractor._count.servedPostcodes,
+    agreementVersion: contractor.agreementVersion,
+    currentAgreementVersion,
   };
 }
 
@@ -368,7 +371,8 @@ async function toDto(client: PrismaClient, contractor: NonNullable<ContractorWit
   // `ready.ts` now returns structured items (2003), but ops only ever
   // rendered the copy text, so mapping back to `string[]` here means ops's
   // own screens and tests need no changes at all.
-  const { ready, missing: missingItems } = readyToDispatch(readyInputOf(contractor));
+  const currentAgreementVersion = await currentAgreementLabel(client);
+  const { ready, missing: missingItems } = readyToDispatch(readyInputOf(contractor, currentAgreementVersion));
   const missing = missingItems.map((item) => item.copy);
   const credential = await client.account.findFirst({
     where: { userId: contractor.userId, providerId: "credential" },
@@ -415,6 +419,19 @@ async function toDto(client: PrismaClient, contractor: NonNullable<ContractorWit
     coreLocationSuburb: coreLocationSuburbOf(contractor),
     ready,
     missing,
+    // Feature 2006: the agreement as Mike reads it -- he can see, never tick.
+    agreement: {
+      state:
+        currentAgreementVersion === null
+          ? ("none_published" as const)
+          : contractor.agreementVersion === currentAgreementVersion
+            ? ("accepted" as const)
+            : ("not_accepted" as const),
+      currentVersion: currentAgreementVersion,
+      acceptedVersion: contractor.agreementVersion,
+      acceptedAt: contractor.agreementAcceptedAt ? contractor.agreementAcceptedAt.toISOString() : null,
+      recordAvailable: currentAgreementVersion !== null && contractor.agreementVersion === currentAgreementVersion,
+    },
     hasCredential: credential !== null,
     credentialSetAt: credential ? credential.createdAt.toISOString() : null,
     lastInviteSentAt: lastInvite ? lastInvite.createdAt.toISOString() : null,

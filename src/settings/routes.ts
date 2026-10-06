@@ -17,6 +17,8 @@ import { requireRole } from "../auth/middleware.js";
 import { Role, PayoutCycle, PayoutDay } from "../generated/prisma/enums.js";
 import { findProvider } from "../notifications/providers/registry.js";
 import { invalidateIdentityCache } from "./identity-cache.js";
+import { Prisma } from "../generated/prisma/client.js";
+import { parseStreetAddress } from "./address.js";
 
 const DISPLAY_NAME_MAX_LENGTH = 80;
 
@@ -25,6 +27,8 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 interface SettingsInput {
   gstRegistered: boolean;
   businessAbn: string | null;
+  legalEntityName: string;
+  businessAddress: Prisma.InputJsonValue | null;
   gstRatePercent: number;
   paymentTermsDays: number;
   serviceReachKm: number;
@@ -76,6 +80,20 @@ function parseSettingsInput(body: unknown): ParseResult {
   const businessAbn = b["businessAbn"];
   if (businessAbn !== null && !isNonEmptyString(businessAbn)) {
     return { ok: false, error: "businessAbn must be a non-empty string or null", field: "businessAbn" };
+  }
+
+  const legalEntityName = b["legalEntityName"];
+  if (!isNonEmptyString(legalEntityName)) {
+    return { ok: false, error: "legalEntityName must be a non-empty string", field: "legalEntityName" };
+  }
+
+  const businessAddress = parseStreetAddress(b["businessAddress"]);
+  if (businessAddress === undefined) {
+    return {
+      ok: false,
+      error: "businessAddress must be a picked street address or null",
+      field: "businessAddress",
+    };
   }
 
   if (!isFiniteNumber(b["gstRatePercent"]) || b["gstRatePercent"] < 0 || b["gstRatePercent"] > 100) {
@@ -159,6 +177,8 @@ function parseSettingsInput(body: unknown): ParseResult {
     data: {
       gstRegistered: b["gstRegistered"],
       businessAbn,
+      legalEntityName: legalEntityName.trim(),
+      businessAddress,
       gstRatePercent: b["gstRatePercent"],
       paymentTermsDays: b["paymentTermsDays"] as number,
       serviceReachKm: b["serviceReachKm"],
@@ -224,6 +244,8 @@ export function settingsRoutes(client: PrismaClient): Router {
         data: {
           gstRegistered: input.gstRegistered,
           businessAbn: input.businessAbn,
+          legalEntityName: input.legalEntityName,
+          businessAddress: input.businessAddress === null ? Prisma.DbNull : input.businessAddress,
           gstRatePercent: input.gstRatePercent,
           paymentTermsDays: input.paymentTermsDays,
           serviceReachKm: input.serviceReachKm,

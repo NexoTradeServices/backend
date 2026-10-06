@@ -49,6 +49,8 @@ function validBody(overrides: Record<string, unknown> = {}): Record<string, unkn
   return {
     gstRegistered: false,
     businessAbn: null,
+    legalEntityName: "Trade Services",
+    businessAddress: null,
     gstRatePercent: 10,
     paymentTermsDays: 7,
     serviceReachKm: 25,

@@ -46,6 +46,14 @@ async function seedCast(): Promise<void> {
   await seedAuthFixtures(db);
 }
 
+/** Feature 2006: a published agreement, written straight to the table (the publish endpoint is tested in tests/contractor-agreement.test.ts). */
+async function publishAgreement(label: string): Promise<{ id: string }> {
+  const owner = await db.user.findUniqueOrThrow({ where: { email: "owner@idelta.com.au" } });
+  return db.contractorAgreementVersion.create({
+    data: { version: label, storageKey: `tradeservice/agreements/${label}.pdf`, documentHash: "ab".repeat(32), issuedByUserId: owner.id },
+  });
+}
+
 function cookieHeader(res: request.Response): string {
   const raw = res.headers["set-cookie"] as string[] | string | undefined;
   const cookies: string[] = Array.isArray(raw) ? raw : raw ? [raw] : [];
@@ -590,5 +598,55 @@ describe("decision 8 -- a specialty used on a job cannot be removed", () => {
 
     const stillThere = await db.contractorSpecialty.findUnique({ where: { id: plumbing.id } });
     expect(stillThere).not.toBeNull();
+  });
+});
+
+describe("2006 AC7 / AC14 -- the agreement on the ops list and record", () => {
+  interface Dto {
+    code: string;
+    ready: boolean;
+    missing: string[];
+    agreement: { state: string; currentVersion: string | null; acceptedVersion: string | null; acceptedAt: string | null; recordAvailable: boolean };
+  }
+
+  test("AC7: Bob is Not ready on the ops list and record, naming the agreement", async () => {
+    await seedCast();
+    await publishAgreement("1");
+    const mike = await signInCookie("mike@idelta.com.au");
+    const list = (await request(app).get("/api/contractors").set("Cookie", mike)).body as Dto[];
+    const bob = list.find((r) => r.code === "CON-014");
+    expect(bob?.ready).toBe(false);
+    expect(bob?.missing).toContain("contractor agreement (not accepted)");
+    const record = (await request(app).get("/api/contractors/CON-014").set("Cookie", mike)).body as Dto;
+    expect(record.ready).toBe(false);
+    expect(record.missing).toContain("contractor agreement (not accepted)");
+  });
+
+  test("AC14: nothing published reads none_published", async () => {
+    await seedCast();
+    const mike = await signInCookie("mike@idelta.com.au");
+    const record = (await request(app).get("/api/contractors/CON-014").set("Cookie", mike)).body as Dto;
+    expect(record.agreement).toMatchObject({ state: "none_published", currentVersion: null, recordAvailable: false });
+  });
+
+  test("AC14: Bob accepted version 2 reads accepted with its date and a record to open; Dave reads not yet accepted", async () => {
+    await seedCast();
+    await publishAgreement("1");
+    await new Promise((r) => setTimeout(r, 5));
+    await publishAgreement("2");
+    const acceptedAt = new Date("2026-09-09T02:00:00Z");
+    await db.contractor.update({ where: { code: "CON-014" }, data: { agreementVersion: "2", agreementAcceptedAt: acceptedAt } });
+    const mike = await signInCookie("mike@idelta.com.au");
+
+    const bob = (await request(app).get("/api/contractors/CON-014").set("Cookie", mike)).body as Dto;
+    expect(bob.agreement).toEqual({
+      state: "accepted",
+      currentVersion: "2",
+      acceptedVersion: "2",
+      acceptedAt: acceptedAt.toISOString(),
+      recordAvailable: true,
+    });
+    const dave = (await request(app).get("/api/contractors/CON-021").set("Cookie", mike)).body as Dto;
+    expect(dave.agreement).toMatchObject({ state: "not_accepted", currentVersion: "2", acceptedVersion: null, recordAvailable: false });
   });
 });

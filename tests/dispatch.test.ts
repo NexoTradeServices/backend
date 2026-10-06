@@ -167,6 +167,14 @@ function dispatch(cookie: string, reference: string, body: Record<string, unknow
 const MONDAY = "2027-03-15";
 const SATURDAY = "2027-03-20";
 
+/** Feature 2006: a published agreement, written straight to the table (the publish endpoint is tested in tests/contractor-agreement.test.ts). */
+async function publishAgreement(label: string): Promise<{ id: string }> {
+  const owner = await db.user.findUniqueOrThrow({ where: { email: "owner@idelta.com.au" } });
+  return db.contractorAgreementVersion.create({
+    data: { version: label, storageKey: `tradeservice/agreements/${label}.pdf`, documentHash: "ab".repeat(32), issuedByUserId: owner.id },
+  });
+}
+
 interface CandidateRow {
   code: string;
   name: string;
@@ -1050,5 +1058,40 @@ describe("AC42 -- the dispatch, candidates and day endpoints refuse a contractor
     expect((await request(app).get("/api/contractors/CON-014/day").query({ date: MONDAY }).set("Cookie", bob)).status).toBe(403);
 
     expect((await request(app).get(`/api/jobs/${job.reference}/dispatch`)).status).toBe(401);
+  });
+});
+
+describe("2006 AC7 -- the agreement guard", () => {
+  test("AC7: after version 1 is published Bob greys on the candidate list and dispatch to him is refused; his booked assignment is untouched", async () => {
+    const mike = await signInCookie("mike@idelta.com.au");
+    const assignmentsBefore = await db.assignment.count({ where: { contractor: { code: "CON-014" } } });
+    expect(assignmentsBefore).toBeGreaterThan(0);
+
+    await publishAgreement("1");
+    const job = await makeJob({ trade: "Plumbing", place: HILTON });
+    const list = (await candidates(mike, job.reference, { date: MONDAY, startMinutes: "420", holdMinutes: "60" })).body as CandidatesBody;
+    const bob = list.serves.find((r) => r.code === "CON-014");
+    expect(bob).toMatchObject({ ready: false, pickable: false });
+    expect(bob?.why).toBe("Not ready to dispatch - missing contractor agreement (not accepted)");
+
+    const res = await dispatch(mike, job.reference, {
+      contractorCode: "CON-014",
+      date: MONDAY,
+      startMinutes: 420,
+      holdMinutes: 60,
+      emergency: false,
+    });
+    expect(res.status).toBe(409);
+    expect(await db.assignment.count({ where: { jobId: job.id } })).toBe(0);
+    expect(await db.assignment.count({ where: { contractor: { code: "CON-014" } } })).toBe(assignmentsBefore);
+  });
+
+  test("AC7: once Bob has accepted that version he dispatches as before", async () => {
+    const mike = await signInCookie("mike@idelta.com.au");
+    await publishAgreement("1");
+    await db.contractor.update({ where: { code: "CON-014" }, data: { agreementVersion: "1", agreementAcceptedAt: new Date() } });
+    const job = await makeJob({ trade: "Plumbing", place: HILTON });
+    const res = await dispatch(mike, job.reference, { contractorCode: "CON-014", date: MONDAY, startMinutes: 420, holdMinutes: 60, emergency: false });
+    expect(res.status).toBe(201);
   });
 });

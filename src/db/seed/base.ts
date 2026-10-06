@@ -40,6 +40,20 @@ export async function seedBase(client: PrismaClient = getPrisma()): Promise<Seed
         payoutDay: "fri",
         serviceReachKm: 25, // PLACEHOLDER
         calloutFee: 15_000, // PLACEHOLDER -- customer no-show fee, passed to the contractor
+        // Feature 2006 -- the LEGAL identity the agreement record prints. All
+        // three are PLACEHOLDERS the owner changes on Settings.
+        legalEntityName: "Trade Services", // PLACEHOLDER
+        businessAbn: "123456789", // PLACEHOLDER
+        businessAddress: {
+          street: "1 Hay Street",
+          suburb: "Perth",
+          state: "WA",
+          country: "Australia",
+          postcode: "6000",
+          lat: -31.9505,
+          lng: 115.8605,
+          placeId: null,
+        }, // PLACEHOLDER
         operatorPhone: "08 0000 0000", // PLACEHOLDER
         operatorEmail: "ops@idelta.com.au", // Feature 1006 -- the real inbox
         displayName: "Perth Trades & Services", // Feature 1014 -- interim wording, ADR 0005
