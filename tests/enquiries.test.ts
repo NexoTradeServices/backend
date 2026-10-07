@@ -19,6 +19,12 @@
 //      NOT NULL, proven against the migrated schema and the seeded fixtures
 // AC11 an empty prefilledFields trade saves with selectedOptions empty
 //
+// Feature 1017 -- business customers (the enquiry endpoint's half)
+// 1017 AC2  a new customer is created with the business name; an existing
+//           customer (found by email) is left as it is; empty becomes null
+// 1017 AC4  Customer.abn exists and the enquiry never writes it
+// 1017 AC5  the evening window reads 17:00-19:00 in the enquiry's text
+//
 // Feature 3003 -- enquiry photos (the enquiry endpoint's half)
 // 3003 AC1  an enquiry with two photos writes two customer Attachment rows
 // 3003 AC2  an enquiry with no photos writes no Attachment rows
@@ -392,5 +398,57 @@ describe("Feature 3003 -- enquiry photos", () => {
     expect((res.body as EnquiryResponseBody).field).toBe("photos");
     expect(await db.job.count()).toBe(jobsBefore);
     expect(await db.attachment.count()).toBe(0);
+  });
+});
+
+describe("1017 -- business customers", () => {
+  test("1017 AC2: Nina Rossi, a new email, submits with Rossi's Cafe -- her new customer holds it, trimmed", async () => {
+    const res = await request(app)
+      .post("/api/enquiries")
+      .send(validBody({ name: "Nina Rossi", email: "nina@idelta.com.au", businessName: "  Rossi's Cafe  " }));
+    expect(res.status).toBe(201);
+
+    const nina = await db.customer.findUniqueOrThrow({ where: { email: "nina@idelta.com.au" } });
+    expect(nina.businessName).toBe("Rossi's Cafe");
+    expect(nina.abn).toBeNull(); // 1017 AC4: nothing writes the ABN
+  });
+
+  test("1017 AC2: Sarah, on file with no business name, submits with one typed -- her record is unchanged", async () => {
+    const before = await db.customer.findUniqueOrThrow({ where: { code: "CUS-1050" } });
+    expect(before.businessName).toBeNull();
+
+    const res = await request(app)
+      .post("/api/enquiries")
+      .send(validBody({ name: "Sarah Chen", email: "sarah@idelta.com.au", businessName: "Chen Interiors" }));
+    expect(res.status).toBe(201);
+
+    const after = await db.customer.findUniqueOrThrow({ where: { code: "CUS-1050" } });
+    expect(after.businessName).toBeNull();
+    expect(after.abn).toBeNull();
+  });
+
+  test("1017 AC2: an empty, blank or missing business name becomes null; a non-text one is refused", async () => {
+    const blank = await request(app).post("/api/enquiries").send(validBody({ email: "karl@idelta.com.au", businessName: "   " }));
+    expect(blank.status).toBe(201);
+    expect((await db.customer.findUniqueOrThrow({ where: { email: "karl@idelta.com.au" } })).businessName).toBeNull();
+
+    const missing = await request(app).post("/api/enquiries").send(validBody({ email: "nina@idelta.com.au" }));
+    expect(missing.status).toBe(201);
+    expect((await db.customer.findUniqueOrThrow({ where: { email: "nina@idelta.com.au" } })).businessName).toBeNull();
+
+    const refused = await request(app).post("/api/enquiries").send(validBody({ email: "karl2@idelta.com.au", businessName: 42 }));
+    expect(refused.status).toBe(400);
+    expect((refused.body as EnquiryResponseBody).field).toBe("businessName");
+  });
+
+  test("1017 AC5: an evening enquiry's ops notice says Evening (17:00-19:00)", async () => {
+    const res = await request(app).post("/api/enquiries").send(validBody({ preferredWindow: "evening" }));
+    expect(res.status).toBe(201);
+
+    await drainOnce(db);
+    const settings = await db.platformSettings.findFirstOrThrow();
+    const notice = email.sent.find((m) => m.to === settings.operatorEmail);
+    expect(notice?.message.text).toContain("Evening (17:00-19:00)");
+    expect(notice?.message.text).not.toContain("20:00");
   });
 });

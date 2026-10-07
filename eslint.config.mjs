@@ -6,7 +6,7 @@ export default tseslint.config(
   // so type-aware linting cannot see it and does not need to.
   // src/generated is Prisma's output, rewritten by `npm run db:generate`; linting
   // it would only report on code we never touch.
-  { ignores: ['dist/**', 'node_modules/**', 'eslint.config.mjs', 'src/generated/**'] },
+  { ignores: ['dist/**', 'node_modules/**', 'eslint.config.mjs', 'src/generated/**', '_scratch/**'] },
   js.configs.recommended,
   // Type-aware rules: this is the point of having eslint here at all. The one
   // that earns its keep is no-floating-promises - an un-awaited promise in

@@ -457,6 +457,11 @@ model Customer {
   /// call: { street, suburb, state, country, postcode, lat, lng, placeId }.
   /// NOT the job site -- a booking can be for a rental.
   billingAddress         Json?
+  /// Set when the customer is a business (Feature 1017): the name the invoice is
+  /// addressed to, with `name` as the contact. Ops adds or fixes it on the confirming call.
+  businessName           String?
+  /// Held for later (Feature 1017): nothing writes or shows it yet.
+  abn                    String?
   stripeCustomerId       String?
   defaultPaymentMethodId String?
   /// Phase 2. Prisma scalar lists cannot be optional; empty list = none held.

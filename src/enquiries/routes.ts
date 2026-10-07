@@ -35,7 +35,7 @@ const PREFERRED_WINDOWS: readonly PreferredWindow[] = ["morning", "afternoon", "
 const WINDOW_LABELS: Record<PreferredWindow, string> = {
   morning: "Morning (7:00-12:00)",
   afternoon: "Afternoon (12:00-17:00)",
-  evening: "Evening (17:00-20:00)",
+  evening: "Evening (17:00-19:00)",
 };
 
 interface Location {
@@ -52,6 +52,8 @@ interface EnquiryInput {
   name: string;
   email: string;
   phone: string;
+  /** Feature 1017: optional; empty becomes null. */
+  businessName: string | null;
   location: Location;
   trade: string;
   selectedOptions: string[];
@@ -143,6 +145,11 @@ function parseEnquiryInput(body: unknown): ParseResult {
     return { ok: false, error: "phone is required", field: "phone" };
   }
 
+  const rawBusinessName = b["businessName"];
+  if (rawBusinessName !== undefined && rawBusinessName !== null && typeof rawBusinessName !== "string") {
+    return { ok: false, error: "businessName must be a string when present", field: "businessName" };
+  }
+
   const location = parseLocation(b["location"]);
   if (location === null) {
     return { ok: false, error: "location must be a picked suburb", field: "location" };
@@ -196,6 +203,7 @@ function parseEnquiryInput(body: unknown): ParseResult {
       name: b["name"].trim(),
       email: email.trim().toLowerCase(),
       phone: b["phone"].trim(),
+      businessName: typeof rawBusinessName === "string" && rawBusinessName.trim() !== "" ? rawBusinessName.trim() : null,
       location,
       trade: b["trade"].trim(),
       selectedOptions: selectedOptions.map((entry) => entry.trim()),
@@ -325,6 +333,7 @@ export function enquiryRoutes(client: PrismaClient, options: EnquiryRoutesOption
               name: input.name,
               email: input.email,
               phone: input.phone,
+              businessName: input.businessName,
             },
           }));
 

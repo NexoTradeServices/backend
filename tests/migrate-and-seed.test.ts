@@ -260,6 +260,18 @@ describe("AC5 -- the fixture seed mirrors the cast", () => {
     expect(await db.user.count({ where: { role: "customer" } })).toBe(0);
   });
 
+  test("1017 AC4: Customer carries businessName and abn, both optional, and no seeded customer holds either", async () => {
+    const columns = await db.$queryRaw<{ column_name: string; is_nullable: string }[]>`
+      SELECT column_name, is_nullable FROM information_schema.columns
+      WHERE table_name = 'Customer' AND column_name IN ('businessName', 'abn')
+      ORDER BY column_name`;
+    expect(columns).toEqual([
+      { column_name: "abn", is_nullable: "YES" },
+      { column_name: "businessName", is_nullable: "YES" },
+    ]);
+    expect(await db.customer.count({ where: { OR: [{ abn: { not: null } }, { businessName: { not: null } }] } })).toBe(0);
+  });
+
   test("AC5: running the fixture seed again creates no duplicates", async () => {
     const before = await db.contractor.count();
     const result = await seedFixtures(db);

@@ -69,6 +69,8 @@ export interface AddressesInput {
   site: SiteInput | undefined;
   /** undefined = leave the site contact as it is; null = clear it (Feature 4008). */
   siteContact: SiteContactInput;
+  /** Feature 1017: undefined = leave it as it is; null = clear it. Trimmed, empty clears. */
+  businessName: string | null | undefined;
 }
 
 export type AddressFailure = { ok: false; status: number; error: string; field?: string };
@@ -111,7 +113,18 @@ export function parseAddressesInput(body: unknown): { ok: true; data: AddressesI
   const siteContact = parseSiteContact(b["siteContact"]);
   if (!siteContact.ok) return siteContact;
 
-  return { ok: true, data: { billing, site, siteContact: siteContact.data } };
+  let businessName: string | null | undefined;
+  const rawBusinessName = b["businessName"];
+  if (rawBusinessName === null) {
+    businessName = null;
+  } else if (rawBusinessName !== undefined) {
+    if (typeof rawBusinessName !== "string") {
+      return { ok: false, status: 400, error: "businessName must be a string", field: "businessName" };
+    }
+    businessName = rawBusinessName.trim() === "" ? null : rawBusinessName.trim();
+  }
+
+  return { ok: true, data: { billing, site, siteContact: siteContact.data, businessName } };
 }
 
 export interface SaveOutcome {
@@ -181,6 +194,12 @@ export async function saveAddresses(
 
       if (input.billing !== undefined) {
         await tx.customer.update({ where: { id: job.customerId }, data: { billingAddress: input.billing } });
+      }
+
+      // Feature 1017: the business name is the customer's own, like the billing
+      // address -- fixable on any job, whatever its status.
+      if (input.businessName !== undefined) {
+        await tx.customer.update({ where: { id: job.customerId }, data: { businessName: input.businessName } });
       }
 
       // A change sends nothing (decision 5, AC8) -- no notification is asked here.
