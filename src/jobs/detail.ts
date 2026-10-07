@@ -82,6 +82,7 @@ export interface JobDetail {
   customer: {
     code: string;
     name: string;
+    businessName: string | null;
     phone: string | null;
     email: string;
     billingAddress: Address | null;
@@ -210,6 +211,7 @@ export async function jobDetail(
     customer: {
       code: job.customer.code,
       name: job.customer.name,
+      businessName: job.customer.businessName,
       phone: job.customer.phone,
       email: job.customer.email,
       billingAddress,

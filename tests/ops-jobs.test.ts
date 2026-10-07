@@ -27,6 +27,8 @@
 // 5001 AC9 Mike changes a time entry before Complete and Bob's screen shows it; after
 //      Complete the ops time entries are refused and the read carries the notes and parts
 // AC26 (BKLG-023) a fresh base seed gives Plumbing the six questions
+// 1017 AC3 the job read carries the customer's business name; Save adds, fixes
+//      or clears it on any job, ops only; AC5 the evening window label
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import express, { type Express } from "express";
 import request from "supertest";
@@ -114,7 +116,7 @@ interface DetailBody {
   receivedLabel: string;
   description: string | null;
   answers: string[];
-  customer: { code: string; name: string; phone: string | null; email: string; billingAddress: unknown };
+  customer: { code: string; name: string; businessName: string | null; phone: string | null; email: string; billingAddress: unknown };
   siteAddress: unknown;
   siteSameAsBilling: boolean;
   siteLocked: boolean;
@@ -206,6 +208,7 @@ interface MakeJob {
   place?: Place;
   createdAt?: Date;
   source?: "web" | "phone";
+  preferredWindow?: "morning" | "afternoon" | "evening";
   description?: string;
   selectedOptions?: string[];
   siteAddress?: Record<string, string | number>;
@@ -245,7 +248,7 @@ async function makeJob(opts: MakeJob = {}): Promise<{ id: string; reference: str
       description: opts.description ?? "Kitchen mixer tap is leaking from the base.",
       selectedOptions: opts.selectedOptions ?? [],
       source: opts.source ?? "web",
-      preferredWindow: "morning",
+      preferredWindow: opts.preferredWindow ?? "morning",
       preferredDate: new Date("2026-09-17T00:00:00.000Z"),
       status: opts.status ?? "new",
       ...(opts.createdAt ? { createdAt: opts.createdAt } : {}),
@@ -1083,5 +1086,56 @@ describe("5001 AC9 -- Mike and the time entries", () => {
     const page = await detail(mike, "JOB-1051");
     expect(page.status).toBe("in_progress");
     expect(page.contractor?.standing).toBe("On site - work underway");
+  });
+});
+
+describe("1017 -- business customers on the job page", () => {
+  test("1017 AC3: the read carries the business name; Mike adds Rossi's Cafe on a dispatched job and it shows on the customer's other jobs", async () => {
+    const mike = await signInCookie("mike@idelta.com.au");
+    const other = await makeJob({ customerCode: "CUS-1050" });
+    expect((await detail(mike, "JOB-1042")).customer.businessName).toBeNull();
+
+    // JOB-1042 is dispatched: the site is locked, the business name is not.
+    const res = await saveAddresses(mike, "JOB-1042", { businessName: "  Rossi's Cafe  " });
+    expect(res.status).toBe(200);
+    expect(((res.body as { job: DetailBody }).job).customer.businessName).toBe("Rossi's Cafe");
+
+    const stored = await db.customer.findUniqueOrThrow({ where: { code: "CUS-1050" } });
+    expect(stored.businessName).toBe("Rossi's Cafe");
+    expect(stored.abn).toBeNull(); // 1017 AC4: nothing writes the ABN
+    expect((await detail(mike, other.reference)).customer.businessName).toBe("Rossi's Cafe");
+  });
+
+  test("1017 AC3: a save without the field leaves it; an empty or null one clears it", async () => {
+    const mike = await signInCookie("mike@idelta.com.au");
+    await db.customer.update({ where: { code: "CUS-1050" }, data: { businessName: "Rossi's Cafe" } });
+
+    expect((await saveAddresses(mike, "JOB-1042", { billingAddress: FREMANTLE_SITE })).status).toBe(200);
+    expect((await db.customer.findUniqueOrThrow({ where: { code: "CUS-1050" } })).businessName).toBe("Rossi's Cafe");
+
+    expect((await saveAddresses(mike, "JOB-1042", { businessName: "   " })).status).toBe(200);
+    expect((await db.customer.findUniqueOrThrow({ where: { code: "CUS-1050" } })).businessName).toBeNull();
+
+    await db.customer.update({ where: { code: "CUS-1050" }, data: { businessName: "Rossi's Cafe" } });
+    expect((await saveAddresses(mike, "JOB-1042", { businessName: null })).status).toBe(200);
+    expect((await db.customer.findUniqueOrThrow({ where: { code: "CUS-1050" } })).businessName).toBeNull();
+  });
+
+  test("1017 AC3: a non-text business name is refused; a contractor is refused; nothing is stored", async () => {
+    const mike = await signInCookie("mike@idelta.com.au");
+    const bob = await signInCookie("bob@idelta.com.au");
+    const bad = await saveAddresses(mike, "JOB-1042", { businessName: 7 });
+    expect(bad.status).toBe(400);
+    expect((bad.body as { field?: string }).field).toBe("businessName");
+    expect((await saveAddresses(bob, "JOB-1042", { businessName: "Bob's Plumbing" })).status).toBe(403);
+    expect((await db.customer.findUniqueOrThrow({ where: { code: "CUS-1050" } })).businessName).toBeNull();
+  });
+
+  test("1017 AC5: an evening job's page and row say evening 17:00-19:00", async () => {
+    const mike = await signInCookie("mike@idelta.com.au");
+    const job = await makeJob({ preferredWindow: "evening" });
+    expect((await detail(mike, job.reference)).windowLabel).toBe("evening 17:00-19:00");
+    const row = (await queue(mike)).rows.find((j) => j.reference === job.reference);
+    expect(row?.windowLabel).toBe("evening 17:00-19:00");
   });
 });

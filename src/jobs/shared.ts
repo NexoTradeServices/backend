@@ -13,7 +13,7 @@ export const CLOSED_STATUSES: readonly JobStatus[] = ["completed", "cancelled"];
 export const WINDOW_LABELS: Record<PreferredWindow, string> = {
   morning: "morning 7:00-12:00",
   afternoon: "afternoon 12:00-17:00",
-  evening: "evening 17:00-20:00",
+  evening: "evening 17:00-19:00",
 };
 
 /**
@@ -24,7 +24,7 @@ export const WINDOW_LABELS: Record<PreferredWindow, string> = {
 const SHOWN_ASSIGNMENT_STATUSES: AssignmentStatus[] = ["assigned", "accepted", "in_progress", "completed"];
 
 export const jobInclude = {
-  customer: { select: { code: true, name: true, phone: true, email: true, billingAddress: true } },
+  customer: { select: { code: true, name: true, businessName: true, phone: true, email: true, billingAddress: true } },
   serviceType: { select: { trade: true, serviceLevelMultipliers: true } },
   assignments: {
     where: { status: { in: SHOWN_ASSIGNMENT_STATUSES } },
