@@ -8,6 +8,7 @@
 //   PUT  /api/jobs/:reference/addresses       the Addresses card's one Save
 //   POST /api/jobs/:reference/notes           add an operator note
 //   PUT  /api/jobs/:reference/notes/:noteId   the author fixes it, 10 minutes
+//   PUT  /api/jobs/:reference/time-entries    Feature 5001: ops fixes the time entries until Complete
 import type { Router } from "express";
 import { Router as createRouter } from "express";
 import type { Request, Response } from "express";
@@ -17,6 +18,7 @@ import { Role } from "../generated/prisma/enums.js";
 import { listQueue, parseQueueQuery } from "./queue.js";
 import { jobDetail, loadJob } from "./detail.js";
 import { parseAddressesInput, saveAddresses } from "./addresses.js";
+import { OPEN_VISIT_STATUSES, Refused, lockAssignment, lockedFailure, parseTimeEntries, writeEntries } from "./visit.js";
 import { addNote, editNote, parseEditedNote, parseNewNote } from "./notes.js";
 import {
   candidatesAndPriceFor,
@@ -91,6 +93,48 @@ export function jobRoutes(client: PrismaClient): Router {
       }
       res.json({ job: await jobDetail(client, fresh, req.authUser?.id ?? ""), moved: saved.moved });
     })().catch(failWith(res, "PUT /api/jobs/:reference/addresses"));
+  });
+
+  // Feature 5001: the same entry rules as the contractor's screen, on the
+  // shown assignment, until it is completed (after that: Correct & reissue, 6007).
+  router.put("/:reference/time-entries", requireRole(Role.ops), (req: WithReference, res: Response) => {
+    void (async () => {
+      const job = await loadJob(client, req.params.reference);
+      if (!job) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      const assignment = job.assignments[0];
+      if (assignment === undefined) {
+        res.status(409).json({ error: "This job is not open for work.", field: "status" });
+        return;
+      }
+      const body = req.body as Record<string, unknown> | null;
+      const parsed = parseTimeEntries(body?.["timeEntries"], job.timezone);
+      if (!parsed.ok) {
+        res.status(parsed.status).json({ error: parsed.error, field: parsed.field });
+        return;
+      }
+      try {
+        await client.$transaction(async (tx) => {
+          const locked = await lockAssignment(tx, job.id, assignment.id);
+          if (!(OPEN_VISIT_STATUSES as readonly string[]).includes(locked.status)) throw new Refused(lockedFailure(locked.status));
+          await writeEntries(tx, locked.id, parsed.entries);
+        });
+      } catch (error: unknown) {
+        if (error instanceof Refused) {
+          res.status(error.failure.status).json({ error: error.failure.error, field: error.failure.field });
+          return;
+        }
+        throw error;
+      }
+      const fresh = await loadJob(client, job.reference);
+      if (!fresh) {
+        res.status(500).json({ error: "internal error" });
+        return;
+      }
+      res.json(await jobDetail(client, fresh, req.authUser?.id ?? ""));
+    })().catch(failWith(res, "PUT /api/jobs/:reference/time-entries"));
   });
 
   router.post("/:reference/notes", requireRole(Role.ops), (req: WithReference, res: Response) => {

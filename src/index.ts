@@ -14,6 +14,7 @@ import { serviceTypeRoutes } from './service-types/routes.js'
 import { contractorRoutes } from './contractors/routes.js'
 import { contractorServiceAreaRoutes } from './contractors/service-area-routes.js'
 import { contractorDashboardRoutes } from './contractors/dashboard-routes.js'
+import { contractorJobRoutes } from './contractors/job-routes.js'
 import { agreementRoutes } from './agreements/routes.js'
 import { suburbRoutes } from './suburbs/routes.js'
 import { enquiryRoutes } from './enquiries/routes.js'
@@ -87,6 +88,7 @@ app.use('/api/service-types', serviceTypeRoutes(prisma))
 app.use('/api/contractors', contractorRoutes(prisma, auth))
 app.use('/api/contractor', contractorServiceAreaRoutes(prisma))
 app.use('/api/contractor', contractorDashboardRoutes(prisma))
+app.use('/api/contractor/jobs', contractorJobRoutes(prisma))
 app.use('/api', agreementRoutes(prisma))
 app.use('/api/suburbs', suburbRoutes(prisma))
 app.use('/api/enquiries', enquiryRoutes(prisma))

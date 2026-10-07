@@ -126,6 +126,8 @@ export function contractorDashboardRoutes(client: PrismaClient): Router {
           trade: assignment.specialty.trade,
           suburb: suburbOf(assignment.job.serviceLocation),
           slotLabel: slot ? formatSlotLabel(assignment.job.timezone, slot, now) : null,
+          // Feature 5001: an accepted or in-progress card opens its job screen; an assigned one is answered from the link.
+          opens: assignment.status !== "assigned",
         };
       });
 

@@ -10,6 +10,8 @@ import { customerPhotosOf, type PhotoView } from "../photos/cloudinary.js";
 import { editableForSeconds, readNotes } from "./notes.js";
 import { jobMessages, type MessageView } from "./messages.js";
 import { asSiteContact, isClosed, type SiteContactView } from "./site-contact.js";
+import { billedHours } from "./billed-hours.js";
+import { entryViewOf, returnVisitMinimum, savedEntries, type EntryView } from "./visit.js";
 import { isServiceLevelMultipliers, priceLine } from "./dispatch-level.js";
 import {
   WINDOW_LABELS,
@@ -48,6 +50,20 @@ export interface EarlierBooking {
   note: string | null;
 }
 
+/** Feature 5001: the shown assignment's visit -- time entries ops may fix until Complete, then the frozen record. */
+export interface VisitView {
+  /** Ops may change the time entries only while the visit is accepted or in progress. */
+  editable: boolean;
+  completed: boolean;
+  /** The job's own zone -- a new row's date and Finish default are read in it. */
+  timezone: string;
+  timeEntries: EntryView[];
+  billedHours: number;
+  /** Once completed only. */
+  completionNotes: string | null;
+  parts: { name: string; qty: number; unitPrice: number; lineTotal: number }[];
+}
+
 export interface JobDetail {
   reference: string;
   status: JobStatus;
@@ -80,6 +96,8 @@ export interface JobDetail {
   /** Plan decision 4: completed or cancelled -- the site contact is read-only. */
   closed: boolean;
   contractor: ContractorView | null;
+  /** Feature 5001: null until the contractor has accepted. */
+  visit: VisitView | null;
   /** Feature 4003 (plan decision 10): every assignment but the one in play, newest first. */
   earlierBookings: EarlierBooking[];
   /** AC29: the level and its price, shown once the job is dispatched (Job.serviceLevel set). */
@@ -124,6 +142,26 @@ async function earlierBookingsOf(client: PrismaClient, job: JobWithRelations, no
       slotLabel: row.proposedSlot === null ? null : formatSlotLabel(job.timezone, row.proposedSlot, now),
       note: row.declineNote,
     }));
+}
+
+async function visitOf(client: PrismaClient, job: JobWithRelations): Promise<VisitView | null> {
+  const assignment = job.assignments[0];
+  if (assignment === undefined || assignment.status === "assigned") return null;
+  const rows = await savedEntries(client, assignment.id);
+  const completed = assignment.status === "completed";
+  const parts = completed ? await client.assignmentPart.findMany({ where: { assignmentId: assignment.id }, orderBy: { id: "asc" } }) : [];
+  return {
+    editable: !completed,
+    completed,
+    timezone: job.timezone,
+    timeEntries: rows.map((row) => entryViewOf(row, job.timezone)),
+    billedHours:
+      completed && assignment.billedHours !== null
+        ? Number(assignment.billedHours)
+        : billedHours(rows, await returnVisitMinimum(client)),
+    completionNotes: completed ? (assignment.completionNotes ?? "") : null,
+    parts: parts.map((part) => ({ name: part.name, qty: Number(part.qty), unitPrice: part.unitPrice, lineTotal: part.lineTotal })),
+  };
 }
 
 export async function jobDetail(
@@ -182,6 +220,7 @@ export async function jobDetail(
     siteContact: asSiteContact(job.siteContact),
     closed: isClosed(job.status),
     contractor: contractorView(job, now),
+    visit: await visitOf(client, job),
     earlierBookings,
     serviceLevel: job.serviceLevel,
     priceLine: price,

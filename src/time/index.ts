@@ -104,6 +104,13 @@ export function todayIn(zone: string, moment: Date = new Date()): string {
   return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
+/** `moment`'s wall-clock time in `zone`, 24-hour `HH:mm` -- the time box's own value. */
+export function clockTimeIn(zone: string, moment: Date): string {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: zone, hourCycle: "h23", hour: "2-digit", minute: "2-digit" }).formatToParts(moment);
+  const value = (type: string): string => parts.find((part) => part.type === type)?.value ?? "00";
+  return `${value("hour")}:${value("minute")}`;
+}
+
 /** The UTC instant of local midnight, at the start of `zone`'s calendar day for `moment`. */
 export function startOfDayUtc(zone: string, moment: Date = new Date()): Date {
   return zonedTimeToUtc(zone, ymdIn(zone, moment));

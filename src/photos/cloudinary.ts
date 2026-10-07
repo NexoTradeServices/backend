@@ -11,6 +11,9 @@ import type { Prisma } from "../generated/prisma/client.js";
 /** The folder every enquiry photo lives in; a stored key must sit inside it. */
 export const ENQUIRY_PHOTO_FOLDER = "tradeservice/enquiry-photos";
 
+/** Feature 5001: where a contractor's part receipts live -- its own folder, its own key check. */
+export const RECEIPT_FOLDER = "tradeservice/receipts";
+
 /** Signed into each upload, so Cloudinary itself refuses anything else. */
 export const ALLOWED_PHOTO_FORMATS = "jpg,png,webp,heic";
 
@@ -55,12 +58,12 @@ export function signParams(params: Record<string, string | number | boolean>, ap
   return createHash("sha1").update(toSign + apiSecret).digest("hex");
 }
 
-export function signEnquiryPhotoUpload(config: CloudinaryConfig, now: Date = new Date()): PhotoUploadSignature {
+function signUpload(config: CloudinaryConfig, folder: string, now: Date): PhotoUploadSignature {
   const timestamp = Math.floor(now.getTime() / 1000);
   const signature = signParams(
     {
       allowed_formats: ALLOWED_PHOTO_FORMATS,
-      folder: ENQUIRY_PHOTO_FOLDER,
+      folder,
       return_delete_token: true,
       timestamp,
       upload_preset: config.uploadPreset,
@@ -73,17 +76,35 @@ export function signEnquiryPhotoUpload(config: CloudinaryConfig, now: Date = new
     timestamp,
     signature,
     uploadPreset: config.uploadPreset,
-    folder: ENQUIRY_PHOTO_FOLDER,
+    folder,
     allowedFormats: ALLOWED_PHOTO_FORMATS,
     returnDeleteToken: true,
   };
 }
 
-/** A public id is ours only when it sits inside the enquiry-photos folder. */
-export function isEnquiryPhotoKey(key: string): boolean {
-  const prefix = `${ENQUIRY_PHOTO_FOLDER}/`;
+export function signEnquiryPhotoUpload(config: CloudinaryConfig, now: Date = new Date()): PhotoUploadSignature {
+  return signUpload(config, ENQUIRY_PHOTO_FOLDER, now);
+}
+
+/** Feature 5001: a signed direct upload for the receipts folder. */
+export function signReceiptUpload(config: CloudinaryConfig, now: Date = new Date()): PhotoUploadSignature {
+  return signUpload(config, RECEIPT_FOLDER, now);
+}
+
+function isKeyInFolder(key: string, folder: string): boolean {
+  const prefix = `${folder}/`;
   if (!key.startsWith(prefix) || key.length === prefix.length) return false;
   return !key.split("/").some((part) => part === "" || part === "." || part === "..");
+}
+
+/** A public id is ours only when it sits inside the enquiry-photos folder. */
+export function isEnquiryPhotoKey(key: string): boolean {
+  return isKeyInFolder(key, ENQUIRY_PHOTO_FOLDER);
+}
+
+/** Feature 5001: a receipt's public id must sit inside the receipts folder -- never the enquiry folder. */
+export function isReceiptKey(key: string): boolean {
+  return isKeyInFolder(key, RECEIPT_FOLDER);
 }
 
 export interface PhotoView {

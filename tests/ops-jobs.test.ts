@@ -24,6 +24,8 @@
 // AC24 the new-job-request email carries <web origin>/ops/jobs/<reference>
 // 3003 AC11 (back half) the job read carries the customer's photos -- file
 //      name, thumbnail and full URLs, oldest first; none for a job without
+// 5001 AC9 Mike changes a time entry before Complete and Bob's screen shows it; after
+//      Complete the ops time entries are refused and the read carries the notes and parts
 // AC26 (BKLG-023) a fresh base seed gives Plumbing the six questions
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import express, { type Express } from "express";
@@ -39,6 +41,7 @@ import { attachSession } from "../src/auth/middleware.js";
 import { authRoutes } from "../src/auth/routes.js";
 import { contractorLoginRoutes } from "../src/auth/login-routes.js";
 import { jobRoutes } from "../src/jobs/routes.js";
+import { contractorJobRoutes } from "../src/contractors/job-routes.js";
 import { enquiryRoutes } from "../src/enquiries/routes.js";
 import { drainOnce } from "../src/notifications/index.js";
 import { registerProvider, resetProviders } from "../src/notifications/providers/registry.js";
@@ -296,6 +299,7 @@ beforeAll(() => {
   app.use("/api", authRoutes(db));
   app.use(express.json());
   app.use("/api/jobs", jobRoutes(db));
+  app.use("/api/contractor/jobs", contractorJobRoutes(db));
   app.use("/api/enquiries", enquiryRoutes(db, { verifyRecaptcha: () => Promise.resolve("human") }));
 });
 
@@ -1006,5 +1010,78 @@ describe("AC26 (BKLG-023) -- Plumbing's questions", () => {
       "Can you turn the water off at the mains?",
       "Is the hot water gas or electric?",
     ]);
+  });
+});
+
+describe("5001 AC9 -- Mike and the time entries", () => {
+  const ENTRY = { date: "2026-10-07", start: "08:07", end: "11:05", note: "" };
+
+  test("AC9: before Complete Mike changes a time entry from the job page and Bob's screen shows Mike's change; after Complete the ops save is refused and the page shows notes and parts", async () => {
+    const mike = await signInCookie("mike@idelta.com.au");
+    const bob = await signInCookie("bob@idelta.com.au");
+    // JOB-1051 is Tom's job, accepted by Bob.
+    const saved = await request(app)
+      .put("/api/contractor/jobs/JOB-1051")
+      .set("Cookie", bob)
+      .send({ timeEntries: [ENTRY], completionNotes: "Replaced the cartridge." });
+    expect(saved.status).toBe(200);
+
+    const before = (await detail(mike, "JOB-1051")) as DetailBody & { visit: { editable: boolean; timeEntries: unknown[]; billedHours: number } };
+    expect(before.visit).toMatchObject({ editable: true, billedHours: 3 });
+
+    const changed = { ...ENTRY, end: "12:00" }; // 3h53m -> 4.0h billed
+    const put = await request(app).put("/api/jobs/JOB-1051/time-entries").set("Cookie", mike).send({ timeEntries: [changed] });
+    expect(put.status).toBe(200);
+    expect((put.body as { visit: { billedHours: number } }).visit.billedHours).toBe(4);
+    const onBobsScreen = await request(app).get("/api/contractor/jobs/JOB-1051").set("Cookie", bob);
+    expect((onBobsScreen.body as { timeEntries: unknown[] }).timeEntries).toEqual([changed]);
+
+    // The same rules as Bob's screen: finish before start is refused on that row.
+    const bad = await request(app).put("/api/jobs/JOB-1051/time-entries").set("Cookie", mike).send({ timeEntries: [{ ...ENTRY, end: "07:00" }] });
+    expect(bad.status).toBe(400);
+    expect(bad.body).toMatchObject({ field: "timeEntries[0].end" });
+
+    const toms = await db.assignment.findFirstOrThrow({ where: { job: { reference: "JOB-1051" } } });
+    const receipt = await db.attachment.create({
+      data: { jobId: toms.jobId, assignmentId: toms.id, uploadedByRole: "contractor", storageKey: "tradeservice/receipts/r9", fileName: "r.jpg" },
+    });
+    const done = await request(app)
+      .post("/api/contractor/jobs/JOB-1051/complete")
+      .set("Cookie", bob)
+      .send({
+        timeEntries: [changed],
+        completionNotes: "Replaced the cartridge.",
+        parts: [{ name: "Tap cartridge", qty: 2, unitPrice: 4500, receiptAttachmentId: receipt.id }],
+      });
+    expect(done.status).toBe(200);
+
+    const refused = await request(app).put("/api/jobs/JOB-1051/time-entries").set("Cookie", mike).send({ timeEntries: [ENTRY] });
+    expect(refused.status).toBe(409);
+    const after = (await detail(mike, "JOB-1051")) as unknown as {
+      visit: { editable: boolean; completed: boolean; completionNotes: string; parts: unknown[]; timeEntries: unknown[] };
+    };
+    expect(after.visit).toMatchObject({
+      editable: false,
+      completed: true,
+      completionNotes: "Replaced the cartridge.",
+      parts: [{ name: "Tap cartridge", qty: 2, unitPrice: 4500, lineTotal: 9000 }],
+      timeEntries: [changed],
+    });
+  });
+
+  test("AC9: a job nobody has accepted has no visit, and Mike cannot write time entries on it; an in-progress job shows In progress", async () => {
+    const mike = await signInCookie("mike@idelta.com.au");
+    const bob = await signInCookie("bob@idelta.com.au");
+    expect(((await detail(mike, "JOB-1042")) as unknown as { visit: unknown }).visit).toBeNull();
+    const refused = await request(app).put("/api/jobs/JOB-1042/time-entries").set("Cookie", mike).send({ timeEntries: [ENTRY] });
+    expect(refused.status).toBe(409);
+    // A stranger (Bob) is not ops.
+    expect((await request(app).put("/api/jobs/JOB-1051/time-entries").set("Cookie", bob).send({ timeEntries: [] })).status).toBe(403);
+
+    // AC3 from Mike's side: On site shows him the job as in progress.
+    await request(app).post("/api/contractor/jobs/JOB-1051/on-site").set("Cookie", bob);
+    const page = await detail(mike, "JOB-1051");
+    expect(page.status).toBe("in_progress");
+    expect(page.contractor?.standing).toBe("On site - work underway");
   });
 });

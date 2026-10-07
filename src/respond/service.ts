@@ -83,7 +83,7 @@ export function statusOfDead(dead: RespondDead): number {
 // Reading the link
 // ---------------------------------------------------------------------------
 
-const assignmentInclude = {
+export const assignmentInclude = {
   contractor: { select: { id: true, name: true, code: true } },
   job: {
     include: {
@@ -93,7 +93,7 @@ const assignmentInclude = {
   },
 } satisfies Prisma.AssignmentInclude;
 
-type LoadedAssignment = Prisma.AssignmentGetPayload<{ include: typeof assignmentInclude }>;
+export type LoadedAssignment = Prisma.AssignmentGetPayload<{ include: typeof assignmentInclude }>;
 
 type Inspected =
   | { kind: "open"; tokenId: string; assignment: LoadedAssignment }
@@ -166,11 +166,25 @@ export async function inspectToken(db: Db, rawToken: string, now: Date): Promise
   return { kind: "open", tokenId: token.id, assignment };
 }
 
-async function openView(db: Db, assignment: LoadedAssignment, now: Date): Promise<RespondOpen> {
-  const job = assignment.job;
+/** What the contractor is shown of the job itself -- the respond page and the job screen (Feature 5001) read it from here. */
+export interface JobFacts {
+  trade: string;
+  addressLine: string;
+  /** "Lena Park" -- the name only, never a phone (V3), or the customer's name when the job has no site contact. */
+  contactLine: string;
+  contactIsSiteContact: boolean;
+  customerFirstName: string;
+  description: string | null;
+  answers: string[];
+  /** Feature 3003: the customer's enquiry photos, oldest first. */
+  photos: PhotoView[];
+  /** The office's Instruction notes only (plan decision 12), newest first. */
+  instructions: { authorFirstName: string; dateLabel: string; note: string }[];
+}
+
+export async function jobFactsOf(db: Db, job: LoadedAssignment["job"]): Promise<JobFacts> {
   const zone = job.timezone;
   const address = effectiveAddress(job);
-  const slot = assignment.proposedSlot;
   const siteContact = asSiteContact(job.siteContact);
 
   const instructionNotes = readNotes(job.operatorNotes).filter((note) => note.type === "instruction");
@@ -182,11 +196,7 @@ async function openView(db: Db, assignment: LoadedAssignment, now: Date): Promis
   };
 
   return {
-    state: "open",
-    jobReference: job.reference,
-    contractorFirstName: assignment.contractor.name.split(" ")[0] ?? assignment.contractor.name,
     trade: job.serviceType.trade,
-    slotLabel: slot === null ? "" : formatSlotLabel(zone, slot, now),
     addressLine: address === null ? suburbOf(job.serviceLocation) : `${address.street}, ${address.suburb}`,
     contactLine: siteContact?.name ?? job.customer.name,
     contactIsSiteContact: siteContact !== null,
@@ -201,6 +211,18 @@ async function openView(db: Db, assignment: LoadedAssignment, now: Date): Promis
         dateLabel: formatDateLabel(zone, new Date(note.at)),
         note: note.note,
       })),
+  };
+}
+
+async function openView(db: Db, assignment: LoadedAssignment, now: Date): Promise<RespondOpen> {
+  const job = assignment.job;
+  const slot = assignment.proposedSlot;
+  return {
+    state: "open",
+    jobReference: job.reference,
+    contractorFirstName: assignment.contractor.name.split(" ")[0] ?? assignment.contractor.name,
+    slotLabel: slot === null ? "" : formatSlotLabel(job.timezone, slot, now),
+    ...(await jobFactsOf(db, job)),
   };
 }
 
