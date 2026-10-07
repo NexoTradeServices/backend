@@ -6,7 +6,7 @@
 //      Instruction notes only
 // AC3  On site: accepted -> in progress (assignment and job); a second tap changes nothing
 // AC4  two time entries, notes and a part save and reread; finish before start is refused on that row
-// AC6  a part over the cap is refused on its price; a part with no receipt is
+// AC6  parts over the cap IN TOTAL are refused on the price of the line that tips it over; a part with no receipt is
 //      refused; a receipt is an Attachment on the job and his assignment;
 //      signing lives in its own folder, with its own key check, 503 when not set up
 // AC7  Complete with no entry / no notes is refused on that field; otherwise
@@ -280,14 +280,14 @@ describe("AC4 -- Save", () => {
 });
 
 describe("AC6 -- parts and receipts", () => {
-  test("AC6: a part over the cap is refused on its price, the amount read from settings", async () => {
+  test("AC6: parts over the cap in total are refused on the price, the amount read from settings", async () => {
     const { jobId, assignmentId } = await acceptedJob();
     const receipt = await receiptFor(assignmentId, jobId);
     const bob = await signInCookie("bob@idelta.com.au");
     const over = { name: "Mixer tap", qty: 1, unitPrice: 15_001, receiptAttachmentId: receipt };
     const res = await request(app).put("/api/contractor/jobs/JOB-5001").set("Cookie", bob).send({ parts: [over] });
     expect(res.status).toBe(400);
-    expect(res.body).toMatchObject({ field: "parts[0].unitPrice", error: "Over $150 a line - ring the office, they order it" });
+    expect(res.body).toMatchObject({ field: "parts[0].unitPrice", error: "Parts are over $150 in total - ring the office, they order it" });
     // The cap is the settings row's, not a constant.
     await db.platformSettings.updateMany({ data: { maxContractorPartAmount: 20_000 } });
     const ok = await request(app).put("/api/contractor/jobs/JOB-5001").set("Cookie", bob).send({ parts: [over] });
@@ -296,6 +296,19 @@ describe("AC6 -- parts and receipts", () => {
     expect((await request(app).put("/api/contractor/jobs/JOB-5001").set("Cookie", bob).send({ parts: [exactly] })).status).toBe(200);
     const above = { ...exactly, qty: 2.01 };
     expect((await request(app).put("/api/contractor/jobs/JOB-5001").set("Cookie", bob).send({ parts: [above] })).status).toBe(400);
+  });
+
+  test("AC6: several parts are capped as a TOTAL -- $100 and $60 is over $150, refused on the second line; $100 and $50 is fine", async () => {
+    const { jobId, assignmentId } = await acceptedJob();
+    const receipt = await receiptFor(assignmentId, jobId);
+    const bob = await signInCookie("bob@idelta.com.au");
+    const part = (name: string, unitPrice: number) => ({ name, qty: 1, unitPrice, receiptAttachmentId: receipt });
+    const over = await request(app).put("/api/contractor/jobs/JOB-5001").set("Cookie", bob).send({ parts: [part("Valve", 10_000), part("Trap", 6_000)] });
+    expect(over.status).toBe(400);
+    expect(over.body).toMatchObject({ field: "parts[1].unitPrice", error: "Parts are over $150 in total - ring the office, they order it" });
+    expect(await db.assignmentPart.count({ where: { assignmentId } })).toBe(0);
+    const fine = await request(app).put("/api/contractor/jobs/JOB-5001").set("Cookie", bob).send({ parts: [part("Valve", 10_000), part("Trap", 5_000)] });
+    expect(fine.status).toBe(200);
   });
 
   test("AC6: a part with no receipt photo is refused; so is another assignment's receipt", async () => {

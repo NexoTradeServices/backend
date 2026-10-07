@@ -118,6 +118,7 @@ export function parseParts(raw: unknown, maxAmount: number): { ok: true; parts: 
   if (!Array.isArray(raw)) return fail(400, "parts must be a list", "parts");
   if (raw.length > MAX_PARTS) return fail(400, `At most ${String(MAX_PARTS)} parts.`, "parts");
   const parts: ParsedPart[] = [];
+  let runningTotal = 0;
   for (const [i, item] of raw.entries()) {
     const at = `parts[${String(i)}]`;
     if (!isObject(item)) return fail(400, "Each part must be an object", at);
@@ -142,8 +143,11 @@ export function parseParts(raw: unknown, maxAmount: number): { ok: true; parts: 
     if (typeof unitPrice !== "number" || !Number.isInteger(unitPrice)) return fail(400, "Required.", `${at}.unitPrice`);
     if (unitPrice <= 0) return fail(400, "Must be more than zero.", `${at}.unitPrice`);
     const lineTotal = Math.round(qty * unitPrice);
-    if (lineTotal > maxAmount) {
-      return fail(400, `Over ${dollars(maxAmount)} a line - ring the office, they order it`, `${at}.unitPrice`);
+    // The cap is on ALL the contractor's parts on the job added up, not on each line:
+    // the refusal lands on the line that tips the total over.
+    runningTotal += lineTotal;
+    if (runningTotal > maxAmount) {
+      return fail(400, `Parts are over ${dollars(maxAmount)} in total - ring the office, they order it`, `${at}.unitPrice`);
     }
     const receipt = item["receiptAttachmentId"];
     if (typeof receipt !== "string" || receipt.trim() === "") return fail(400, "Required.", `${at}.receipt`);

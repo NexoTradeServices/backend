@@ -58,7 +58,7 @@ export function signParams(params: Record<string, string | number | boolean>, ap
   return createHash("sha1").update(toSign + apiSecret).digest("hex");
 }
 
-function signUpload(config: CloudinaryConfig, folder: string, now: Date): PhotoUploadSignature {
+function signUpload(config: CloudinaryConfig, folder: string, now: Date, uploadPreset: string = config.uploadPreset): PhotoUploadSignature {
   const timestamp = Math.floor(now.getTime() / 1000);
   const signature = signParams(
     {
@@ -66,7 +66,7 @@ function signUpload(config: CloudinaryConfig, folder: string, now: Date): PhotoU
       folder,
       return_delete_token: true,
       timestamp,
-      upload_preset: config.uploadPreset,
+      upload_preset: uploadPreset,
     },
     config.apiSecret,
   );
@@ -75,7 +75,7 @@ function signUpload(config: CloudinaryConfig, folder: string, now: Date): PhotoU
     apiKey: config.apiKey,
     timestamp,
     signature,
-    uploadPreset: config.uploadPreset,
+    uploadPreset,
     folder,
     allowedFormats: ALLOWED_PHOTO_FORMATS,
     returnDeleteToken: true,
@@ -86,9 +86,18 @@ export function signEnquiryPhotoUpload(config: CloudinaryConfig, now: Date = new
   return signUpload(config, ENQUIRY_PHOTO_FOLDER, now);
 }
 
-/** Feature 5001: a signed direct upload for the receipts folder. */
-export function signReceiptUpload(config: CloudinaryConfig, now: Date = new Date()): PhotoUploadSignature {
-  return signUpload(config, RECEIPT_FOLDER, now);
+/**
+ * Feature 5001: a signed direct upload for the receipts folder. It uses its own
+ * preset, `CLOUDINARY_RECEIPT_UPLOAD_PRESET` (asset folder `tradeservice/receipts`),
+ * because the enquiry preset pins its asset folder to the enquiry photos; with
+ * the setting absent it falls back to the enquiry preset.
+ */
+export function signReceiptUpload(
+  config: CloudinaryConfig,
+  now: Date = new Date(),
+  env: NodeJS.ProcessEnv = process.env,
+): PhotoUploadSignature {
+  return signUpload(config, RECEIPT_FOLDER, now, env["CLOUDINARY_RECEIPT_UPLOAD_PRESET"]?.trim() || config.uploadPreset);
 }
 
 function isKeyInFolder(key: string, folder: string): boolean {
