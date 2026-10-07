@@ -9,6 +9,7 @@
 // own client in.
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../generated/prisma/client.js";
+import { labellingExtension } from "../test-data/labelling.js";
 
 export function databaseUrl(): string {
   const url = process.env["DATABASE_URL"];
@@ -18,9 +19,17 @@ export function databaseUrl(): string {
   return url;
 }
 
-/** A fresh client against a given database. The caller owns $disconnect(). */
+/**
+ * A fresh client against a given database. The caller owns $disconnect().
+ *
+ * Feature 9002: every client stamps the test-data label on the rows it creates
+ * while a request or script holds one (src/test-data/label.ts) -- and does
+ * nothing at all otherwise. The extension adds no methods, so the result is
+ * handed out as the plain PrismaClient every caller already expects.
+ */
 export function createPrismaClient(connectionString: string = databaseUrl()): PrismaClient {
-  return new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
+  const base = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
+  return base.$extends(labellingExtension) as unknown as PrismaClient;
 }
 
 let shared: PrismaClient | undefined;

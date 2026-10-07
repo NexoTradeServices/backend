@@ -18,6 +18,7 @@ import { zoneForState, isWeekend } from "../time/index.js";
 import { sendNotification } from "../notifications/index.js";
 import { formatDollars } from "./money.js";
 import { verifyRecaptcha, type RecaptchaVerdict } from "./recaptcha.js";
+import { isTestRun } from "../test-data/label.js";
 import {
   isEnquiryPhotoKey,
   readCloudinaryConfig,
@@ -277,7 +278,10 @@ export function enquiryRoutes(client: PrismaClient, options: EnquiryRoutesOption
       // Plan decision 1 (walkthrough-log.md row 49): checked before any
       // Customer or Job row exists. AC7: a confirmed bot refuses outright;
       // human OR unreachable/blocked both let it through identically.
-      const verdict = await checkRecaptcha(input.recaptchaToken);
+      // Feature 9002: a browser test's request (the test-run signal, which the
+      // production server never honours) goes on as a human would -- the live
+      // keys on dev would refuse a headless browser as a bot.
+      const verdict = isTestRun() ? "human" : await checkRecaptcha(input.recaptchaToken);
       if (verdict === "bot") {
         res.status(403).json({ error: "we could not verify this request automatically", operatorPhone: settings.operatorPhone });
         return;

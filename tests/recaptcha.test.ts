@@ -7,8 +7,15 @@
 // calls the real function, mocking only the network boundary (fetch), so a
 // flipped comparison or a network error that starts throwing instead of
 // degrading would fail here even though the route-level suite stays green.
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
+import express from "express";
+import request from "supertest";
 import { RECAPTCHA_BOT_THRESHOLD, verifyRecaptcha } from "../src/enquiries/recaptcha.js";
+import { enquiryRoutes } from "../src/enquiries/routes.js";
+import { testRunSignal } from "../src/test-data/label.js";
+import { seedBase } from "../src/db/seed/base.js";
+import { testClient, truncateAll } from "./helpers/database.js";
+import type { PrismaClient } from "../src/db/client.js";
 
 const SITEVERIFY_URL = "https://www.google.com/recaptcha/api/siteverify";
 
@@ -103,5 +110,85 @@ describe("verifyRecaptcha -- the real threshold comparison", () => {
     const body = new URLSearchParams(init.body as string);
     expect(body.get("secret")).toBe("test-secret");
     expect(body.get("response")).toBe("the-token");
+  });
+});
+
+// Feature 9002, AC3b -- the test-run signal and the reCAPTCHA gate, through the
+// real enquiry route. Outside production a request carrying the signal goes on
+// as a human would (the live keys on dev refuse a headless browser as a bot);
+// without it a bot score is still refused; in production the signal does not
+// skip the check.
+describe("AC3b (9002) -- the test-run signal and the enquiry's reCAPTCHA check", () => {
+  let db: PrismaClient;
+  const botCheck = vi.fn<(token: string | undefined) => Promise<"bot">>(() => Promise.resolve("bot"));
+
+  function enquiry(email: string): Record<string, unknown> {
+    return {
+      name: "Karl",
+      email,
+      phone: "0400 000 999",
+      location: {
+        suburb: "Joondalup",
+        state: "WA",
+        country: "AU",
+        postcode: "6027",
+        lat: -31.7448,
+        lng: 115.7661,
+        placeId: "fixture-place-joondalup",
+      },
+      trade: "Plumbing",
+      selectedOptions: [],
+      preferredDate: "2026-09-09",
+      preferredWindow: "morning",
+      description: "Kitchen tap won't stop dripping.",
+      marketingEmail: false,
+      marketingSms: false,
+      recaptchaToken: "fixture-token",
+    };
+  }
+
+  function app(): express.Express {
+    const built = express();
+    built.use(testRunSignal);
+    built.use(express.json());
+    built.use("/api/enquiries", enquiryRoutes(db, { verifyRecaptcha: botCheck }));
+    return built;
+  }
+
+  beforeAll(async () => {
+    db = testClient();
+    await truncateAll(db);
+    await seedBase(db);
+  });
+
+  afterAll(async () => {
+    await db.$disconnect();
+  });
+
+  beforeEach(() => {
+    botCheck.mockClear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  test("outside production, an enquiry carrying the signal is taken without a reCAPTCHA check", async () => {
+    const res = await request(app()).post("/api/enquiries").set("Cookie", "ts-test-run=e2e").send(enquiry("signal@idelta.com.au"));
+    expect(res.status).toBe(201);
+    expect(botCheck).not.toHaveBeenCalled();
+  });
+
+  test("outside production, without the signal a bot score is still refused", async () => {
+    const res = await request(app()).post("/api/enquiries").send(enquiry("nosignal@idelta.com.au"));
+    expect(res.status).toBe(403);
+    expect(botCheck).toHaveBeenCalledTimes(1);
+  });
+
+  test("with NODE_ENV=production the signal does not skip the check", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const res = await request(app()).post("/api/enquiries").set("Cookie", "ts-test-run=e2e").send(enquiry("prod@idelta.com.au"));
+    expect(res.status).toBe(403);
+    expect(botCheck).toHaveBeenCalledTimes(1);
   });
 });
