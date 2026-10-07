@@ -14,6 +14,7 @@
 //      an expired licence is still returned, tagged by its own status/expiry
 // AC11 the rates door is session-only -- Bob never sees Dave's specialties
 // AC12 the fixture seed's job/assignment shape
+// 5001 AC1 each card says whether it opens: accepted and in-progress ones do, an assigned one stays flat
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import express, { type Express } from "express";
 import request from "supertest";
@@ -42,6 +43,7 @@ interface JobCard {
   trade: string;
   suburb: string;
   slotLabel: string | null;
+  opens: boolean;
 }
 
 interface ReadinessItem {
@@ -164,6 +166,13 @@ describe("AC1-AC4 -- Bob's live job list, sorted", () => {
 
     const after = await dashboard(cookie);
     expect(after.jobs.map((j) => j.reference).sort()).toEqual(["JOB-1039", "JOB-1042", "JOB-1051"]);
+  });
+
+  test("5001 AC1: an accepted or in-progress card opens its job screen; the one still waiting for his answer does not", async () => {
+    const cookie = await signInCookie("bob@idelta.com.au");
+    const body = await dashboard(cookie);
+    const opens = Object.fromEntries(body.jobs.map((j) => [j.reference, j.opens]));
+    expect(opens).toEqual({ "JOB-1042": false, "JOB-1051": true, "JOB-1039": true });
   });
 
   test("AC2/AC3: unanswered first, then soonest, then no-slot last", async () => {
