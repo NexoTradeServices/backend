@@ -240,6 +240,9 @@ model User {
   contractorStatusChanges Contractor[]                 @relation("ContractorStatusChangedBy")
   agreementVersionsIssued ContractorAgreementVersion[] @relation("AgreementIssuedBy")
   specialtyStatusChanges  ContractorSpecialty[]        @relation("ContractorSpecialtyStatusChangedBy")
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
 }
 
 model Session {
@@ -253,6 +256,9 @@ model Session {
   updatedAt DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
 
   @@index([userId])
 }
@@ -274,6 +280,9 @@ model Account {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
+
   @@unique([providerId, accountId])
   @@index([userId])
 }
@@ -287,6 +296,9 @@ model Verification {
   expiresAt  DateTime
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
 
   @@index([identifier])
 }
@@ -355,6 +367,9 @@ model PlatformSettings {
   updatedAt                 DateTime    @updatedAt
 
   gstStatusChangedBy User? @relation("GstStatusChangedBy", fields: [gstStatusChangedByUserId], references: [id])
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
 }
 
 /// One published contractor agreement -- Feature 2006. A never-changed file;
@@ -372,6 +387,9 @@ model ContractorAgreementVersion {
 
   issuedBy    User                            @relation("AgreementIssuedBy", fields: [issuedByUserId], references: [id])
   acceptances ContractorAgreementAcceptance[]
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
 }
 
 /// One contractor accepting one version -- Feature 2006. Never edited or
@@ -388,6 +406,9 @@ model ContractorAgreementAcceptance {
 
   contractor       Contractor                 @relation(fields: [contractorId], references: [id])
   agreementVersion ContractorAgreementVersion @relation(fields: [agreementVersionId], references: [id])
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
 
   @@unique([contractorId, agreementVersionId])
 }
@@ -411,6 +432,9 @@ model CapabilityToken {
 
   job        Job?        @relation(fields: [jobId], references: [id])
   assignment Assignment? @relation(fields: [assignmentId], references: [id])
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
 
   @@index([jobId])
   @@index([assignmentId])
@@ -448,6 +472,9 @@ model Customer {
   invoices Invoice[]
   payments Payment[]
   refunds  Refund[]
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
 }
 
 // ---------------------------------------------------------------------------
@@ -514,6 +541,9 @@ model Contractor {
   assignments          Assignment[]
   settlements          ContractorSettlement[]
   agreementAcceptances ContractorAgreementAcceptance[]
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
 }
 
 /// A contractor has many -- one per trade.
@@ -536,6 +566,9 @@ model ContractorSpecialty {
   statusChangedBy User?        @relation("ContractorSpecialtyStatusChangedBy", fields: [statusChangedByUserId], references: [id])
   assignments     Assignment[]
 
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
+
   @@unique([contractorId, trade])
 }
 
@@ -547,6 +580,9 @@ model ContractorServedPostcode {
   postcode     String
 
   contractor Contractor @relation(fields: [contractorId], references: [id], onDelete: Cascade)
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
 
   @@unique([contractorId, postcode])
   @@index([postcode])
@@ -564,6 +600,9 @@ model Review {
   job        Job        @relation(fields: [jobId], references: [id])
   customer   Customer   @relation(fields: [customerId], references: [id])
   contractor Contractor @relation(fields: [contractorId], references: [id])
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
 
   @@index([jobId])
   @@index([contractorId])
@@ -584,6 +623,9 @@ model CalendarEvent {
   contractor Contractor  @relation(fields: [contractorId], references: [id], onDelete: Cascade)
   job        Job?        @relation(fields: [jobId], references: [id])
   assignment Assignment? @relation(fields: [assignmentId], references: [id])
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
 
   @@index([contractorId, startTime])
   @@index([assignmentId])
@@ -673,6 +715,9 @@ model Job {
   capabilityTokens CapabilityToken[]
   notifications    Notification[]
 
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
+
   @@index([status])
   @@index([postcode])
   @@index([customerId])
@@ -752,6 +797,9 @@ model Assignment {
   capabilityTokens CapabilityToken[]
   issuedInvoices   Invoice[]           @relation("InvoiceAssignment")
 
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
+
   @@index([jobId])
   @@index([contractorId])
   @@index([settlementId])
@@ -771,6 +819,9 @@ model AssignmentTimeLog {
   createdAt    DateTime @default(now())
 
   assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
 
   @@index([assignmentId])
 }
@@ -797,6 +848,9 @@ model AssignmentPart {
   assignment        Assignment  @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
   receiptAttachment Attachment? @relation(fields: [receiptAttachmentId], references: [id])
 
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
+
   @@index([assignmentId])
 }
 
@@ -818,6 +872,9 @@ model Attachment {
   job        Job              @relation(fields: [jobId], references: [id])
   assignment Assignment?      @relation(fields: [assignmentId], references: [id])
   partRows   AssignmentPart[]
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
 
   @@index([jobId])
   @@index([assignmentId])
@@ -843,6 +900,9 @@ model Suburb {
   seo         Json?
 
   serviceAreaPages ServiceAreaPage[]
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
 
   @@unique([name, postcode, state])
   @@index([postcode])
@@ -873,6 +933,9 @@ model ServiceType {
 
   jobs             Job[]
   serviceAreaPages ServiceAreaPage[]
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
 }
 
 model Invoice {
@@ -919,6 +982,9 @@ model Invoice {
   /// back-relation of Assignment.invoiceId (see the note on Assignment.invoice)
   assignmentsHeld Assignment[]  @relation("AssignmentInvoice")
 
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
+
   @@index([jobId])
   @@index([customerId])
   @@index([status])
@@ -939,6 +1005,9 @@ model InvoiceLine {
 
   invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
+
   @@index([invoiceId])
 }
 
@@ -955,6 +1024,9 @@ model Payment {
   invoice  Invoice  @relation(fields: [invoiceId], references: [id])
   customer Customer @relation(fields: [customerId], references: [id])
   refunds  Refund[]
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
 
   @@index([invoiceId])
   @@index([customerId])
@@ -984,6 +1056,9 @@ model Refund {
   job        Job      @relation(fields: [jobId], references: [id])
   payment    Payment? @relation(fields: [paymentId], references: [id])
   approvedBy User     @relation("RefundApprovedBy", fields: [approvedByUserId], references: [id])
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
 
   @@index([invoiceId])
   @@index([customerId])
@@ -1023,6 +1098,9 @@ model ContractorSettlement {
   /// member assignments link back via Assignment.settlementId
   assignments Assignment[]
 
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
+
   @@index([contractorId])
   @@index([status])
 }
@@ -1061,6 +1139,9 @@ model Notification {
 
   job Job? @relation(fields: [jobId], references: [id])
 
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
+
   @@index([jobId])
   @@index([status])
 }
@@ -1074,6 +1155,9 @@ model Suppression {
   address String
   reason  SuppressionReason
   at      DateTime            @default(now())
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
 
   @@unique([channel, address])
 }
@@ -1097,6 +1181,9 @@ model ServiceAreaPage {
 
   serviceType ServiceType @relation(fields: [serviceTypeId], references: [id])
   suburb      Suburb      @relation(fields: [suburbId], references: [id])
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
 
   @@unique([serviceTypeId, suburbId])
 }

@@ -105,6 +105,25 @@ describe("AC2 -- every record in the Data Model exists", () => {
   });
 });
 
+describe("Feature 9002 -- every table carries the testData label", () => {
+  test("every table has a nullable text `testData` column with no default", async () => {
+    const tables = (await db.$queryRaw<{ table_name: string }[]>`
+      SELECT table_name FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+         AND table_name NOT IN ('_prisma_migrations', 'spatial_ref_sys')
+    `).map((row) => row.table_name);
+    const columns = await db.$queryRaw<{ table_name: string; data_type: string; is_nullable: string; column_default: string | null }[]>`
+      SELECT table_name, data_type, is_nullable, column_default FROM information_schema.columns
+       WHERE table_schema = 'public' AND column_name = 'testData'
+    `;
+    expect(tables).toHaveLength(29);
+    expect(tables.filter((table) => !columns.some((column) => column.table_name === table))).toEqual([]);
+    for (const column of columns) {
+      expect(column).toMatchObject({ data_type: "text", is_nullable: "YES", column_default: null });
+    }
+  });
+});
+
 describe("AC7 -- the unique constraints hold", () => {
   beforeAll(async () => {
     await truncateAll(db);

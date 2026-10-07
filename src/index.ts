@@ -21,6 +21,8 @@ import { jobRoutes } from './jobs/routes.js'
 import { respondRoutes } from './respond/routes.js'
 import { devTextsRoutes } from './notifications/dev-texts-routes.js'
 import { getPrisma } from './db/client.js'
+import { testRunSignal } from './test-data/label.js'
+import { mountTestDataRoutes } from './test-data/routes.js'
 
 const app = express()
 
@@ -48,6 +50,11 @@ const prisma = getPrisma()
 // Credentials on: the session cookie (feature 1003) rides this same path.
 app.use(cors({ origin: webOrigin, credentials: true }))
 
+// Feature 9002: the browser tests' test-run cookie labels every row this
+// request creates. First, so Better Auth's sign-in is labelled too; ignored
+// outright in production.
+app.use(testRunSignal)
+
 // One auth brain, server-side (feature 1003, decision 1). Mounted before any
 // body-parsing middleware -- Better Auth reads the raw request body itself,
 // and a parser upstream would consume the stream first (there is none in
@@ -73,6 +80,8 @@ app.use('/api/identity', identityRoutes(prisma))
 // Mounted after Better Auth's own routes, which read the raw body themselves
 // -- see the comment above.
 app.use(express.json())
+// Feature 9002: the sweep route exists only outside production -- absent there.
+mountTestDataRoutes(app, prisma)
 app.use('/api/settings', settingsRoutes(prisma))
 app.use('/api/service-types', serviceTypeRoutes(prisma))
 app.use('/api/contractors', contractorRoutes(prisma, auth))

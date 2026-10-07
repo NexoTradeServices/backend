@@ -14,6 +14,8 @@
     "db:seed": "tsx src/db/seed/base.ts",
     "db:seed:fixtures": "tsx src/db/seed/fixtures.ts",
     "db:seed:suburbs": "tsx src/db/seed/suburbs.ts",
+    "test-data:sweep": "tsx src/test-data/sweep-cli.ts",
+    "uat": "tsx src/db/uat/run.ts",
     "auth:create-user": "tsx src/scripts/create-user.ts",
     "test": "vitest run",
     "test:watch": "vitest"
