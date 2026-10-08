@@ -14,6 +14,10 @@
 // AC12 (back half) Bob's read carries the pay link / waiting, no amount; Dave never sees it
 // AC13 (back half) the ops job read carries the invoice, with GST by its own stamp
 // AC14 Resend: a fresh pair to the customer as she is now; refused when waiting / paid / void / zero-dollar / by a contractor
+//
+// Feature 6002, extending these fixtures:
+// 6002 AC9  Mike's Invoice card on a paid invoice: Paid, "15 Oct 2026, card", no Resend / Copy / Check payment
+// 6002 AC10 Bob's read on a paid invoice: the total and paid, no link, no messages; never his own pay
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import express, { type Express } from "express";
 import request from "supertest";
@@ -46,6 +50,7 @@ import {
 import { buildInvoicePdf } from "../src/invoices/pdf.js";
 import { issueInvoice } from "../src/invoices/issue.js";
 import { payLinkPass, startPayLinkLoop } from "../src/invoices/pay-link.js";
+import { recordConfirmedPayment } from "../src/payments/paid.js";
 import {
   idempotencyKeyFor,
   payLinkParams,
@@ -754,15 +759,15 @@ describe("AC12 -- Bob's payment", () => {
     await bobCompletes(made);
     const bob = await signInCookie("bob@idelta.com.au");
     const waiting = await request(app).get(`/api/contractor/jobs/${made.reference}`).set("Cookie", bob);
-    expect((waiting.body as ContractorJobView).payment).toEqual({ amount: 65_500, payLinkUrl: null, messages: "sending" });
+    expect((waiting.body as ContractorJobView).payment).toEqual({ amount: 65_500, paid: false, payLinkUrl: null, messages: "sending" });
 
     await payLinkPass(db, { provider: fakeStripe() });
     const queued = await request(app).get(`/api/contractor/jobs/${made.reference}`).set("Cookie", bob);
-    expect((queued.body as ContractorJobView).payment).toEqual({ amount: 65_500, payLinkUrl: "https://pay.test/INV-2042", messages: "sending" });
+    expect((queued.body as ContractorJobView).payment).toEqual({ amount: 65_500, paid: false, payLinkUrl: "https://pay.test/INV-2042", messages: "sending" });
 
     await drainOnce(db);
     const sent = await request(app).get(`/api/contractor/jobs/${made.reference}`).set("Cookie", bob);
-    expect((sent.body as ContractorJobView).payment).toEqual({ amount: 65_500, payLinkUrl: "https://pay.test/INV-2042", messages: "sent" });
+    expect((sent.body as ContractorJobView).payment).toEqual({ amount: 65_500, paid: false, payLinkUrl: "https://pay.test/INV-2042", messages: "sent" });
     // The customer's total is his to quote; his own pay never is.
     const json = JSON.stringify(sent.body);
     expect(json).not.toContain("50000");
@@ -782,14 +787,14 @@ describe("AC12 -- Bob's payment", () => {
     expect((res.body as ContractorJobView).payment).toMatchObject({ amount: 65_500, messages: "failed" });
   });
 
-  test("AC12: payment is null before Complete, and for a zero-dollar or paid or void invoice", async () => {
+  test("AC12: payment is null before Complete, and for a zero-dollar or void invoice (6002: a paid one keeps its card)", async () => {
     const made = await acceptedJob();
     const bob = await signInCookie("bob@idelta.com.au");
     const before = await request(app).get(`/api/contractor/jobs/${made.reference}`).set("Cookie", bob);
     expect((before.body as ContractorJobView).payment).toBeNull();
     await bobCompletes(made);
     const invoice = await invoiceOf(made.jobId);
-    for (const data of [{ isZeroDollar: true }, { isZeroDollar: false, status: "paid" as const }, { status: "void" as const }]) {
+    for (const data of [{ isZeroDollar: true }, { isZeroDollar: true, status: "paid" as const }, { isZeroDollar: false, status: "void" as const }]) {
       await db.invoice.update({ where: { id: invoice.id }, data });
       const res = await request(app).get(`/api/contractor/jobs/${made.reference}`).set("Cookie", bob);
       expect((res.body as ContractorJobView).payment).toBeNull();
@@ -924,5 +929,101 @@ describe("the browser tests' pay-link hook", () => {
     mountTestDataRoutes(production, db);
     vi.unstubAllEnvs();
     expect((await request(production).post(`/api/test-data/jobs/${made.reference}/pay-link`)).status).toBe(404);
+  });
+});
+
+describe("6002 AC9 / AC10 -- a paid invoice, as Mike and Bob read it", () => {
+  async function paidJob(): Promise<{ reference: string; jobId: string }> {
+    const made = await acceptedJob();
+    await bobCompletes(made);
+    await payLinkPass(db, { provider: fakeStripe() });
+    const invoice = await invoiceOf(made.jobId);
+    // 15 Oct 2026, 2:15pm AWST, by card.
+    await recordConfirmedPayment(db, { invoiceId: invoice.id, paymentIntentId: "pi_sarah", amount: 65_500, method: "card", paidAt: new Date("2026-10-15T06:15:00.000Z") });
+    return made;
+  }
+
+  test("6002 AC9: Mike's Invoice card shows Paid with its label; Resend, Copy and Check payment are gone", async () => {
+    const made = await acceptedJob();
+    await bobCompletes(made);
+    await payLinkPass(db, { provider: fakeStripe() });
+    const mike = await signInCookie("mike@idelta.com.au");
+    expect((await opsDetail(mike, made.reference)).invoice).toMatchObject({ status: "sent", canResend: true, canCheckPayment: true, paidLabel: null });
+
+    const invoice = await invoiceOf(made.jobId);
+    await recordConfirmedPayment(db, { invoiceId: invoice.id, paymentIntentId: "pi_sarah", amount: 65_500, method: "card", paidAt: new Date("2026-10-15T06:15:00.000Z") });
+    const detail = await opsDetail(mike, made.reference);
+    expect(detail.invoice).toMatchObject({ status: "paid", canResend: false, canCheckPayment: false, paidLabel: "15 Oct 2026, card", payLinkUrl: "https://pay.test/INV-2042" });
+    // The receipt and the notice join the Messages card under their own names.
+    expect(detail.messages.map((m) => m.what)).toEqual(expect.arrayContaining(["Payment receipt", "Payment received"]));
+  });
+
+  test("6002 AC9: a payment on a closed invoice is never shown as Paid", async () => {
+    const made = await acceptedJob();
+    await bobCompletes(made);
+    await payLinkPass(db, { provider: fakeStripe() });
+    const invoice = await invoiceOf(made.jobId);
+    await db.invoice.update({ where: { id: invoice.id }, data: { status: "void" } });
+    await recordConfirmedPayment(db, { invoiceId: invoice.id, paymentIntentId: "pi_void", amount: 65_500, method: "card", paidAt: new Date() });
+    const mike = await signInCookie("mike@idelta.com.au");
+    expect((await opsDetail(mike, made.reference)).invoice).toMatchObject({ status: "void", paidLabel: null, canCheckPayment: false });
+  });
+
+  test("6002 AC10: Bob's read on a paid invoice is the total and paid -- no link, no messages, never his own pay", async () => {
+    const made = await paidJob();
+    const bob = await signInCookie("bob@idelta.com.au");
+    const res = await request(app).get(`/api/contractor/jobs/${made.reference}`).set("Cookie", bob);
+    expect((res.body as ContractorJobView).payment).toEqual({ amount: 65_500, paid: true });
+    const json = JSON.stringify(res.body);
+    expect(json).not.toContain("50000");
+    expect(json).not.toContain("pay.test");
+  });
+});
+
+describe("6002 -- the browser tests' paid hook", () => {
+  test("it runs the paid step with a fake card payment, once however often it is called; production does not have it", async () => {
+    const made = await acceptedJob();
+    await bobCompletes(made);
+    const hooked = express();
+    hooked.use(express.json());
+    mountTestDataRoutes(hooked, db);
+    await request(hooked).post(`/api/test-data/jobs/${made.reference}/pay-link`);
+
+    expect((await request(hooked).post(`/api/test-data/jobs/${made.reference}/paid`)).body).toEqual({ outcome: "paid" });
+    expect((await request(hooked).post(`/api/test-data/jobs/${made.reference}/paid`)).body).toEqual({ outcome: "already_recorded" });
+    expect(await invoiceOf(made.jobId)).toMatchObject({ status: "paid" });
+    expect(await db.payment.findMany()).toEqual([expect.objectContaining({ stripePaymentIntentId: "pi_test_INV-2042", method: "card", status: "succeeded" })]);
+    expect(await db.notification.count({ where: { type: { in: ["payment_receipt", "payment_received"] } } })).toBe(2);
+    expect((await request(hooked).post("/api/test-data/jobs/JOB-0000/paid")).status).toBe(404);
+
+    vi.stubEnv("NODE_ENV", "production");
+    const production = express();
+    mountTestDataRoutes(production, db);
+    vi.unstubAllEnvs();
+    expect((await request(production).post(`/api/test-data/jobs/${made.reference}/paid`)).status).toBe(404);
+  });
+});
+
+describe("6002 -- the browser tests' due hook", () => {
+  test("it moves a labelled test invoice's due date; an unlabelled one is left alone; production does not have it", async () => {
+    const made = await acceptedJob();
+    await bobCompletes(made);
+    const hooked = express();
+    hooked.use(express.json());
+    mountTestDataRoutes(hooked, db);
+
+    // Not labelled: not the browser tests' to move.
+    expect((await request(hooked).post(`/api/test-data/jobs/${made.reference}/due`).send({ days: -12 })).status).toBe(404);
+    await db.invoice.updateMany({ where: { jobId: made.jobId }, data: { testData: "e2e" } });
+    expect((await request(hooked).post(`/api/test-data/jobs/${made.reference}/due`).send({ days: "soon" })).status).toBe(400);
+    expect((await request(hooked).post(`/api/test-data/jobs/${made.reference}/due`).send({ days: -12 })).body).toEqual({ moved: true });
+    const due = (await invoiceOf(made.jobId)).dueAt.getTime();
+    expect(Math.abs(due - (Date.now() - 12 * 86_400_000))).toBeLessThan(60_000);
+
+    vi.stubEnv("NODE_ENV", "production");
+    const production = express();
+    mountTestDataRoutes(production, db);
+    vi.unstubAllEnvs();
+    expect((await request(production).post(`/api/test-data/jobs/${made.reference}/due`).send({ days: 1 })).status).toBe(404);
   });
 });

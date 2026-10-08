@@ -32,6 +32,9 @@ const TYPE_NAMES: Record<string, string> = {
   slot_confirmed: "Slot confirmed",
   contractor_declined: "Contractor declined",
   invoice: "Invoice",
+  payment_receipt: "Payment receipt",
+  payment_received: "Payment received",
+  payment_closed_invoice: "Payment on a closed invoice",
 };
 
 const STATUS_LABELS: Record<NotificationStatus, string> = {

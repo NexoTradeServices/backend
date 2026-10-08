@@ -1024,9 +1024,12 @@ model Payment {
   id                    String        @id @default(uuid(7))
   invoiceId             String
   customerId            String
-  stripePaymentIntentId String
+  /// one row per Stripe payment intent, however often Stripe repeats itself (Feature 6002)
+  stripePaymentIntentId String        @unique
   amount                Int
   status                PaymentStatus @default(pending)
+  /// how she paid, in Stripe's own word: card, payto, ... (Feature 6002)
+  method                String?
   paidAt                DateTime?
   createdAt             DateTime      @default(now())
 
