@@ -749,22 +749,37 @@ describe("AC10 / AC11 -- Stripe unreachable, and no key", () => {
 // ---------------------------------------------------------------------------
 
 describe("AC12 -- Bob's payment", () => {
-  test("AC12: after Complete Bob's read says waiting; once the link exists it carries the link and never an amount; Dave sees nothing of it", async () => {
+  test("AC12: after Complete Bob's read carries the customer's total and waits for the link; once the link exists and the messages have gone it says so; never his own pay; Dave sees nothing of it", async () => {
     const made = await acceptedJob();
     await bobCompletes(made);
     const bob = await signInCookie("bob@idelta.com.au");
     const waiting = await request(app).get(`/api/contractor/jobs/${made.reference}`).set("Cookie", bob);
-    expect((waiting.body as ContractorJobView).payment).toEqual({ waiting: true });
+    expect((waiting.body as ContractorJobView).payment).toEqual({ amount: 65_500, payLinkUrl: null, messages: "sending" });
 
     await payLinkPass(db, { provider: fakeStripe() });
-    const linked = await request(app).get(`/api/contractor/jobs/${made.reference}`).set("Cookie", bob);
-    expect((linked.body as ContractorJobView).payment).toEqual({ payLinkUrl: "https://pay.test/INV-2042" });
-    const json = JSON.stringify(linked.body);
-    expect(json).not.toContain("65500");
-    expect(json).not.toContain("$655");
+    const queued = await request(app).get(`/api/contractor/jobs/${made.reference}`).set("Cookie", bob);
+    expect((queued.body as ContractorJobView).payment).toEqual({ amount: 65_500, payLinkUrl: "https://pay.test/INV-2042", messages: "sending" });
+
+    await drainOnce(db);
+    const sent = await request(app).get(`/api/contractor/jobs/${made.reference}`).set("Cookie", bob);
+    expect((sent.body as ContractorJobView).payment).toEqual({ amount: 65_500, payLinkUrl: "https://pay.test/INV-2042", messages: "sent" });
+    // The customer's total is his to quote; his own pay never is.
+    const json = JSON.stringify(sent.body);
+    expect(json).not.toContain("50000");
+    expect(json).not.toContain("contractorPay");
 
     const dave = await signInCookie("dave@idelta.com.au");
     expect((await request(app).get(`/api/contractor/jobs/${made.reference}`).set("Cookie", dave)).status).toBe(404);
+  });
+
+  test("AC12: a message that failed shows as failed to Bob until one has gone", async () => {
+    const made = await acceptedJob();
+    await bobCompletes(made);
+    await payLinkPass(db, { provider: fakeStripe() });
+    await db.notification.updateMany({ where: { type: "invoice", channel: "email" }, data: { status: "failed", error: "mailbox full" } });
+    const bob = await signInCookie("bob@idelta.com.au");
+    const res = await request(app).get(`/api/contractor/jobs/${made.reference}`).set("Cookie", bob);
+    expect((res.body as ContractorJobView).payment).toMatchObject({ amount: 65_500, messages: "failed" });
   });
 
   test("AC12: payment is null before Complete, and for a zero-dollar or paid or void invoice", async () => {

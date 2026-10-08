@@ -66,6 +66,14 @@ export interface PartView {
   receipt: { fileName: string; thumbnailUrl: string; fullUrl: string } | null;
 }
 
+export interface PaymentView {
+  /** Whole cents, GST-inclusive -- the customer's total. */
+  amount: number;
+  payLinkUrl: string | null;
+  /** sent: email and text have both gone; failed: one could not be sent; sending: still on its way (or waiting for the link). */
+  messages: "sent" | "sending" | "failed";
+}
+
 export interface ContractorJobView extends JobFacts {
   reference: string;
   jobStatus: string;
@@ -78,11 +86,12 @@ export interface ContractorJobView extends JobFacts {
   completionNotes: string;
   parts: PartView[];
   /**
-   * Feature 6001: the pay link as a QR for the customer to scan -- `{ payLinkUrl }` once the
-   * invoice has its link, `{ waiting: true }` while it does not, null when there is nothing to
-   * pay (no invoice yet, or a zero-dollar one). No amount, ever.
+   * Feature 6001: what Bob can tell the customer standing in front of him -- the total she
+   * pays (whole cents, GST-inclusive; never his own pay), whether the invoice email and text
+   * have gone, and the pay link as a QR. `payLinkUrl` is null while Stripe has not answered.
+   * Null when there is nothing to pay (no invoice yet, or a zero-dollar one).
    */
-  payment: { payLinkUrl: string } | { waiting: true } | null;
+  payment: PaymentView | null;
   /** Live, from what is saved; the screen recomputes it as he types. */
   billedHours: number;
   returnVisitMinimumMinutes: number;
@@ -120,6 +129,23 @@ async function loadOwn(client: PrismaClient, userId: string, reference: string) 
 
 type OwnAssignment = NonNullable<Awaited<ReturnType<typeof loadOwn>>>;
 
+/** Where the invoice's email and text stand, for Bob's confirmation line. */
+async function paymentOf(
+  client: PrismaClient,
+  invoice: { id: string; amount: number; stripePaymentLinkUrl: string | null },
+): Promise<PaymentView> {
+  const rows = await client.notification.findMany({
+    where: { relatedType: "invoice", relatedId: invoice.id, type: "invoice" },
+    select: { channel: true, status: true },
+  });
+  const wentOut = (channel: "email" | "sms"): boolean =>
+    rows.some((row) => row.channel === channel && (row.status === "sent" || row.status === "delivered"));
+  const failed = (channel: "email" | "sms"): boolean =>
+    !wentOut(channel) && rows.some((row) => row.channel === channel && row.status === "failed");
+  const messages = wentOut("email") && wentOut("sms") ? "sent" : failed("email") || failed("sms") ? "failed" : "sending";
+  return { amount: invoice.amount, payLinkUrl: invoice.stripePaymentLinkUrl, messages };
+}
+
 async function viewOf(client: PrismaClient, assignment: OwnAssignment, now: Date): Promise<ContractorJobView> {
   const job = assignment.job;
   const zone = job.timezone;
@@ -138,9 +164,10 @@ async function viewOf(client: PrismaClient, assignment: OwnAssignment, now: Date
       ? null
       : await client.invoice.findUnique({
           where: { id: assignment.invoiceId },
-          select: { status: true, isZeroDollar: true, stripePaymentLinkUrl: true },
+          select: { id: true, amount: true, status: true, isZeroDollar: true, stripePaymentLinkUrl: true },
         });
   const payable = invoice !== null && invoice.status === "sent" && !invoice.isZeroDollar;
+  const payment: PaymentView | null = !payable ? null : await paymentOf(client, invoice);
 
   return {
     ...facts,
@@ -170,7 +197,7 @@ async function viewOf(client: PrismaClient, assignment: OwnAssignment, now: Date
                 ...photoUrls(part.receiptAttachment.storageKey, cloudName),
               },
       })),
-    payment: !payable ? null : invoice.stripePaymentLinkUrl === null ? { waiting: true } : { payLinkUrl: invoice.stripePaymentLinkUrl },
+    payment,
     billedHours:
       assignment.status === "completed" && assignment.billedHours !== null
         ? Number(assignment.billedHours)
