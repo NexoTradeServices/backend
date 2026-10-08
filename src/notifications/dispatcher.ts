@@ -24,13 +24,14 @@
 // rare; sending twice from two live loops was not.
 import { Prisma } from "../generated/prisma/client.js";
 import { getPrisma, type PrismaClient } from "../db/client.js";
+import { isBrowserTestLabel } from "../test-data/label.js";
 import { CAPABILITY_LINK_CONTEXT_KEY, mintCapabilityLink, type LinkSpec } from "../capability-tokens/index.js";
 import { channelFor } from "./channels/index.js";
 import { CONSOLE_PROVIDER } from "./providers/console.js";
 import { resolveProvider } from "./providers/registry.js";
 import { blockedReason } from "./suppression.js";
 import { getTemplate } from "./templates/registry.js";
-import type { Notification, NotificationContext, SendContext } from "./types.js";
+import type { EmailAttachment, Notification, NotificationContext, SendContext } from "./types.js";
 
 /**
  * Feature 4002, the interim `/dev/texts` page (build choice 13, until
@@ -311,9 +312,21 @@ export async function deliver(client: TransactionalDb, row: ClaimedRow): Promise
     return;
   }
 
+  // Feature 6001: an email may carry a file, built NOW from the database (never
+  // stored). A build that fails is a failed attempt, like any send error.
+  let attachments: EmailAttachment[] = [];
+  if (row.channel === "email" && template.attachment !== undefined) {
+    try {
+      attachments = [await template.attachment(renderContext, client)];
+    } catch (error: unknown) {
+      await failAttempt(client, row, `attachment failed: ${messageOf(error)}`);
+      return;
+    }
+  }
+
   let provider;
   try {
-    provider = resolveProvider(settings, row.type, row.channel);
+    provider = resolveProvider(settings, row.type, row.channel, { testRun: isBrowserTestLabel(row.testData) });
   } catch (error: unknown) {
     // A misconfigured provider IS fixable -- the owner edits the settings row --
     // so this one keeps its retries rather than giving up on the message.
@@ -333,6 +346,7 @@ export async function deliver(client: TransactionalDb, row: ClaimedRow): Promise
       to: lookup.address,
       fromName: settings.displayName,
       message: rendered,
+      ...(attachments.length === 0 ? {} : { attachments }),
     });
     await client.notification.update({
       where: { id: row.id },

@@ -132,13 +132,35 @@ export async function sweepTestData(client: PrismaClient, label: string): Promis
       //    passes, leaves first.
       const removed: Record<string, number> = {};
       const waiting = new Set(marked.keys());
+      // Feature 6001: Assignment.invoiceId and Invoice.assignmentId point at each
+      // other (the design keeps both). A loop is broken at a nullable column: the
+      // marked rows' pointer is cleared, and that key stops holding its parent back.
+      const cleared = new Set<ForeignKey>();
+      const holdsBack = (key: ForeignKey, table: string): boolean =>
+        key.parent === table && key.child !== table && waiting.has(key.child) && !cleared.has(key);
       while (waiting.size > 0) {
-        const ready = [...waiting].filter(
-          (table) =>
-            !keys.some((key) => key.parent === table && key.child !== table && waiting.has(key.child)),
-        );
+        const ready = [...waiting].filter((table) => !keys.some((key) => holdsBack(key, table)));
         if (ready.length === 0) {
-          throw new Error(`the sweep found a loop between tables: ${[...waiting].join(", ")}`);
+          let broke = false;
+          for (const key of keys) {
+            if (!waiting.has(key.child) || !waiting.has(key.parent) || key.child === key.parent || cleared.has(key)) continue;
+            const [column] = await tx.$queryRaw<{ is_nullable: string }[]>`
+              SELECT is_nullable FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = ${key.child} AND column_name = ${key.childColumn}
+            `;
+            if (column?.is_nullable !== "YES") continue;
+            await tx.$executeRawUnsafe(
+              `UPDATE ${q(key.child)} SET ${q(key.childColumn)} = NULL WHERE id = ANY($1::text[])`,
+              [...(marked.get(key.child) ?? [])],
+            );
+            cleared.add(key);
+            broke = true;
+            break;
+          }
+          if (!broke) {
+            throw new Error(`the sweep found a loop between tables: ${[...waiting].join(", ")}`);
+          }
+          continue;
         }
         for (const table of ready) {
           const ids = [...(marked.get(table) ?? [])];

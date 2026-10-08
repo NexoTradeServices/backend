@@ -16,6 +16,13 @@ process.env["DATABASE_URL"] = testUrl;
 // doesn't (CI, a fresh clone, Docker -- house rule 5), nothing talks to a
 // real cookie or a real secret in a test run, so safe fixed test values are
 // exactly as correct as real ones.
+// Feature 6001: no test ever reaches Stripe -- the pay-link tests inject a fake.
+delete process.env["STRIPE_SECRET_KEY"];
+// Nor Mailjet or ClickSend (CL-08): a backend test registers its own recording adapter, or
+// stubs fetch and sets keys itself -- the dev machine's real keys must never be in reach.
+for (const key of ["MAILJET_API_KEY", "MAILJET_API_SECRET", "MAILJET_FROM_EMAIL", "CLICKSEND_USERNAME", "CLICKSEND_API_KEY"]) {
+  delete process.env[key];
+}
 process.env["WEB_ORIGIN"] ??= "https://idelta.com.au";
 process.env["COOKIE_DOMAIN"] ??= "idelta.com.au";
 process.env["BETTER_AUTH_SECRET"] ??= "test-only-secret-do-not-use-outside-tests";

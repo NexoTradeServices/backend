@@ -23,7 +23,7 @@ export interface AcceptanceRecordInput {
 }
 
 /** Standard fonts encode Latin-1 only; anything else would throw, so it reads as "?". */
-function plain(text: string): string {
+export function plain(text: string): string {
   return text.replace(/[^\x20-\x7E\xA0-\xFF]/g, "?");
 }
 
@@ -47,7 +47,7 @@ export function formatMoment(date: Date, timezone: string): string {
   return `${day}, ${pick("hour")}:${pick("minute")} ${pick("dayPeriod").toLowerCase()} ${zone}`.trim();
 }
 
-function wrap(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
+export function wrap(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
   const lines: string[] = [];
   let line = "";
   for (const word of text.split(/\s+/).filter(Boolean)) {

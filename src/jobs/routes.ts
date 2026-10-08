@@ -9,6 +9,7 @@
 //   POST /api/jobs/:reference/notes           add an operator note
 //   PUT  /api/jobs/:reference/notes/:noteId   the author fixes it, 10 minutes
 //   PUT  /api/jobs/:reference/time-entries    Feature 5001: ops fixes the time entries until Complete
+//   POST /api/jobs/:reference/invoice/resend  Feature 6001: the invoice email and text, again
 import type { Router } from "express";
 import { Router as createRouter } from "express";
 import type { Request, Response } from "express";
@@ -19,6 +20,8 @@ import { listQueue, parseQueueQuery } from "./queue.js";
 import { jobDetail, loadJob } from "./detail.js";
 import { parseAddressesInput, saveAddresses } from "./addresses.js";
 import { OPEN_VISIT_STATUSES, Refused, lockAssignment, lockedFailure, parseTimeEntries, writeEntries } from "./visit.js";
+import { hasPayableLink } from "../invoices/view.js";
+import { askInvoiceMessages } from "../invoices/messages.js";
 import { addNote, editNote, parseEditedNote, parseNewNote } from "./notes.js";
 import {
   candidatesAndPriceFor,
@@ -67,6 +70,30 @@ export function jobRoutes(client: PrismaClient): Router {
       }
       res.json(await jobDetail(client, job, req.authUser?.id ?? ""));
     })().catch(failWith(res, "GET /api/jobs/:reference"));
+  });
+
+  // Feature 6001: Resend invoice. Refused unless the invoice is sent, not zero-dollar and has
+  // its pay link; each press is its own pair of messages (keyed by the moment), and the
+  // customer's address is read when they send, so a fixed email is used.
+  router.post("/:reference/invoice/resend", requireRole(Role.ops), (req: WithReference, res: Response) => {
+    void (async () => {
+      const job = await loadJob(client, req.params.reference);
+      if (!job) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      const invoice = await client.invoice.findFirst({ where: { jobId: job.id }, orderBy: { createdAt: "desc" } });
+      if (invoice === null) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      if (!hasPayableLink(invoice)) {
+        res.status(409).json({ error: "This invoice cannot be sent again right now." });
+        return;
+      }
+      await client.$transaction((tx) => askInvoiceMessages(tx, invoice.id, Date.now()));
+      res.json(await jobDetail(client, job, req.authUser?.id ?? ""));
+    })().catch(failWith(res, "POST /api/jobs/:reference/invoice/resend"));
   });
 
   router.put("/:reference/addresses", requireRole(Role.ops), (req: WithReference, res: Response) => {

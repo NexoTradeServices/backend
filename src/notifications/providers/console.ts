@@ -18,10 +18,13 @@ function consoleAdapter(channel: NotificationChannel): ProviderAdapter {
     name: CONSOLE_PROVIDER,
     channel,
     isConfigured: () => true,
-    send({ to, message }) {
+    send({ to, message, attachments }) {
       const heading = `[notification:${channel}] -> ${to}`;
       const subject = message.subject ? `\nsubject: ${message.subject}` : "";
-      console.log(`${heading}${subject}\n${message.text}\n`);
+      const files = (attachments ?? [])
+        .map((file) => `\nattachment: ${file.fileName} (${String(file.content.byteLength)} bytes)`)
+        .join("");
+      console.log(`${heading}${subject}${files}\n${message.text}\n`);
       return Promise.resolve({ providerMessageId: `console-${randomUUID()}` });
     },
   };

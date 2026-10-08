@@ -31,6 +31,7 @@ const TYPE_NAMES: Record<string, string> = {
   job_dispatched: "Job dispatched",
   slot_confirmed: "Slot confirmed",
   contractor_declined: "Contractor declined",
+  invoice: "Invoice",
 };
 
 const STATUS_LABELS: Record<NotificationStatus, string> = {

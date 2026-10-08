@@ -45,6 +45,17 @@ export interface RenderedMessage {
   html?: string;
 }
 
+/**
+ * A file an email carries -- Feature 6001, the module's first attachment. Built
+ * at SEND time from the database and handed to the provider; never stored, and
+ * never in `Notification.context`.
+ */
+export interface EmailAttachment {
+  fileName: string;
+  contentType: string;
+  content: Uint8Array;
+}
+
 /** One message type on one channel. Templates are code, not rows (ADR 0002). */
 export interface NotificationTemplate {
   /** the `type` a caller asks for: password_reset, dispatched, invoice ... */
@@ -58,6 +69,12 @@ export interface NotificationTemplate {
    */
   category: NotificationCategory;
   render(context: NotificationContext): RenderedMessage;
+  /**
+   * Email only: an attachment built at send time, from the same render context
+   * (the tax invoice, the credit note -- rendered from frozen data). A build that
+   * fails fails that attempt like any send error.
+   */
+  attachment?(context: NotificationContext, db: NotificationDb): Promise<EmailAttachment>;
 }
 
 /** What a provider is handed: an address, a rendered message, and who it is from. */
@@ -66,6 +83,8 @@ export interface OutboundMessage {
   /** PlatformSettings.displayName at send time -- the sender identity every channel signs (Foundations / Brand identity; ADR 0005) */
   fromName: string;
   message: RenderedMessage;
+  /** Email only; empty or absent for a message that carries no file. */
+  attachments?: EmailAttachment[];
 }
 
 /**

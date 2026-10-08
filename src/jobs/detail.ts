@@ -13,6 +13,7 @@ import { asSiteContact, isClosed, type SiteContactView } from "./site-contact.js
 import { billedHours } from "./billed-hours.js";
 import { entryViewOf, returnVisitMinimum, savedEntries, type EntryView } from "./visit.js";
 import { isServiceLevelMultipliers, priceLine } from "./dispatch-level.js";
+import { invoiceViewOf, type InvoiceView } from "../invoices/view.js";
 import {
   WINDOW_LABELS,
   NO_ADDRESS_REASON,
@@ -99,6 +100,8 @@ export interface JobDetail {
   contractor: ContractorView | null;
   /** Feature 5001: null until the contractor has accepted. */
   visit: VisitView | null;
+  /** Feature 6001: the invoice Complete issued; null until there is one. */
+  invoice: InvoiceView | null;
   /** Feature 4003 (plan decision 10): every assignment but the one in play, newest first. */
   earlierBookings: EarlierBooking[];
   /** AC29: the level and its price, shown once the job is dispatched (Job.serviceLevel set). */
@@ -223,6 +226,7 @@ export async function jobDetail(
     closed: isClosed(job.status),
     contractor: contractorView(job, now),
     visit: await visitOf(client, job),
+    invoice: await invoiceViewOf(client, job.id, job.timezone),
     earlierBookings,
     serviceLevel: job.serviceLevel,
     priceLine: price,

@@ -19,6 +19,8 @@ import { Role } from "../generated/prisma/enums.js";
 import { formatSlotLabel } from "../time/index.js";
 import { suburbOf } from "../jobs/shared.js";
 import { billedHours } from "../jobs/billed-hours.js";
+import { issueInvoice } from "../invoices/issue.js";
+import { kickPayLink } from "../invoices/pay-link.js";
 import { assignmentInclude, jobFactsOf, type JobFacts } from "../respond/service.js";
 import {
   isReceiptKey,
@@ -64,6 +66,14 @@ export interface PartView {
   receipt: { fileName: string; thumbnailUrl: string; fullUrl: string } | null;
 }
 
+export interface PaymentView {
+  /** Whole cents, GST-inclusive -- the customer's total. */
+  amount: number;
+  payLinkUrl: string | null;
+  /** sent: email and text have both gone; failed: one could not be sent; sending: still on its way (or waiting for the link). */
+  messages: "sent" | "sending" | "failed";
+}
+
 export interface ContractorJobView extends JobFacts {
   reference: string;
   jobStatus: string;
@@ -75,6 +85,13 @@ export interface ContractorJobView extends JobFacts {
   timeEntries: EntryView[];
   completionNotes: string;
   parts: PartView[];
+  /**
+   * Feature 6001: what Bob can tell the customer standing in front of him -- the total she
+   * pays (whole cents, GST-inclusive; never his own pay), whether the invoice email and text
+   * have gone, and the pay link as a QR. `payLinkUrl` is null while Stripe has not answered.
+   * Null when there is nothing to pay (no invoice yet, or a zero-dollar one).
+   */
+  payment: PaymentView | null;
   /** Live, from what is saved; the screen recomputes it as he types. */
   billedHours: number;
   returnVisitMinimumMinutes: number;
@@ -112,6 +129,23 @@ async function loadOwn(client: PrismaClient, userId: string, reference: string) 
 
 type OwnAssignment = NonNullable<Awaited<ReturnType<typeof loadOwn>>>;
 
+/** Where the invoice's email and text stand, for Bob's confirmation line. */
+async function paymentOf(
+  client: PrismaClient,
+  invoice: { id: string; amount: number; stripePaymentLinkUrl: string | null },
+): Promise<PaymentView> {
+  const rows = await client.notification.findMany({
+    where: { relatedType: "invoice", relatedId: invoice.id, type: "invoice" },
+    select: { channel: true, status: true },
+  });
+  const wentOut = (channel: "email" | "sms"): boolean =>
+    rows.some((row) => row.channel === channel && (row.status === "sent" || row.status === "delivered"));
+  const failed = (channel: "email" | "sms"): boolean =>
+    !wentOut(channel) && rows.some((row) => row.channel === channel && row.status === "failed");
+  const messages = wentOut("email") && wentOut("sms") ? "sent" : failed("email") || failed("sms") ? "failed" : "sending";
+  return { amount: invoice.amount, payLinkUrl: invoice.stripePaymentLinkUrl, messages };
+}
+
 async function viewOf(client: PrismaClient, assignment: OwnAssignment, now: Date): Promise<ContractorJobView> {
   const job = assignment.job;
   const zone = job.timezone;
@@ -125,6 +159,15 @@ async function viewOf(client: PrismaClient, assignment: OwnAssignment, now: Date
   const slot = job.status === "on_hold" ? null : (assignment.confirmedSlot ?? assignment.proposedSlot);
   const cloudName = process.env["CLOUDINARY_CLOUD_NAME"]?.trim();
   const facts = await jobFactsOf(client, job);
+  const invoice =
+    assignment.invoiceId === null
+      ? null
+      : await client.invoice.findUnique({
+          where: { id: assignment.invoiceId },
+          select: { id: true, amount: true, status: true, isZeroDollar: true, stripePaymentLinkUrl: true },
+        });
+  const payable = invoice !== null && invoice.status === "sent" && !invoice.isZeroDollar;
+  const payment: PaymentView | null = !payable ? null : await paymentOf(client, invoice);
 
   return {
     ...facts,
@@ -154,6 +197,7 @@ async function viewOf(client: PrismaClient, assignment: OwnAssignment, now: Date
                 ...photoUrls(part.receiptAttachment.storageKey, cloudName),
               },
       })),
+    payment,
     billedHours:
       assignment.status === "completed" && assignment.billedHours !== null
         ? Number(assignment.billedHours)
@@ -256,6 +300,7 @@ export function contractorJobRoutes(client: PrismaClient, options: ContractorJob
       }
     }
     const minimum = await returnVisitMinimum(client);
+    let issuedInvoiceId: string | null = null;
     try {
       await client.$transaction(async (tx) => {
         const locked = await lockAssignment(tx, assignment.jobId, assignment.id);
@@ -266,17 +311,23 @@ export function contractorJobRoutes(client: PrismaClient, options: ContractorJob
           await tx.assignment.update({ where: { id: locked.id }, data: { completionNotes: notes } });
           return;
         }
-        // Nothing is sent and no invoice is made here -- 6001 builds it from what this freezes.
+        // Freeze the visit AND issue its invoice in this one transaction (Feature 6001): a
+        // completed visit never exists without its invoice. Nothing is sent here -- the pay
+        // link is made after the commit, and the invoice email and text go once it exists.
+        const completedAt = new Date();
+        const hours = billedHours(entries, minimum);
         await tx.assignment.update({
           where: { id: locked.id },
-          data: {
-            completionNotes: notes,
-            billedHours: billedHours(entries, minimum),
-            completedAt: new Date(),
-            status: "completed",
-          },
+          data: { completionNotes: notes, billedHours: hours, completedAt, status: "completed" },
         });
         await tx.job.update({ where: { id: locked.jobId }, data: { status: "completed" } });
+        const invoice = await issueInvoice(tx, {
+          assignmentId: locked.id,
+          entryStarts: entries.map((entry) => entry.startedAt),
+          billedHours: hours,
+          now: completedAt,
+        });
+        issuedInvoiceId = invoice.id;
       });
     } catch (error: unknown) {
       if (error instanceof Refused) {
@@ -285,6 +336,8 @@ export function contractorJobRoutes(client: PrismaClient, options: ContractorJob
       }
       throw error;
     }
+    // The normal case goes out within seconds; if Stripe does not answer, the loop keeps asking.
+    if (issuedInvoiceId !== null) kickPayLink(client, issuedInvoiceId);
     const fresh = await loadOwn(client, req.authUser?.id ?? "", req.params.reference);
     if (fresh === null) {
       res.status(404).json({ error: "not found" });

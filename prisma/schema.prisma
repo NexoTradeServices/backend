@@ -961,6 +961,10 @@ model Invoice {
   /// switch. Distinct from isZeroDollar.
   gstApplied           Boolean
   isZeroDollar         Boolean       @default(false)
+  /// SNAPSHOT of who the invoice is billed to, copied at issue (Feature 6001):
+  /// { name, businessName?, address? } -- the customer record can change later,
+  /// an issued invoice cannot.
+  billedTo             Json
   /// deliberately NO overdue status -- overdue is derived from dueAt
   status               InvoiceStatus @default(sent)
   /// issue + PlatformSettings.paymentTermsDays

@@ -337,6 +337,41 @@ describe("AC4 -- the sweep", () => {
     expect(await countLabelled("e2e")).toBe(0);
   });
 
+  test("AC4: an invoice and its assignment point at each other (Feature 6001) -- the sweep breaks the loop and clears both, with the invoice's lines and messages", async () => {
+    const sarah = await db.customer.findUniqueOrThrow({ where: { code: "CUS-1050" } });
+    const bob = await db.contractor.findUniqueOrThrow({ where: { code: "CON-014" }, include: { specialties: true } });
+    const plumbing = bob.specialties.find((s) => s.trade === "Plumbing");
+    if (plumbing === undefined) throw new Error("fixture Bob has no Plumbing specialty");
+    const job = await runWithLabel("uat-6001", async () => jobFor(sarah.id, await nextReference("JOB", db)));
+    const assignment = await db.assignment.create({ data: { jobId: job.id, contractorId: bob.id, specialtyId: plumbing.id, status: "completed" } });
+    const invoice = await db.invoice.create({
+      data: {
+        reference: await nextReference("INV", db),
+        jobId: job.id,
+        assignmentId: assignment.id,
+        customerId: sarah.id,
+        amount: 25_000,
+        labourAmount: 25_000,
+        materialsAmount: 0,
+        gstApplied: false,
+        dueAt: new Date(),
+        billedTo: { name: "Sarah Chen" },
+        lines: { create: [{ kind: "labour", description: "Call-out", qty: 1, unitPrice: 25_000, lineTotal: 25_000 }] },
+      },
+    });
+    await db.assignment.update({ where: { id: assignment.id }, data: { invoiceId: invoice.id } });
+    await db.notification.create({
+      data: { recipientType: "customer", recipientId: sarah.id, channel: "email", type: "invoice", category: "transactional", relatedType: "invoice", relatedId: invoice.id, jobId: job.id, idempotencyKey: `invoice:invoice:${invoice.id}:email` },
+    });
+
+    const result = await sweepTestData(db, "uat-6001");
+
+    expect(result.removed).toMatchObject({ Job: 1, Assignment: 1, Invoice: 1, InvoiceLine: 1, Notification: 1 });
+    expect(await db.invoice.count()).toBe(0);
+    expect(await db.assignment.count({ where: { id: assignment.id } })).toBe(0);
+    expect(await db.customer.count({ where: { id: sarah.id } })).toBe(1);
+  });
+
   test("AC4: refuses a database whose name does not end in _dev or _test, touching nothing", async () => {
     const calls: string[] = [];
     const elsewhere = {
