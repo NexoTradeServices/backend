@@ -4,6 +4,7 @@ import cors from 'cors'
 import pg from 'pg'
 import { toNodeHandler } from 'better-auth/node'
 import { notificationWebhooks, startNotifications } from './notifications/index.js'
+import { startPayLinkLoop } from './invoices/pay-link.js'
 import { buildAuth } from './auth/config.js'
 import { attachSession } from './auth/middleware.js'
 import { authRoutes } from './auth/routes.js'
@@ -134,6 +135,9 @@ app.use('/webhooks', notificationWebhooks())
 // still stops the process here, the same way WEB_ORIGIN and DATABASE_URL do.
 startNotifications()
   .then(() => {
+    // Feature 6001: the pay-link loop asks Stripe for every invoice still waiting for its link.
+    // No STRIPE_SECRET_KEY only warns (once, here) -- invoices issue and wait.
+    startPayLinkLoop()
     // 0.0.0.0, not localhost: Caddy on 192.168.1.41 has to reach this from another machine.
     app.listen(port, '0.0.0.0', () => {
       console.log(`backend listening on 0.0.0.0:${port}`)

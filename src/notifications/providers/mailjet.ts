@@ -56,7 +56,7 @@ export const mailjetEmail: ProviderAdapter = {
   channel: "email",
   isConfigured: () => credentials() !== null,
 
-  async send({ to, fromName, message }) {
+  async send({ to, fromName, message, attachments }) {
     const auth = credentials();
     if (auth === null) {
       throw new Error("mailjet is not configured -- MAILJET_API_KEY, MAILJET_API_SECRET and MAILJET_FROM_EMAIL are required");
@@ -77,6 +77,15 @@ export const mailjetEmail: ProviderAdapter = {
             Subject: message.subject,
             TextPart: message.text,
             ...(message.html ? { HTMLPart: message.html } : {}),
+            ...(attachments === undefined || attachments.length === 0
+              ? {}
+              : {
+                  Attachments: attachments.map((file) => ({
+                    ContentType: file.contentType,
+                    Filename: file.fileName,
+                    Base64Content: Buffer.from(file.content).toString("base64"),
+                  })),
+                }),
           },
         ],
       }),

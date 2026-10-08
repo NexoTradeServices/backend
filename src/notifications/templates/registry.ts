@@ -16,6 +16,8 @@ import { slotConfirmedEmail } from "./slot-confirmed.email.js";
 import { slotConfirmedSms } from "./slot-confirmed.sms.js";
 import { contractorDeclinedEmail } from "./contractor-declined.email.js";
 import { contractorAgreementUpdatedEmail } from "./contractor-agreement-updated.email.js";
+import { invoiceEmail } from "./invoice.email.js";
+import { invoiceSms } from "./invoice.sms.js";
 
 /** Every template this build ships. Features append; nothing else registers. */
 const BUILT_IN: NotificationTemplate[] = [
@@ -29,6 +31,8 @@ const BUILT_IN: NotificationTemplate[] = [
   slotConfirmedSms,
   contractorDeclinedEmail,
   contractorAgreementUpdatedEmail,
+  invoiceEmail,
+  invoiceSms,
 ];
 
 function key(type: string, channel: NotificationChannel): string {

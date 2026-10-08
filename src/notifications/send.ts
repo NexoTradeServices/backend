@@ -5,10 +5,10 @@
 // touches a provider. The row is written, the call returns, and the dispatcher
 // does the rest off the request path -- so a slow provider can never slow down
 // the enquiry form or the dispatch screen.
-import { getPrisma, type PrismaClient } from "../db/client.js";
+import { getPrisma } from "../db/client.js";
 import { assertLinkSpec, CAPABILITY_LINK_CONTEXT_KEY } from "../capability-tokens/index.js";
 import { getTemplate } from "./templates/registry.js";
-import type { Notification, NotificationContext, SendRequest } from "./types.js";
+import type { Notification, NotificationContext, NotificationDb, SendRequest } from "./types.js";
 
 /**
  * The key's shape is fixed: `<type>:<relatedType>:<relatedId>`, plus a
@@ -44,7 +44,7 @@ function isUniqueViolation(error: unknown): boolean {
  */
 export async function sendNotification(
   request: SendRequest,
-  client: PrismaClient = getPrisma(),
+  client: NotificationDb = getPrisma(),
 ): Promise<Notification> {
   assertIdempotencyKey(request.idempotencyKey, request.type);
 

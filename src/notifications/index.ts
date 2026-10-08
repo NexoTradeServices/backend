@@ -29,6 +29,7 @@ export { drainOnce, startDispatcher, MAX_ATTEMPTS, RETRY_BACKOFF_MINUTES } from 
 export type { Dispatcher, DispatcherOptions } from "./dispatcher.js";
 export { notificationWebhooks } from "./webhooks.js";
 export type {
+  EmailAttachment,
   Notification,
   NotificationCategory,
   NotificationChannel,

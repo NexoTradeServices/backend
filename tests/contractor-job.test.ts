@@ -10,7 +10,8 @@
 //      refused; a receipt is an Attachment on the job and his assignment;
 //      signing lives in its own folder, with its own key check, 503 when not set up
 // AC7  Complete with no entry / no notes is refused on that field; otherwise
-//      completed, billedHours and completedAt stored, nothing sent
+//      completed, billedHours and completedAt stored; since Feature 6001 the
+//      invoice issues in the same moment, and still nothing is sent
 // AC8  after Complete Save, Complete, On site and receipts are refused
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import express, { type Express } from "express";
@@ -391,7 +392,7 @@ describe("AC7 -- Complete", () => {
     expect(await db.assignmentTimeLog.count({ where: { assignmentId } })).toBe(0);
   });
 
-  test("AC7: Complete saves, stores billedHours and completedAt, completes assignment and job, and sends nothing", async () => {
+  test("AC7: Complete saves, stores billedHours and completedAt, completes assignment and job, issues the invoice, and sends nothing", async () => {
     const { jobId, assignmentId } = await acceptedJob();
     const receipt = await receiptFor(assignmentId, jobId);
     const bob = await signInCookie("bob@idelta.com.au");
@@ -414,8 +415,10 @@ describe("AC7 -- Complete", () => {
     expect((await db.job.findUniqueOrThrow({ where: { id: jobId } })).status).toBe("completed");
     expect(await db.assignmentTimeLog.count({ where: { assignmentId } })).toBe(2);
     expect(await db.assignmentPart.count({ where: { assignmentId } })).toBe(1);
-    // 6001's, not this feature's: no invoice, no message.
-    expect(await db.invoice.count()).toBe(0);
+    // Feature 6001: the invoice issues in the same moment (its own tests are
+    // invoice-completion.test.ts); nothing is SENT until the pay link exists.
+    expect(await db.invoice.count()).toBe(1);
+    expect(row.invoiceId).not.toBeNull();
     expect(await db.notification.count()).toBe(notifications);
   });
 

@@ -16,6 +16,8 @@ process.env["DATABASE_URL"] = testUrl;
 // doesn't (CI, a fresh clone, Docker -- house rule 5), nothing talks to a
 // real cookie or a real secret in a test run, so safe fixed test values are
 // exactly as correct as real ones.
+// Feature 6001: no test ever reaches Stripe -- the pay-link tests inject a fake.
+delete process.env["STRIPE_SECRET_KEY"];
 process.env["WEB_ORIGIN"] ??= "https://idelta.com.au";
 process.env["COOKIE_DOMAIN"] ??= "idelta.com.au";
 process.env["BETTER_AUTH_SECRET"] ??= "test-only-secret-do-not-use-outside-tests";

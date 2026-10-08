@@ -39,7 +39,8 @@
     "express": "^5.2.1",
     "pdf-lib": "^1.17.1",
     "pg": "^8.23.0",
-    "prisma": "7.9.1"
+    "prisma": "7.9.1",
+    "stripe": "23.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
