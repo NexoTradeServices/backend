@@ -24,6 +24,7 @@
 // rare; sending twice from two live loops was not.
 import { Prisma } from "../generated/prisma/client.js";
 import { getPrisma, type PrismaClient } from "../db/client.js";
+import { isBrowserTestLabel } from "../test-data/label.js";
 import { CAPABILITY_LINK_CONTEXT_KEY, mintCapabilityLink, type LinkSpec } from "../capability-tokens/index.js";
 import { channelFor } from "./channels/index.js";
 import { CONSOLE_PROVIDER } from "./providers/console.js";
@@ -325,7 +326,7 @@ export async function deliver(client: TransactionalDb, row: ClaimedRow): Promise
 
   let provider;
   try {
-    provider = resolveProvider(settings, row.type, row.channel);
+    provider = resolveProvider(settings, row.type, row.channel, { testRun: isBrowserTestLabel(row.testData) });
   } catch (error: unknown) {
     // A misconfigured provider IS fixable -- the owner edits the settings row --
     // so this one keeps its retries rather than giving up on the message.

@@ -14,6 +14,14 @@ import type { NextFunction, Request, Response } from "express";
 
 export const TEST_RUN_COOKIE = "ts-test-run";
 
+/**
+ * The label the browser tests carry. A message tied to a row with this label is
+ * automated-test traffic: it is shown in the console and never handed to a real
+ * email or text provider (notifications/dispatcher.ts). UAT labels (`uat-<id>`)
+ * are deliberately NOT included -- the owner's hand check sends real mail.
+ */
+export const BROWSER_TEST_LABEL = "e2e";
+
 /** A label is a short lowercase word with dashes: `e2e`, `uat-9002`. */
 const LABEL_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
@@ -21,6 +29,11 @@ const held = new AsyncLocalStorage<string>();
 
 export function isProduction(): boolean {
   return process.env["NODE_ENV"] === "production";
+}
+
+/** True for a stored label that marks automated browser-test traffic -- never in production. */
+export function isBrowserTestLabel(label: string | null): boolean {
+  return !isProduction() && label === BROWSER_TEST_LABEL;
 }
 
 export function isValidLabel(label: unknown): label is string {

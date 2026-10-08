@@ -7,6 +7,7 @@
 // the enquiry form or the dispatch screen.
 import { getPrisma } from "../db/client.js";
 import { assertLinkSpec, CAPABILITY_LINK_CONTEXT_KEY } from "../capability-tokens/index.js";
+import { currentLabel } from "../test-data/label.js";
 import { getTemplate } from "./templates/registry.js";
 import type { Notification, NotificationContext, NotificationDb, SendRequest } from "./types.js";
 
@@ -77,9 +78,18 @@ export async function sendNotification(
             : { [CAPABILITY_LINK_CONTEXT_KEY]: JSON.stringify(request.capabilityLink) }),
         };
 
+  // A message about a labelled job carries the job's label even when it is asked for outside the
+  // request that made the job (the pay-link loop, a retry): automated-test traffic stays
+  // recognisable, so it never reaches a real provider (Feature 6001, CL-08).
+  const inheritedLabel =
+    currentLabel() === null && request.jobId !== undefined
+      ? ((await client.job.findUnique({ where: { id: request.jobId }, select: { testData: true } }))?.testData ?? undefined)
+      : undefined;
+
   try {
     return await client.notification.create({
       data: {
+        ...(inheritedLabel === undefined ? {} : { testData: inheritedLabel }),
         recipientType: request.recipientType,
         recipientId: request.recipientId,
         channel: request.channel,

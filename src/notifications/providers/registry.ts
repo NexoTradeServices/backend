@@ -115,7 +115,11 @@ export function resolveProvider(
   settings: PlatformSettings,
   type: string,
   channel: NotificationChannel,
+  options: { testRun?: boolean } = {},
 ): ProviderAdapter {
+  // Automated browser tests never reach a real provider (Feature 6001, CL-08): the message
+  // is shown in the console like any unconfigured send, and nothing leaves the machine.
+  if (options.testRun === true && !isProduction()) return consoleProviderFor(channel);
   const name = chosenProviderName(settings, type, channel);
   const adapter = findProvider(name, channel);
   if (adapter === undefined) {
