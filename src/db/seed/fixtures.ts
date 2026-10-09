@@ -84,6 +84,8 @@ const CAST = {
       code: "CON-014",
       codeNumber: 14,
       name: "Bob Reilly",
+      // Bob is GST registered, so his settlement is a Tax Invoice (cast.md).
+      gstRegistered: true,
       email: "bob@idelta.com.au",
       phone: "0400 000 014",
       abn: "51000000680", // ATO-checksum-valid (decision 10)
@@ -149,6 +151,8 @@ const CAST = {
       code: "CON-021",
       codeNumber: 21,
       name: "Dave Hurst",
+      // Dave is not registered, so his settlement is a plain Invoice (cast.md).
+      gstRegistered: false,
       email: "dave@idelta.com.au",
       phone: "0400 000 021",
       abn: "51000000761", // ATO-checksum-valid (decision 10)
@@ -198,6 +202,8 @@ const CAST = {
       code: "CON-030",
       codeNumber: 30,
       name: "Priya Nair",
+      // Priya is left not asked: the cast's Not-ready-for-GST case (Feature 6003).
+      gstRegistered: null,
       email: "priya@idelta.com.au",
       phone: "0400 000 030",
       abn: "51000000793", // ATO-checksum-valid (decision 10)
@@ -331,7 +337,7 @@ export async function seedFixtures(
           name: contractor.name,
           businessName: contractor.businessName,
           abn: contractor.abn,
-          gstRegistered: false,
+          gstRegistered: contractor.gstRegistered,
           phone: contractor.phone,
           email: contractor.email,
           // The own-address / emergency-contact fields (Feature 2003) are
@@ -372,6 +378,10 @@ export async function seedFixtures(
         },
       });
       result.contractorsCreated.push(contractor.code);
+    } else if (existing.gstRegistered === null && contractor.gstRegistered !== null) {
+      // Feature 6003: the migration emptied every old "false". A cast contractor whose answer the
+      // cast knows gets it back; one the cast leaves unasked (Priya) stays empty.
+      await client.contractor.update({ where: { id: existing.id }, data: { gstRegistered: contractor.gstRegistered } });
     }
     // Guard: never let a generated CON- code land on a seeded one.
     await reserveUpTo("CON", contractor.codeNumber, client);

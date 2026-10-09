@@ -270,6 +270,19 @@ describe("AC6-AC8 -- the readiness panel", () => {
     expect(body.missing.map((item) => item.pen)).toEqual(["own", "own", "mikes"]);
   });
 
+  test("6003 AC1: GST registration not asked is Mike's item and never reaches the contractor's panel", async () => {
+    // Priya is not asked about GST, and her panel is exactly what it was: nothing about GST.
+    const priya = await dashboard(await signInCookie("priya@idelta.com.au"));
+    expect(priya.missing.map((item) => item.key)).not.toContain("gst_registration");
+    expect(priya.missing).toHaveLength(3);
+
+    // A contractor whose only gap is GST reads as ready on his own screen.
+    await db.contractor.update({ where: { code: "CON-014" }, data: { gstRegistered: null } });
+    const bob = await dashboard(await signInCookie("bob@idelta.com.au"));
+    expect(bob.ready).toBe(true);
+    expect(bob.missing).toEqual([]);
+  });
+
   test("AC8: a contractor whose only gap is his own address stays ready, no tag", async () => {
     await db.contractor.update({ where: { code: "CON-014" }, data: { address: Prisma.JsonNull } });
     const cookie = await signInCookie("bob@idelta.com.au");

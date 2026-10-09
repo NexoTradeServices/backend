@@ -27,6 +27,8 @@ export interface ReadySpecialty {
 }
 
 export interface ReadyInput {
+  /** three-way: null = never asked (Feature 6003) */
+  gstRegistered: boolean | null;
   businessName: string | null;
   abn: string | null;
   status: ContractorStatus;
@@ -92,6 +94,11 @@ export function readyToDispatch(input: ReadyInput, now: Date = new Date()): Read
   }
   if (!input.abn) {
     missing.push({ key: "abn", copy: "ABN", pen: "mikes", route: null, blocking: true });
+  }
+  // Feature 6003: a contractor never asked about GST registration cannot be paid a settlement
+  // that approves, so it counts as missing until Mike records a yes or no.
+  if (input.gstRegistered === null) {
+    missing.push({ key: "gst_registration", copy: "GST registration (not asked)", pen: "mikes", route: null, blocking: true });
   }
 
   // Design, "Managing the contractor record": the contractor's own address

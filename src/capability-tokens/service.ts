@@ -102,6 +102,7 @@ export async function mintCapabilityLink(
       type: spec.type,
       jobId: spec.jobId ?? null,
       assignmentId: spec.assignmentId ?? null,
+      settlementId: spec.settlementId ?? null,
       singleUse: SINGLE_USE_BY_TYPE[spec.type],
       expiresAt: expiryFor(spec, mintedAt),
     },
@@ -128,7 +129,7 @@ export async function validateCapabilityToken(
   if (row.type !== expectedType) return { ok: false, reason: "wrong type" };
   if (row.usedAt !== null) return { ok: false, reason: "used" };
   if (row.expiresAt.getTime() <= Date.now()) return { ok: false, reason: "expired" };
-  return { ok: true, tokenId: row.id, jobId: row.jobId, assignmentId: row.assignmentId };
+  return { ok: true, tokenId: row.id, jobId: row.jobId, assignmentId: row.assignmentId, settlementId: row.settlementId };
 }
 
 /**
@@ -156,7 +157,7 @@ export async function consumeCapabilityToken(
   if (row.expiresAt.getTime() <= Date.now()) return { ok: false, reason: "expired" };
 
   await client.capabilityToken.update({ where: { id: row.id }, data: { usedAt: new Date() } });
-  return { ok: true, tokenId: row.id, jobId: row.jobId, assignmentId: row.assignmentId };
+  return { ok: true, tokenId: row.id, jobId: row.jobId, assignmentId: row.assignmentId, settlementId: row.settlementId };
 }
 
 /**
@@ -232,6 +233,24 @@ export async function burnByAssignment(
 ): Promise<number> {
   const { count } = await client.capabilityToken.updateMany({
     where: { assignmentId, usedAt: null, type: { in: types } },
+    data: { usedAt: at },
+  });
+  return count;
+}
+
+/**
+ * Feature 6003: burn every unspent token of these types on a settlement -- usedAt stamped, never
+ * deleted, so the old approve link can still say "replaced" (a superseded draft) or "already
+ * approved". Returns how many were burned.
+ */
+export async function burnBySettlement(
+  client: CapabilityTokenDb,
+  settlementId: string,
+  types: CapabilityTokenType[],
+  at: Date = new Date(),
+): Promise<number> {
+  const { count } = await client.capabilityToken.updateMany({
+    where: { settlementId, usedAt: null, type: { in: types } },
     data: { usedAt: at },
   });
   return count;

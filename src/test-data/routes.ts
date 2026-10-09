@@ -2,6 +2,9 @@
 // POST /api/test-data/jobs/:reference/pay-link -- Feature 6001.
 // POST /api/test-data/jobs/:reference/paid -- Feature 6002.
 // POST /api/test-data/jobs/:reference/due -- Feature 6002.
+// POST /api/test-data/settlements/run -- Feature 6003.
+// POST /api/test-data/settlements/:reference/approve-link -- Feature 6003.
+// POST /api/test-data/jobs/:reference/correction-note -- Feature 6003.
 //
 // Lets the browser tests clear their own label from wherever they run (the dev
 // machine, CI). Mounted only when NODE_ENV is not production -- absent, not
@@ -20,15 +23,31 @@
 // The due hook moves a test job's invoice's due date to `days` from now (negative:
 // overdue), so the Receivables browser test can put rows in a known order. Only an
 // invoice labelled as test data is moved.
+//
+// The settlement hook runs the Monday run (settlements/sweep.ts runWeekly) as of `now` (default:
+// the real now), so a browser test or a UAT hand check reaches "a draft invoice" without waiting
+// for a Monday. Run twice for the same week it does nothing the second time, exactly as live.
+// Called with the test-run cookie it sweeps only that label's own work (the owner's UAT records
+// are never touched).
+//
+// The approve-link hook mints a fresh approve link for a settlement labelled as test data and
+// hands back its URL: the real link only ever exists inside a delivered email, which a browser
+// test cannot read. The correction-note hook writes the `correction` note Correct & reissue
+// (Feature 6007) will write, onto a labelled job, so the "Job corrected since" flag can be seen.
 import type { Express, Router } from "express";
 import { Router as createRouter } from "express";
 import type { Request, Response } from "express";
 import type { PrismaClient } from "../db/client.js";
-import { isProduction, isValidLabel } from "./label.js";
+import type { Prisma } from "../generated/prisma/client.js";
+import { currentLabel, isProduction, isValidLabel } from "./label.js";
 import { payLinkPass } from "../invoices/pay-link.js";
 import { recordConfirmedPayment } from "../payments/paid.js";
 import { FAKE_PAY_LINK_PREFIX } from "./fake-stripe.js";
 import { sweepTestData } from "./sweep.js";
+import { runWeekly } from "../settlements/sweep.js";
+import { randomUUID } from "node:crypto";
+import { CapabilityTokenType, mintCapabilityLink } from "../capability-tokens/index.js";
+import { readNotes } from "../jobs/notes.js";
 
 export function testDataRoutes(client: PrismaClient): Router {
   const router = createRouter();
@@ -117,6 +136,62 @@ export function testDataRoutes(client: PrismaClient): Router {
       res.json({ moved: true });
     })().catch((error: unknown) => {
       console.error("POST /api/test-data/jobs/:reference/due failed", error);
+      res.status(500).json({ error: error instanceof Error ? error.message : "internal error" });
+    });
+  });
+
+  router.post("/settlements/run", (req: Request, res: Response) => {
+    void (async () => {
+      const raw = (req.body as { now?: unknown } | undefined)?.now;
+      const now = raw === undefined ? new Date() : typeof raw === "string" ? new Date(raw) : null;
+      if (now === null || Number.isNaN(now.getTime())) {
+        res.status(400).json({ error: "now must be an ISO date-time" });
+        return;
+      }
+      // A browser test's run (its cookie carries the e2e label) sweeps only its own work: it never
+      // touches the owner's UAT records, nor makes one draft too many beside them.
+      const label = currentLabel();
+      res.json(await runWeekly(client, now, label === null ? {} : { onlyLabel: label }));
+    })().catch((error: unknown) => {
+      console.error("POST /api/test-data/settlements/run failed", error);
+      res.status(500).json({ error: error instanceof Error ? error.message : "internal error" });
+    });
+  });
+
+  router.post("/settlements/:reference/approve-link", (req: Request<{ reference: string }>, res: Response) => {
+    void (async () => {
+      const settlement = await client.contractorSettlement.findFirst({
+        where: { reference: req.params.reference, testData: { not: null } },
+        select: { id: true },
+      });
+      if (settlement === null) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      const minted = await mintCapabilityLink(client, { type: CapabilityTokenType.approve, settlementId: settlement.id });
+      res.json({ url: minted.url, path: new URL(minted.url).pathname });
+    })().catch((error: unknown) => {
+      console.error("POST /api/test-data/settlements/:reference/approve-link failed", error);
+      res.status(500).json({ error: error instanceof Error ? error.message : "internal error" });
+    });
+  });
+
+  router.post("/jobs/:reference/correction-note", (req: Request<{ reference: string }>, res: Response) => {
+    void (async () => {
+      const job = await client.job.findFirst({
+        where: { reference: req.params.reference, testData: { not: null } },
+        select: { id: true, operatorNotes: true },
+      });
+      const operator = await client.user.findFirst({ where: { role: "ops" }, select: { id: true } });
+      if (job === null || operator === null) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      const note = { id: randomUUID(), at: new Date().toISOString(), operatorId: operator.id, type: "correction", note: "Missing half hour added." };
+      await client.job.update({ where: { id: job.id }, data: { operatorNotes: [...readNotes(job.operatorNotes), note] as unknown as Prisma.InputJsonArray } });
+      res.json({ added: true });
+    })().catch((error: unknown) => {
+      console.error("POST /api/test-data/jobs/:reference/correction-note failed", error);
       res.status(500).json({ error: error instanceof Error ? error.message : "internal error" });
     });
   });

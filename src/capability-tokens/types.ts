@@ -34,6 +34,8 @@ export interface LinkSpec {
   type: CapabilityTokenType;
   jobId?: string;
   assignmentId?: string;
+  /** Feature 6003: the settlement an `approve` link is for. */
+  settlementId?: string;
   /**
    * REQUIRED for `respond` (the caller knows the proposed slot start; the
    * module does not) -- decision 5. Ignored for every other type: review,
@@ -50,7 +52,13 @@ export interface MintedLink {
 
 /** What `validateCapabilityToken` / `consumeCapabilityToken` hand back. */
 export type CapabilityTokenResult =
-  | { ok: true; tokenId: string; jobId: string | null; assignmentId: string | null }
+  | {
+      ok: true;
+      tokenId: string;
+      jobId: string | null;
+      assignmentId: string | null;
+      settlementId: string | null;
+    }
   | { ok: false; reason: string };
 
 /**

@@ -60,6 +60,7 @@ async function loadContractorsForTrade(client: PrismaClient, trade: string) {
 }
 
 export interface ContractorForGuard {
+  gstRegistered: boolean | null;
   businessName: string | null;
   abn: string | null;
   status: ContractorStatus;
@@ -80,6 +81,7 @@ export interface ContractorForGuard {
 /** Exported so the dispatch write path (a separate transaction, its own load shape) builds the same `ReadyInput` -- one derivation, never a second copy. */
 export function readyInputOf(contractor: ContractorForGuard, currentAgreementVersion: string | null): ReadyInput {
   return {
+    gstRegistered: contractor.gstRegistered,
     businessName: contractor.businessName,
     abn: contractor.abn,
     status: contractor.status,

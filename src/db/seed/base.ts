@@ -37,7 +37,7 @@ export async function seedBase(client: PrismaClient = getPrisma()): Promise<Seed
         returnVisitMinimumMinutes: 30,
         maxContractorPartAmount: 15_000,
         payoutCycle: "weekly",
-        payoutDay: "fri",
+        payoutDay: "wed",
         serviceReachKm: 25, // PLACEHOLDER
         calloutFee: 15_000, // PLACEHOLDER -- customer no-show fee, passed to the contractor
         // Feature 2006 -- the LEGAL identity the agreement record prints. All

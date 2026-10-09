@@ -8,6 +8,7 @@
 export {
   assertLinkSpec,
   burnByAssignment,
+  burnBySettlement,
   consumeCapabilityToken,
   findCapabilityToken,
   mintCapabilityLink,

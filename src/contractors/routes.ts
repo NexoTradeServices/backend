@@ -65,7 +65,8 @@ interface ContractorInput {
   phone: string;
   businessName: string | null;
   abn: string | null;
-  gstRegistered: boolean;
+  /** true | false | null (not asked); undefined = the body did not carry it, so an update leaves it alone */
+  gstRegistered: boolean | null | undefined;
   address: PlacesAddress | null;
   emergencyContactName: string | null;
   emergencyContactPhone: string | null;
@@ -224,7 +225,11 @@ function parseContractorInput(body: unknown): ParseResult {
     return { ok: false, error: "An ABN is 11 digits with a valid check digit.", field: "abn" };
   }
 
-  const gstRegistered = b["gstRegistered"] === true;
+  const gstRaw = b["gstRegistered"];
+  if (gstRaw !== undefined && gstRaw !== null && typeof gstRaw !== "boolean") {
+    return { ok: false, error: "GST registration is yes, no or not asked yet.", field: "gstRegistered" };
+  }
+  const gstRegistered: boolean | null | undefined = gstRaw;
 
   let address: PlacesAddress | null = null;
   if (b["address"] !== undefined && b["address"] !== null) {
@@ -347,6 +352,7 @@ function coreLocationSuburbOf(contractor: NonNullable<ContractorWithRelations>):
 
 function readyInputOf(contractor: NonNullable<ContractorWithRelations>, currentAgreementVersion: string | null): ReadyInput {
   return {
+    gstRegistered: contractor.gstRegistered,
     businessName: contractor.businessName,
     abn: contractor.abn,
     status: contractor.status,
@@ -531,7 +537,7 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
             phone: data.phone,
             businessName: data.businessName,
             abn: data.abn,
-            gstRegistered: data.gstRegistered,
+            gstRegistered: data.gstRegistered ?? null,
             address: data.address ?? undefined,
             emergencyContactName: data.emergencyContactName,
             emergencyContactPhone: data.emergencyContactPhone,
@@ -589,6 +595,13 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
       }
       const data = parsed.data;
 
+      // Feature 6003: GST registration is a three-way answer; once it is yes or no it never goes
+      // back to not asked.
+      if (data.gstRegistered === null && existing.gstRegistered !== null) {
+        res.status(400).json({ error: "Once answered, GST registration is yes or no.", field: "gstRegistered" });
+        return;
+      }
+
       const unknownTrade = await unknownTradeField(client, data.specialties);
       if (unknownTrade) {
         res.status(400).json(unknownTrade);
@@ -642,7 +655,7 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
             phone: data.phone,
             businessName: data.businessName,
             abn: data.abn,
-            gstRegistered: data.gstRegistered,
+            ...(data.gstRegistered === undefined ? {} : { gstRegistered: data.gstRegistered }),
             address: data.address ?? undefined,
             emergencyContactName: data.emergencyContactName,
             emergencyContactPhone: data.emergencyContactPhone,
