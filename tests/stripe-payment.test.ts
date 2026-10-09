@@ -447,9 +447,21 @@ describe("AC6 -- Check payment with Stripe", () => {
     expect((await check(mike, sarahs.jobReference)).status).toBe(502);
   });
 
-  test("AC6: refused for a paid, void or zero-dollar invoice and one still waiting for its link; and for a contractor", async () => {
+  test("AC6: an invoice already paid (Stripe's message landed first) answers paid, with the card as it is now; nothing more is sent", async () => {
+    const sarahs = await owedInvoice(db);
+    await post(completed(intentFor(sarahs, "pi_first")));
     const mike = await signInCookie("mike@idelta.com.au");
-    for (const options of [{ status: "paid" as const }, { status: "void" as const }, { isZeroDollar: true }, { withLink: false }]) {
+    const res = await check(mike, sarahs.jobReference);
+    expect(res.status).toBe(200);
+    expect((res.body as CheckBody).paid).toBe(true);
+    expect((res.body as CheckBody).job.invoice).toMatchObject({ status: "paid", canCheckPayment: false });
+    expect(await db.notification.count({ where: { jobId: sarahs.jobId } })).toBe(2);
+    expect(await db.payment.count()).toBe(1);
+  });
+
+  test("AC6: refused for a void or zero-dollar invoice and one still waiting for its link; and for a contractor", async () => {
+    const mike = await signInCookie("mike@idelta.com.au");
+    for (const options of [{ status: "void" as const }, { isZeroDollar: true }, { isZeroDollar: true, status: "paid" as const }, { withLink: false }]) {
       const made = await owedInvoice(db, options);
       expect((await check(mike, made.jobReference)).status).toBe(409);
     }

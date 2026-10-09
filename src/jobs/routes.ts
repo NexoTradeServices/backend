@@ -100,7 +100,8 @@ export function jobRoutes(client: PrismaClient): Router {
   });
 
   // Feature 6002: Check payment with Stripe -- the backup for Stripe's message never
-  // arriving. Refused unless the invoice is sent, not zero-dollar and has its link.
+  // arriving. Refused unless the invoice is sent, not zero-dollar and has its link --
+  // except one already paid, which answers paid.
   // Answers { paid, checkedLabel } and the job page as it is now -- checkedLabel is the
   // moment of the check on the job's clock ("2:15pm AWST"), for the card's own line;
   // 502 when Stripe cannot be reached.
@@ -114,6 +115,16 @@ export function jobRoutes(client: PrismaClient): Router {
       const invoice = await client.invoice.findFirst({ where: { jobId: job.id }, orderBy: { createdAt: "desc" } });
       if (invoice === null) {
         res.status(404).json({ error: "not found" });
+        return;
+      }
+      // Already paid (Stripe's message landed while Mike's page still showed it owed): the
+      // answer to "has she paid?" is yes -- the card refreshes to Paid, never an error.
+      if (invoice.status === "paid" && !invoice.isZeroDollar) {
+        res.json({
+          paid: true,
+          checkedLabel: formatLabelled(job.timezone, new Date()),
+          job: await jobDetail(client, job, req.authUser?.id ?? ""),
+        });
         return;
       }
       if (!hasPayableLink(invoice)) {
