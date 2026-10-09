@@ -66,13 +66,22 @@ export interface PartView {
   receipt: { fileName: string; thumbnailUrl: string; fullUrl: string } | null;
 }
 
-export interface PaymentView {
+export interface UnpaidPaymentView {
   /** Whole cents, GST-inclusive -- the customer's total. */
   amount: number;
+  paid: false;
   payLinkUrl: string | null;
   /** sent: email and text have both gone; failed: one could not be sent; sending: still on its way (or waiting for the link). */
   messages: "sent" | "sending" | "failed";
 }
+
+/** Feature 6002: once paid the card stays, with the total and nothing more to collect -- no link, no messages. */
+export interface PaidPaymentView {
+  amount: number;
+  paid: true;
+}
+
+export type PaymentView = UnpaidPaymentView | PaidPaymentView;
 
 export interface ContractorJobView extends JobFacts {
   reference: string;
@@ -133,7 +142,7 @@ type OwnAssignment = NonNullable<Awaited<ReturnType<typeof loadOwn>>>;
 async function paymentOf(
   client: PrismaClient,
   invoice: { id: string; amount: number; stripePaymentLinkUrl: string | null },
-): Promise<PaymentView> {
+): Promise<UnpaidPaymentView> {
   const rows = await client.notification.findMany({
     where: { relatedType: "invoice", relatedId: invoice.id, type: "invoice" },
     select: { channel: true, status: true },
@@ -143,7 +152,7 @@ async function paymentOf(
   const failed = (channel: "email" | "sms"): boolean =>
     !wentOut(channel) && rows.some((row) => row.channel === channel && row.status === "failed");
   const messages = wentOut("email") && wentOut("sms") ? "sent" : failed("email") || failed("sms") ? "failed" : "sending";
-  return { amount: invoice.amount, payLinkUrl: invoice.stripePaymentLinkUrl, messages };
+  return { amount: invoice.amount, paid: false, payLinkUrl: invoice.stripePaymentLinkUrl, messages };
 }
 
 async function viewOf(client: PrismaClient, assignment: OwnAssignment, now: Date): Promise<ContractorJobView> {
@@ -167,7 +176,12 @@ async function viewOf(client: PrismaClient, assignment: OwnAssignment, now: Date
           select: { id: true, amount: true, status: true, isZeroDollar: true, stripePaymentLinkUrl: true },
         });
   const payable = invoice !== null && invoice.status === "sent" && !invoice.isZeroDollar;
-  const payment: PaymentView | null = !payable ? null : await paymentOf(client, invoice);
+  const paid = invoice !== null && invoice.status === "paid" && !invoice.isZeroDollar;
+  const payment: PaymentView | null = paid
+    ? { amount: invoice.amount, paid: true }
+    : !payable
+      ? null
+      : await paymentOf(client, invoice);
 
   return {
     ...facts,

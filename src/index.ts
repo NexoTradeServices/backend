@@ -5,6 +5,9 @@ import pg from 'pg'
 import { toNodeHandler } from 'better-auth/node'
 import { notificationWebhooks, startNotifications } from './notifications/index.js'
 import { startPayLinkLoop } from './invoices/pay-link.js'
+import { warnIfWebhookSecretMissing } from './invoices/stripe.js'
+import { stripeWebhook } from './payments/webhook.js'
+import { receivablesRoutes } from './payments/routes.js'
 import { buildAuth } from './auth/config.js'
 import { attachSession } from './auth/middleware.js'
 import { authRoutes } from './auth/routes.js'
@@ -57,6 +60,11 @@ app.use(cors({ origin: webOrigin, credentials: true }))
 // outright in production.
 app.use(testRunSignal)
 
+// Feature 6002: Stripe's webhook. Mounted HERE, before every body parser and before
+// the session lookup: Stripe signs the raw bytes it sent, so this route reads the raw
+// body itself, and a Stripe message carries no session.
+app.use('/webhooks/stripe', stripeWebhook(prisma))
+
 // One auth brain, server-side (feature 1003, decision 1). Mounted before any
 // body-parsing middleware -- Better Auth reads the raw request body itself,
 // and a parser upstream would consume the stream first (there is none in
@@ -94,6 +102,8 @@ app.use('/api', agreementRoutes(prisma))
 app.use('/api/suburbs', suburbRoutes(prisma))
 app.use('/api/enquiries', enquiryRoutes(prisma))
 app.use('/api/jobs', jobRoutes(prisma))
+// Feature 6002: every invoice still owed.
+app.use('/api/receivables', receivablesRoutes(prisma))
 
 // Feature 4003, plan decision 1: the respond page's three endpoints. No
 // session -- the token in the path is the permission (ADR 0004).
@@ -138,6 +148,8 @@ startNotifications()
     // Feature 6001: the pay-link loop asks Stripe for every invoice still waiting for its link.
     // No STRIPE_SECRET_KEY only warns (once, here) -- invoices issue and wait.
     startPayLinkLoop()
+    // Feature 6002: no STRIPE_WEBHOOK_SECRET only warns -- the webhook refuses every call until it is set.
+    warnIfWebhookSecretMissing()
     // 0.0.0.0, not localhost: Caddy on 192.168.1.41 has to reach this from another machine.
     app.listen(port, '0.0.0.0', () => {
       console.log(`backend listening on 0.0.0.0:${port}`)

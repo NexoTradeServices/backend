@@ -7,6 +7,7 @@ import type { PrismaClient } from "../db/client.js";
 import type { InvoiceStatus } from "../generated/prisma/enums.js";
 import { formatLongDate } from "../agreements/pdf.js";
 import type { BilledTo } from "./issue.js";
+import { methodWords } from "../payments/messages.js";
 
 export interface InvoiceLineView {
   kind: "labour" | "part" | "callout";
@@ -24,6 +25,10 @@ export interface InvoiceView {
   payLinkUrl: string | null;
   /** Resend invoice and Copy pay link are offered only when this is true. */
   canResend: boolean;
+  /** Feature 6002: Check payment with Stripe is offered only when this is true (= canResend). */
+  canCheckPayment: boolean;
+  /** Feature 6002: "15 Oct 2026, card" once paid, from the succeeded Payment; null otherwise. */
+  paidLabel: string | null;
   billedTo: { name: string; businessName: string | null; address: BilledTo["address"] | null };
   issuedLabel: string;
   dueLabel: string;
@@ -43,16 +48,26 @@ export async function invoiceViewOf(client: PrismaClient, jobId: string, zone: s
   const invoice = await client.invoice.findFirst({
     where: { jobId },
     orderBy: { createdAt: "desc" },
-    include: { lines: { orderBy: { id: "asc" } } },
+    include: {
+      lines: { orderBy: { id: "asc" } },
+      payments: { where: { status: "succeeded" }, orderBy: { paidAt: "asc" }, take: 1 },
+    },
   });
   if (invoice === null) return null;
   const billed = invoice.billedTo as unknown as BilledTo;
+  const paidWith = invoice.payments[0];
+  const paidAt = invoice.paidAt ?? paidWith?.paidAt ?? null;
   return {
     reference: invoice.reference,
     status: invoice.status,
     waitingForPayLink: invoice.status === "sent" && !invoice.isZeroDollar && invoice.stripePaymentLinkUrl === null,
     payLinkUrl: invoice.stripePaymentLinkUrl,
     canResend: hasPayableLink(invoice),
+    canCheckPayment: hasPayableLink(invoice),
+    paidLabel:
+      invoice.status === "paid" && paidAt !== null
+        ? `${formatLongDate(paidAt, zone)}, ${methodWords(paidWith?.method ?? null)}`
+        : null,
     billedTo: { name: billed.name, businessName: billed.businessName ?? null, address: billed.address ?? null },
     issuedLabel: formatLongDate(invoice.sentAt ?? invoice.createdAt, zone),
     dueLabel: formatLongDate(invoice.dueAt, zone),

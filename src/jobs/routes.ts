@@ -10,6 +10,7 @@
 //   PUT  /api/jobs/:reference/notes/:noteId   the author fixes it, 10 minutes
 //   PUT  /api/jobs/:reference/time-entries    Feature 5001: ops fixes the time entries until Complete
 //   POST /api/jobs/:reference/invoice/resend  Feature 6001: the invoice email and text, again
+//   POST /api/jobs/:reference/invoice/check-payment  Feature 6002: ask Stripe whether she has paid
 import type { Router } from "express";
 import { Router as createRouter } from "express";
 import type { Request, Response } from "express";
@@ -22,6 +23,8 @@ import { parseAddressesInput, saveAddresses } from "./addresses.js";
 import { OPEN_VISIT_STATUSES, Refused, lockAssignment, lockedFailure, parseTimeEntries, writeEntries } from "./visit.js";
 import { hasPayableLink } from "../invoices/view.js";
 import { askInvoiceMessages } from "../invoices/messages.js";
+import { checkPaymentWithStripe } from "../payments/check.js";
+import { formatLabelled } from "../time/index.js";
 import { addNote, editNote, parseEditedNote, parseNewNote } from "./notes.js";
 import {
   candidatesAndPriceFor,
@@ -94,6 +97,51 @@ export function jobRoutes(client: PrismaClient): Router {
       await client.$transaction((tx) => askInvoiceMessages(tx, invoice.id, Date.now()));
       res.json(await jobDetail(client, job, req.authUser?.id ?? ""));
     })().catch(failWith(res, "POST /api/jobs/:reference/invoice/resend"));
+  });
+
+  // Feature 6002: Check payment with Stripe -- the backup for Stripe's message never
+  // arriving. Refused unless the invoice is sent, not zero-dollar and has its link --
+  // except one already paid, which answers paid.
+  // Answers { paid, checkedLabel } and the job page as it is now -- checkedLabel is the
+  // moment of the check on the job's clock ("2:15pm AWST"), for the card's own line;
+  // 502 when Stripe cannot be reached.
+  router.post("/:reference/invoice/check-payment", requireRole(Role.ops), (req: WithReference, res: Response) => {
+    void (async () => {
+      const job = await loadJob(client, req.params.reference);
+      if (!job) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      const invoice = await client.invoice.findFirst({ where: { jobId: job.id }, orderBy: { createdAt: "desc" } });
+      if (invoice === null) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      // Already paid (Stripe's message landed while Mike's page still showed it owed): the
+      // answer to "has she paid?" is yes -- the card refreshes to Paid, never an error.
+      if (invoice.status === "paid" && !invoice.isZeroDollar) {
+        res.json({
+          paid: true,
+          checkedLabel: formatLabelled(job.timezone, new Date()),
+          job: await jobDetail(client, job, req.authUser?.id ?? ""),
+        });
+        return;
+      }
+      if (!hasPayableLink(invoice)) {
+        res.status(409).json({ error: "This invoice cannot be checked with Stripe." });
+        return;
+      }
+      const outcome = await checkPaymentWithStripe(client, invoice);
+      if (outcome === "unreachable") {
+        res.status(502).json({ error: "Couldn't reach Stripe - try again in a minute." });
+        return;
+      }
+      res.json({
+        paid: outcome === "paid",
+        checkedLabel: formatLabelled(job.timezone, new Date()),
+        job: await jobDetail(client, job, req.authUser?.id ?? ""),
+      });
+    })().catch(failWith(res, "POST /api/jobs/:reference/invoice/check-payment"));
   });
 
   router.put("/:reference/addresses", requireRole(Role.ops), (req: WithReference, res: Response) => {
