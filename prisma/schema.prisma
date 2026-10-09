@@ -237,6 +237,8 @@ model User {
   voidedInvoices          Invoice[]                    @relation("InvoiceVoidedBy")
   approvedRefunds         Refund[]                     @relation("RefundApprovedBy")
   paidSettlements         ContractorSettlement[]       @relation("SettlementPaidBy")
+  supersededSettlements   ContractorSettlement[]       @relation("SettlementSupersededBy")
+  payAdjustmentsAdded     ContractorPayAdjustment[]    @relation("PayAdjustmentCreatedBy")
   contractorStatusChanges Contractor[]                 @relation("ContractorStatusChangedBy")
   agreementVersionsIssued ContractorAgreementVersion[] @relation("AgreementIssuedBy")
   specialtyStatusChanges  ContractorSpecialty[]        @relation("ContractorSpecialtyStatusChangedBy")
@@ -425,19 +427,23 @@ model CapabilityToken {
   type         CapabilityTokenType
   jobId        String?
   assignmentId String?
+  /// the settlement an approve link is for (Feature 6003)
+  settlementId String?
   singleUse    Boolean
   expiresAt    DateTime
   usedAt       DateTime?
   createdAt    DateTime            @default(now())
 
-  job        Job?        @relation(fields: [jobId], references: [id])
-  assignment Assignment? @relation(fields: [assignmentId], references: [id])
+  job        Job?                  @relation(fields: [jobId], references: [id])
+  assignment Assignment?           @relation(fields: [assignmentId], references: [id])
+  settlement ContractorSettlement? @relation(fields: [settlementId], references: [id])
 
   /// Test-data label (design: Data Model, Test data). Empty on every real record.
   testData String?
 
   @@index([jobId])
   @@index([assignmentId])
+  @@index([settlementId])
 }
 
 // ---------------------------------------------------------------------------
@@ -499,8 +505,9 @@ model Contractor {
   /// authority; the sketch's missing "?" reads as the sketch never having
   /// been updated when the table was settled. Feature 2001, plan decision 2.
   abn                   String?
-  /// set at onboarding; drives GST on their payouts
-  gstRegistered         Boolean          @default(false)
+  /// three-way: empty = not asked yet (counts as missing for the Ready check), true = yes,
+  /// false = no. Drives GST on their payouts. Once answered it is never emptied again.
+  gstRegistered         Boolean?
   phone                 String
   email                 String
   emergencyContactName  String?
@@ -546,6 +553,7 @@ model Contractor {
   assignments          Assignment[]
   settlements          ContractorSettlement[]
   agreementAcceptances ContractorAgreementAcceptance[]
+  payAdjustments       ContractorPayAdjustment[]
 
   /// Test-data label (design: Data Model, Test data). Empty on every real record.
   testData String?
@@ -718,6 +726,7 @@ model Job {
   refunds          Refund[]
   calendarEvents   CalendarEvent[]
   capabilityTokens CapabilityToken[]
+  payAdjustments   ContractorPayAdjustment[]
   notifications    Notification[]
 
   /// Test-data label (design: Data Model, Test data). Empty on every real record.
@@ -1088,7 +1097,9 @@ model ContractorSettlement {
   breakdownByTrade        Json
   /// sum of Assignment.materialsReimbursement in the period
   materialsAmount         Int
-  /// sum(breakdownByTrade.amount) + materialsAmount
+  /// sum of the ContractorPayAdjustment rows it swept -- pay for work, never materials
+  adjustmentsAmount       Int              @default(0)
+  /// sum(breakdownByTrade.amount) + adjustmentsAmount + materialsAmount
   totalAmount             Int
   /// GST ON TOP when the contractor is registered
   gstAmount               Int?
@@ -1103,18 +1114,56 @@ model ContractorSettlement {
   paidByUserId            String?
   /// manual bank transfer ref
   paymentReference        String?
+  /// when the draft was superseded (the weekly run or Rebuild)
+  supersededAt            DateTime?
+  /// AUDIT: who pressed Rebuild; empty when the weekly run superseded it
+  supersededByUserId      String?
   createdAt               DateTime         @default(now())
 
-  contractor  Contractor   @relation(fields: [contractorId], references: [id])
-  paidBy      User?        @relation("SettlementPaidBy", fields: [paidByUserId], references: [id])
+  contractor       Contractor                @relation(fields: [contractorId], references: [id])
+  paidBy           User?                     @relation("SettlementPaidBy", fields: [paidByUserId], references: [id])
+  supersededBy     User?                     @relation("SettlementSupersededBy", fields: [supersededByUserId], references: [id])
   /// member assignments link back via Assignment.settlementId
-  assignments Assignment[]
+  assignments      Assignment[]
+  /// pay adjustments link back via ContractorPayAdjustment.settlementId
+  payAdjustments   ContractorPayAdjustment[]
+  capabilityTokens CapabilityToken[]
 
   /// Test-data label (design: Data Model, Test data). Empty on every real record.
   testData String?
 
   @@index([contractorId])
   @@index([status])
+}
+
+/// A one-off ADD to a contractor's pay, outside any visit (Contractor Settlement / Pay
+/// adjustments). Add only; pay for work, never materials. Feature 6003 lays the table, its
+/// sweep and its place in the next-payout figure; Feature 6013 adds the form that writes it.
+/// A check constraint keeps amount above zero (migration SQL; Prisma has no syntax for it).
+model ContractorPayAdjustment {
+  id              String   @id @default(uuid(7))
+  contractorId    String
+  /// cents, above zero, always
+  amount          Int
+  /// required -- shown as the line on the draft
+  reason          String
+  jobId           String?
+  /// the draft that swept it; empty = not yet swept
+  settlementId    String?
+  /// AUDIT: who added it, and when
+  createdByUserId String
+  createdAt       DateTime @default(now())
+
+  contractor Contractor            @relation(fields: [contractorId], references: [id])
+  job        Job?                  @relation(fields: [jobId], references: [id])
+  settlement ContractorSettlement? @relation(fields: [settlementId], references: [id])
+  createdBy  User                  @relation("PayAdjustmentCreatedBy", fields: [createdByUserId], references: [id])
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
+
+  @@index([contractorId])
+  @@index([settlementId])
 }
 
 // ---------------------------------------------------------------------------

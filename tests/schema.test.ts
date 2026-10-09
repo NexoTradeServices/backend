@@ -116,7 +116,7 @@ describe("Feature 9002 -- every table carries the testData label", () => {
       SELECT table_name, data_type, is_nullable, column_default FROM information_schema.columns
        WHERE table_schema = 'public' AND column_name = 'testData'
     `;
-    expect(tables).toHaveLength(29);
+    expect(tables).toHaveLength(30);
     expect(tables.filter((table) => !columns.some((column) => column.table_name === table))).toEqual([]);
     for (const column of columns) {
       expect(column).toMatchObject({ data_type: "text", is_nullable: "YES", column_default: null });

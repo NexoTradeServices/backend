@@ -142,10 +142,10 @@ describe("AC3 -- the PlatformSettings singleton", () => {
     expect(settings.maxContractorPartAmount).toBe(15_000);
   });
 
-  test("AC3: the payout run is Mike's Friday one", async () => {
+  test("AC3: the payout run is Mike's Wednesday one (Feature 6003)", async () => {
     const settings = await db.platformSettings.findFirstOrThrow();
     expect(settings.payoutCycle).toBe("weekly");
-    expect(settings.payoutDay).toBe("fri");
+    expect(settings.payoutDay).toBe("wed");
   });
 
   test("AC3: the owner's placeholders are seeded and non-empty (they are edited in 1006)", async () => {
@@ -245,6 +245,22 @@ describe("AC5 -- the fixture seed mirrors the cast", () => {
     expect(priya.specialties[0].trade).toBe("Electrical");
     expect(priya.specialties[0].contractorCalloutRate).toBe(21_500);
     expect(priya.specialties[0].contractorStandardRate).toBe(16_000);
+  });
+
+  test("Feature 6003: Bob is GST registered, Dave is not, Priya was never asked", async () => {
+    const answers = await db.contractor.findMany({ select: { code: true, gstRegistered: true }, orderBy: { code: "asc" } });
+    expect(answers).toEqual([
+      { code: "CON-014", gstRegistered: true },
+      { code: "CON-021", gstRegistered: false },
+      { code: "CON-030", gstRegistered: null },
+    ]);
+  });
+
+  test("Feature 6003: the fixture seed gives an emptied cast answer back, and leaves Priya empty", async () => {
+    await db.contractor.updateMany({ data: { gstRegistered: null } });
+    await seedFixtures(db);
+    const answers = await db.contractor.findMany({ select: { code: true, gstRegistered: true }, orderBy: { code: "asc" } });
+    expect(answers.map((row) => row.gstRegistered)).toEqual([true, false, null]);
   });
 
   test("AC5: Sarah Chen is CUS-1050 in Hilton 6163 and is a GUEST -- no userId", async () => {

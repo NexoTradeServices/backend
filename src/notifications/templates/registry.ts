@@ -21,6 +21,8 @@ import { invoiceSms } from "./invoice.sms.js";
 import { paymentReceiptEmail } from "./payment-receipt.email.js";
 import { paymentReceivedEmail } from "./payment-received.email.js";
 import { paymentClosedInvoiceEmail } from "./payment-closed-invoice.email.js";
+import { settlementDraftEmail } from "./settlement-draft.email.js";
+import { payoutSentEmail } from "./payout-sent.email.js";
 
 /** Every template this build ships. Features append; nothing else registers. */
 const BUILT_IN: NotificationTemplate[] = [
@@ -39,6 +41,8 @@ const BUILT_IN: NotificationTemplate[] = [
   paymentReceiptEmail,
   paymentReceivedEmail,
   paymentClosedInvoiceEmail,
+  settlementDraftEmail,
+  payoutSentEmail,
 ];
 
 function key(type: string, channel: NotificationChannel): string {

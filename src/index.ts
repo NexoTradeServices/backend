@@ -24,6 +24,10 @@ import { suburbRoutes } from './suburbs/routes.js'
 import { enquiryRoutes } from './enquiries/routes.js'
 import { jobRoutes } from './jobs/routes.js'
 import { respondRoutes } from './respond/routes.js'
+import { approveRoutes } from './approve/routes.js'
+import { settlementRoutes } from './settlements/routes.js'
+import { contractorSettlementRoutes } from './settlements/contractor-routes.js'
+import { startSettlementLoop } from './settlements/loop.js'
 import { devTextsRoutes } from './notifications/dev-texts-routes.js'
 import { getPrisma } from './db/client.js'
 import { testRunSignal } from './test-data/label.js'
@@ -98,16 +102,23 @@ app.use('/api/contractors', contractorRoutes(prisma, auth))
 app.use('/api/contractor', contractorServiceAreaRoutes(prisma))
 app.use('/api/contractor', contractorDashboardRoutes(prisma))
 app.use('/api/contractor/jobs', contractorJobRoutes(prisma))
+// Feature 6003: the contractor's own settlements.
+app.use('/api/contractor/settlements', contractorSettlementRoutes(prisma))
 app.use('/api', agreementRoutes(prisma))
 app.use('/api/suburbs', suburbRoutes(prisma))
 app.use('/api/enquiries', enquiryRoutes(prisma))
 app.use('/api/jobs', jobRoutes(prisma))
 // Feature 6002: every invoice still owed.
 app.use('/api/receivables', receivablesRoutes(prisma))
+// Feature 6003: the ops Settlements screen -- pay the approved invoices, mark them paid, rebuild a draft.
+app.use('/api/settlements', settlementRoutes(prisma))
 
 // Feature 4003, plan decision 1: the respond page's three endpoints. No
 // session -- the token in the path is the permission (ADR 0004).
 app.use('/api/respond', respondRoutes(prisma))
+
+// Feature 6003: the contractor's approve link. No session -- the token in the path is the permission.
+app.use('/api/approve', approveRoutes(prisma))
 
 // Feature 4002, plan decision 13: the interim Texts sent page -- no login
 // (the site is not public yet), in dev and production alike, until BKLG-028
@@ -148,6 +159,8 @@ startNotifications()
     // Feature 6001: the pay-link loop asks Stripe for every invoice still waiting for its link.
     // No STRIPE_SECRET_KEY only warns (once, here) -- invoices issue and wait.
     startPayLinkLoop()
+    // Feature 6003: the Monday 6:00am settlement run. Nothing to configure; a missed Monday runs on the first tick.
+    startSettlementLoop(prisma)
     // Feature 6002: no STRIPE_WEBHOOK_SECRET only warns -- the webhook refuses every call until it is set.
     warnIfWebhookSecretMissing()
     // 0.0.0.0, not localhost: Caddy on 192.168.1.41 has to reach this from another machine.

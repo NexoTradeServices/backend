@@ -27,6 +27,7 @@ function readyInputOf(
   currentAgreementVersion: string | null,
 ): ReadyInput {
   return {
+    gstRegistered: contractor.gstRegistered,
     businessName: contractor.businessName,
     abn: contractor.abn,
     status: contractor.status,
@@ -89,7 +90,11 @@ export function contractorDashboardRoutes(client: PrismaClient): Router {
         return;
       }
 
-      const { ready, missing } = readyToDispatch(readyInputOf(contractor, await currentAgreementLabel(client)));
+      const derived = readyToDispatch(readyInputOf(contractor, await currentAgreementLabel(client)));
+      // Feature 6003: GST registration is Mike's item and never reaches the contractor's own panel
+      // (Mike's items there are licence and insurance only), so the panel's verdict leaves it out.
+      const missing = derived.missing.filter((item) => item.key !== "gst_registration");
+      const ready = missing.every((item) => !item.blocking);
 
       // AC1: assigned, accepted or in_progress only -- a declined, cancelled
       // or completed assignment never appears (they are the job's history,

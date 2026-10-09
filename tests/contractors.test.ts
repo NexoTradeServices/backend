@@ -20,6 +20,8 @@
 // AC10 Resend mints a fresh notification and the earlier link dies
 // AC12 the migration/seed shape: Bob and Dave carry insurance + payout,
 //      Priya's insurance is already expired
+// 6003 AC1 GST registration is a three-way answer (not asked, yes, no): not asked is
+//      Not ready, once answered it cannot go back, the migration maps false -> empty
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import express, { type Express } from "express";
 import request from "supertest";
@@ -34,6 +36,7 @@ import { authRoutes } from "../src/auth/routes.js";
 import { contractorLoginRoutes } from "../src/auth/login-routes.js";
 import { contractorRoutes } from "../src/contractors/routes.js";
 import { getTemplate } from "../src/notifications/templates/registry.js";
+import { readFileSync } from "node:fs";
 import type { PrismaClient } from "../src/db/client.js";
 
 let db: PrismaClient;
@@ -648,5 +651,126 @@ describe("2006 AC7 / AC14 -- the agreement on the ops list and record", () => {
     });
     const dave = (await request(app).get("/api/contractors/CON-021").set("Cookie", mike)).body as Dto;
     expect(dave.agreement).toMatchObject({ state: "not_accepted", currentVersion: "2", acceptedVersion: null, recordAvailable: false });
+  });
+});
+
+describe("6003 AC1 -- GST registration is a three-way answer", () => {
+  const GST_ITEM = "GST registration (not asked)";
+
+  async function record(cookie: string, code: string): Promise<{ gstRegistered: boolean | null; ready: boolean; missing: string[] }> {
+    const res = await request(app).get(`/api/contractors/${code}`).set("Cookie", cookie);
+    expect(res.status).toBe(200);
+    return res.body as { gstRegistered: boolean | null; ready: boolean; missing: string[] };
+  }
+
+  test("AC1: the seed reads yes for Bob, no for Dave, not asked for Priya - and only Priya shows the item", async () => {
+    await seedCast();
+    const cookie = await signInCookie("mike@idelta.com.au");
+    expect((await record(cookie, "CON-014")).gstRegistered).toBe(true);
+    expect((await record(cookie, "CON-021")).gstRegistered).toBe(false);
+    const priya = await record(cookie, "CON-030");
+    expect(priya.gstRegistered).toBeNull();
+    expect(priya.missing).toContain(GST_ITEM);
+    expect((await record(cookie, "CON-014")).missing).not.toContain(GST_ITEM);
+  });
+
+  test("AC1: adding a contractor without an answer leaves it not asked, and Not ready with the item", async () => {
+    await seedCast();
+    const cookie = await signInCookie("mike@idelta.com.au");
+    const res = await request(app).post("/api/contractors").set("Cookie", cookie).send(validBody());
+    expect(res.status).toBe(201);
+    const body = res.body as { gstRegistered: boolean | null; ready: boolean; missing: string[] };
+    expect(body.gstRegistered).toBeNull();
+    expect(body.ready).toBe(false);
+    expect(body.missing).toContain(GST_ITEM);
+  });
+
+  test("AC1: yes, no and not asked are all accepted when adding; anything else is refused", async () => {
+    await seedCast();
+    const cookie = await signInCookie("mike@idelta.com.au");
+    const answers: [string, boolean | null][] = [["a", true], ["b", false], ["c", null]];
+    for (const [tag, answer] of answers) {
+      const res = await request(app)
+        .post("/api/contractors")
+        .set("Cookie", cookie)
+        .send(validBody({ email: `${tag}@idelta.com.au`, gstRegistered: answer }));
+      expect(res.status).toBe(201);
+      expect((res.body as { gstRegistered: boolean | null }).gstRegistered).toBe(answer);
+    }
+    const bad = await request(app).post("/api/contractors").set("Cookie", cookie).send(validBody({ email: "d@idelta.com.au", gstRegistered: "yes" }));
+    expect(bad.status).toBe(400);
+    expect((bad.body as { field: string }).field).toBe("gstRegistered");
+  });
+
+  test("AC1: Mike records an answer on the record, and the item goes", async () => {
+    await seedCast();
+    const cookie = await signInCookie("mike@idelta.com.au");
+    const before = await record(cookie, "CON-030");
+    const res = await request(app).put("/api/contractors/CON-030").set("Cookie", cookie).send({ ...before, gstRegistered: false, specialties: [] });
+    expect(res.status).toBe(200);
+    const after = await record(cookie, "CON-030");
+    expect(after.gstRegistered).toBe(false);
+    expect(after.missing).not.toContain(GST_ITEM);
+  });
+
+  test("AC1: once answered it cannot go back to not asked - 400 with a field error", async () => {
+    await seedCast();
+    const cookie = await signInCookie("mike@idelta.com.au");
+    const bob = await record(cookie, "CON-014");
+    const res = await request(app)
+      .put("/api/contractors/CON-014")
+      .set("Cookie", cookie)
+      .send({ ...bob, gstRegistered: null, specialties: [] });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "Once answered, GST registration is yes or no.", field: "gstRegistered" });
+    expect((await record(cookie, "CON-014")).gstRegistered).toBe(true);
+  });
+
+  test("AC1: a save that does not carry the answer leaves it exactly as it was", async () => {
+    await seedCast();
+    const cookie = await signInCookie("mike@idelta.com.au");
+    const dave = await record(cookie, "CON-021");
+    const { gstRegistered: _left, ...withoutAnswer } = dave;
+    void _left;
+    await request(app).put("/api/contractors/CON-021").set("Cookie", cookie).send({ ...withoutAnswer, specialties: [] }).expect(200);
+    expect((await record(cookie, "CON-021")).gstRegistered).toBe(false);
+  });
+
+  test("AC1: not asked stays not asked when a save carries null", async () => {
+    await seedCast();
+    const cookie = await signInCookie("mike@idelta.com.au");
+    const priya = await record(cookie, "CON-030");
+    await request(app).put("/api/contractors/CON-030").set("Cookie", cookie).send({ ...priya, gstRegistered: null, specialties: [] }).expect(200);
+    expect((await record(cookie, "CON-030")).gstRegistered).toBeNull();
+  });
+
+  test("AC1: the missing item is Mike's, blocks dispatch, and shows on the ops list", async () => {
+    await seedCast();
+    const cookie = await signInCookie("mike@idelta.com.au");
+    const res = await request(app).get("/api/contractors").set("Cookie", cookie);
+    const priya = (res.body as { code: string; ready: boolean; missing: string[] }[]).find((row) => row.code === "CON-030");
+    expect(priya?.missing).toContain(GST_ITEM);
+    await db.contractor.update({ where: { code: "CON-014" }, data: { gstRegistered: null } });
+    const bob = ((await request(app).get("/api/contractors").set("Cookie", cookie)).body as { code: string; ready: boolean; missing: string[] }[]).find((row) => row.code === "CON-014");
+    expect(bob).toMatchObject({ ready: false });
+    expect(bob?.missing).toEqual([GST_ITEM]);
+  });
+
+  test("AC1: the migration - the column has no default, an old no reads not asked, an old yes stays yes", async () => {
+    await seedCast();
+    const column = await db.$queryRaw<{ is_nullable: string; column_default: string | null }[]>`
+      SELECT is_nullable, column_default FROM information_schema.columns
+       WHERE table_name = 'Contractor' AND column_name = 'gstRegistered'`;
+    expect(column[0]).toEqual({ is_nullable: "YES", column_default: null });
+
+    // The migration's own statement: every old "false" -> empty, "true" untouched.
+    const sql = readFileSync(new URL("../prisma/migrations/20261011100000_settlement_run/migration.sql", import.meta.url), "utf8");
+    const statement = /^UPDATE "Contractor"[^;]*;/m.exec(sql)?.[0];
+    expect(statement).toBeDefined();
+    await db.contractor.update({ where: { code: "CON-014" }, data: { gstRegistered: true } });
+    await db.contractor.update({ where: { code: "CON-021" }, data: { gstRegistered: false } });
+    await db.$executeRawUnsafe(statement ?? "");
+    const answers = await db.contractor.findMany({ select: { code: true, gstRegistered: true }, orderBy: { code: "asc" } });
+    expect(answers.map((row) => row.gstRegistered)).toEqual([true, null, null]);
   });
 });

@@ -9,6 +9,7 @@
 // AC7  a retry mints a fresh token; the delivered URL is the valid one
 // AC8  tightenExpiryByJob moves the clock; validation refuses it after
 // AC9  a caller-expiry type with none given is refused at ASK time
+// 6003 an approve link is scoped to a settlement; burning keeps the row, spent
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { testClient, truncateAll } from "./helpers/database.js";
 import { backdate, recordingAdapter, seedCast, setProviders, type CastIds } from "./helpers/notifications.js";
@@ -23,6 +24,7 @@ import { drainOnce, sendNotification } from "../src/notifications/index.js";
 import { registerTemplate, resetTemplates } from "../src/notifications/templates/registry.js";
 import { registerProvider, resetProviders } from "../src/notifications/providers/registry.js";
 import {
+  burnBySettlement,
   CapabilityTokenType,
   consumeCapabilityToken,
   mintCapabilityLink,
@@ -393,5 +395,64 @@ describe("AC9 -- ask-time refusal", () => {
     ).rejects.toThrow(/expiresAt/);
 
     expect(await db.notification.count()).toBe(0);
+  });
+});
+
+describe("6003 -- an approve link is scoped to a settlement", () => {
+  async function draft(): Promise<string> {
+    return (
+      await db.contractorSettlement.create({
+        data: {
+          reference: "CINV-518",
+          contractorId: cast.bobId,
+          periodStart: new Date("2026-10-12T00:00:00.000Z"),
+          periodEnd: new Date("2026-10-18T00:00:00.000Z"),
+          breakdownByTrade: [],
+          materialsAmount: 0,
+          totalAmount: 0,
+        },
+      })
+    ).id;
+  }
+
+  test("minting writes the settlement, validating returns it, and the link is single-use for 60 days", async () => {
+    const settlementId = await draft();
+    const minted = await mintCapabilityLink(db, { type: CapabilityTokenType.approve, settlementId });
+    expect(minted.url).toMatch(/^https:\/\/idelta\.com\.au\/approve\/[\w-]+$/);
+    const raw = extractToken(minted.url);
+
+    const row = await db.capabilityToken.findFirstOrThrow();
+    expect(row).toMatchObject({ settlementId, jobId: null, assignmentId: null, singleUse: true });
+    expect(Math.round((row.expiresAt.getTime() - Date.now()) / 86_400_000)).toBe(60);
+
+    expect(await validateCapabilityToken(db, raw, CapabilityTokenType.approve)).toMatchObject({ ok: true, settlementId });
+    expect(await consumeCapabilityToken(db, raw, CapabilityTokenType.approve)).toMatchObject({ ok: true, settlementId });
+    expect(await validateCapabilityToken(db, raw, CapabilityTokenType.approve)).toEqual({ ok: false, reason: "used" });
+  });
+
+  test("burnBySettlement spends the unspent approve links on one settlement and touches nothing else", async () => {
+    const settlementId = await draft();
+    const other = await db.contractorSettlement.create({
+      data: {
+        reference: "CINV-519",
+        contractorId: cast.bobId,
+        periodStart: new Date("2026-10-05T00:00:00.000Z"),
+        periodEnd: new Date("2026-10-11T00:00:00.000Z"),
+        breakdownByTrade: [],
+        materialsAmount: 0,
+        totalAmount: 0,
+        status: "superseded",
+      },
+    });
+    const first = await mintCapabilityLink(db, { type: CapabilityTokenType.approve, settlementId });
+    await mintCapabilityLink(db, { type: CapabilityTokenType.approve, settlementId });
+    await mintCapabilityLink(db, { type: CapabilityTokenType.approve, settlementId: other.id });
+
+    expect(await burnBySettlement(db, settlementId, [CapabilityTokenType.approve])).toBe(2);
+    expect(await burnBySettlement(db, settlementId, [CapabilityTokenType.approve])).toBe(0);
+    // Burned, not deleted: the row stays, spent, so the page can still say why.
+    expect(await db.capabilityToken.count({ where: { settlementId } })).toBe(2);
+    expect(await validateCapabilityToken(db, extractToken(first.url), CapabilityTokenType.approve)).toEqual({ ok: false, reason: "used" });
+    expect((await db.capabilityToken.findFirstOrThrow({ where: { settlementId: other.id } })).usedAt).toBeNull();
   });
 });
