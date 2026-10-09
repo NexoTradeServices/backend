@@ -46,6 +46,7 @@ const SECRET = "whsec_test_only_6002";
 
 interface CheckBody {
   paid: boolean;
+  checkedLabel: string;
   job: { invoice: unknown };
 }
 const PERTH = "Australia/Perth";
@@ -423,6 +424,8 @@ describe("AC6 -- Check payment with Stripe", () => {
     const res = await check(mike, sarahs.jobReference);
     expect(res.status).toBe(200);
     expect((res.body as CheckBody).paid).toBe(false);
+    // When it was checked, on the job's clock -- for the card's own line.
+    expect((res.body as CheckBody).checkedLabel).toMatch(/^\d{1,2}:\d{2}(am|pm) AWST$/);
     const now = await state(sarahs);
     expect(now.invoice.status).toBe("sent");
     expect(now.payments).toHaveLength(0);

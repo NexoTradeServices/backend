@@ -24,6 +24,7 @@ import { OPEN_VISIT_STATUSES, Refused, lockAssignment, lockedFailure, parseTimeE
 import { hasPayableLink } from "../invoices/view.js";
 import { askInvoiceMessages } from "../invoices/messages.js";
 import { checkPaymentWithStripe } from "../payments/check.js";
+import { formatLabelled } from "../time/index.js";
 import { addNote, editNote, parseEditedNote, parseNewNote } from "./notes.js";
 import {
   candidatesAndPriceFor,
@@ -100,7 +101,9 @@ export function jobRoutes(client: PrismaClient): Router {
 
   // Feature 6002: Check payment with Stripe -- the backup for Stripe's message never
   // arriving. Refused unless the invoice is sent, not zero-dollar and has its link.
-  // Answers { paid } and the job page as it is now; 502 when Stripe cannot be reached.
+  // Answers { paid, checkedLabel } and the job page as it is now -- checkedLabel is the
+  // moment of the check on the job's clock ("2:15pm AWST"), for the card's own line;
+  // 502 when Stripe cannot be reached.
   router.post("/:reference/invoice/check-payment", requireRole(Role.ops), (req: WithReference, res: Response) => {
     void (async () => {
       const job = await loadJob(client, req.params.reference);
@@ -122,7 +125,11 @@ export function jobRoutes(client: PrismaClient): Router {
         res.status(502).json({ error: "Couldn't reach Stripe - try again in a minute." });
         return;
       }
-      res.json({ paid: outcome === "paid", job: await jobDetail(client, job, req.authUser?.id ?? "") });
+      res.json({
+        paid: outcome === "paid",
+        checkedLabel: formatLabelled(job.timezone, new Date()),
+        job: await jobDetail(client, job, req.authUser?.id ?? ""),
+      });
     })().catch(failWith(res, "POST /api/jobs/:reference/invoice/check-payment"));
   });
 
