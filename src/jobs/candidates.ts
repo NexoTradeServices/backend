@@ -169,6 +169,7 @@ async function busyFor(
   ids: string[],
   holdStart: Date,
   holdEnd: Date,
+  ignoreJobId: string | null,
 ): Promise<Map<string, BusyRow>> {
   if (ids.length === 0) return new Map();
   const rows = await client.$queryRaw<BusyRow[]>`
@@ -181,6 +182,7 @@ async function busyFor(
      WHERE ce."contractorId" = ANY(${ids})
        AND ce."startTime" < ${holdEnd}
        AND ce."endTime" > ${holdStart}
+       AND (${ignoreJobId}::text IS NULL OR ce."jobId" IS DISTINCT FROM ${ignoreJobId}::text)
      ORDER BY ce."contractorId", ce."startTime" ASC
   `;
   return new Map(rows.map((row) => [row.contractorId, row]));
@@ -212,6 +214,8 @@ export interface CandidatesInput {
   date: string;
   holdStart: Date;
   holdEnd: Date;
+  /** Feature 4006: a reschedule does not count the job's own block as busy. */
+  ignoreJobId?: string;
 }
 
 export async function loadCandidates(client: PrismaClient, input: CandidatesInput): Promise<CandidatesResult> {
@@ -220,7 +224,7 @@ export async function loadCandidates(client: PrismaClient, input: CandidatesInpu
   const agreementLabel = await currentAgreementLabel(client);
   const [distances, busy] = await Promise.all([
     distancesFor(client, ids, input.job),
-    busyFor(client, ids, input.holdStart, input.holdEnd),
+    busyFor(client, ids, input.holdStart, input.holdEnd, input.ignoreJobId ?? null),
   ]);
 
   // Plan decision 2: "run with now set to UTC midnight of the slot's local

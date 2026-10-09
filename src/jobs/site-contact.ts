@@ -81,8 +81,11 @@ export function sameSiteContact(a: SiteContactView | null, b: SiteContactInput |
   return a.name === b.name && a.phone === b.phone && a.email === (b.email ?? null);
 }
 
-/** Decision 6: "<name>, <phone>" with one; the customer's name without. Same line in the email and the text. */
+/**
+ * Decision 6, changed by Feature 4006: the name only -- the site contact's, otherwise the customer's. The
+ * contractor reaches the person through the office, so no phone rides in the email or the text.
+ */
 export function siteContactLine(siteContact: unknown, customerName: string): string {
   const contact = asSiteContact(siteContact);
-  return contact === null ? customerName : `${contact.name}, ${contact.phone}`;
+  return contact === null ? customerName : contact.name;
 }

@@ -289,7 +289,7 @@ describe("AC5 -- track is multi-use; a re-send mints a second valid token", () =
 });
 
 describe("AC6 -- revocation hooks", () => {
-  test("AC6: revokeByAssignment deletes its respond token; the old link is refused afterwards", async () => {
+  test("AC6: revokeByAssignment expires its respond token and keeps the row; the old link is refused afterwards (4006 AC12)", async () => {
     const { url } = await mintCapabilityLink(db, {
       type: CapabilityTokenType.respond,
       assignmentId: refs.assignmentId,
@@ -302,20 +302,27 @@ describe("AC6 -- revocation hooks", () => {
 
     expect(await validateCapabilityToken(db, raw, CapabilityTokenType.respond)).toEqual({
       ok: false,
-      reason: "not found",
+      reason: "expired",
     });
+    // 4006 AC12: the row stays, expired, so the link can still say why it died.
+    const kept = await db.capabilityToken.findMany({ where: { assignmentId: refs.assignmentId } });
+    expect(kept).toHaveLength(1);
+    expect(kept[0]?.expiresAt.getTime()).toBeLessThanOrEqual(Date.now());
   });
 
-  test("AC6: revokeByJob deletes only the named types scoped to that job", async () => {
+  test("AC6: revokeByJob expires only the named types scoped to that job, and keeps every row (4006 AC12)", async () => {
     await mintCapabilityLink(db, { type: CapabilityTokenType.track, jobId: refs.jobId });
     await mintCapabilityLink(db, { type: CapabilityTokenType.review, jobId: refs.jobId });
     expect(await db.capabilityToken.count({ where: { jobId: refs.jobId } })).toBe(2);
 
     expect(await revokeByJob(db, refs.jobId, [CapabilityTokenType.track])).toBe(1);
 
-    const remaining = await db.capabilityToken.findMany({ where: { jobId: refs.jobId } });
-    expect(remaining).toHaveLength(1);
-    expect(remaining[0]?.type).toBe("review");
+    const rows = await db.capabilityToken.findMany({ where: { jobId: refs.jobId } });
+    expect(rows).toHaveLength(2);
+    const track = rows.find((row) => row.type === "track");
+    const review = rows.find((row) => row.type === "review");
+    expect(track?.expiresAt.getTime()).toBeLessThanOrEqual(Date.now());
+    expect(review?.expiresAt.getTime()).toBeGreaterThan(Date.now());
   });
 });
 

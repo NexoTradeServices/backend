@@ -10,7 +10,7 @@
 // AC8  save, change and clear create no Notification row
 // AC9  after dispatch (assigned, site locked) the phone can change
 // AC10 completed and cancelled jobs refuse a change; the stored value stays
-// AC11 Bob's email and text carry "Site contact: Lena Park, 0400 002 050"
+// AC11 Bob's email and text carry "Site contact: Lena Park" (4006: the phone is no longer given)
 // AC12 with none, both carry "Site contact: Sarah Chen"
 // AC13 the job page lists every Notification of the job, newest first, none of another job's
 // AC14 each message names its recipient per type
@@ -303,15 +303,19 @@ describe("AC9-AC10 -- until the job closes", () => {
 });
 
 describe("AC11-AC12 -- Bob's line", () => {
-  test("AC11: dispatching with Lena as site contact -- Bob's email and text both carry \"Site contact: Lena Park, 0400 002 050\"", async () => {
+  test("AC11: dispatching with Lena as site contact -- Bob's email and text both carry \"Site contact: Lena Park\" and no phone (4006 AC10)", async () => {
     const job = await makeJob({ siteContact: LENA });
     const res = await dispatch(await mike(), job.reference);
     expect(res.status).toBe(201);
     await drainOnce(db);
     const mail = email.sent.find((m) => m.to === "bob@idelta.com.au");
-    expect(mail?.message.text).toContain("Site contact: Lena Park, 0400 002 050");
-    expect(mail?.message.html).toContain("Site contact: Lena Park, 0400 002 050");
-    expect(await bobsText(job.reference)).toContain("Site contact: Lena Park, 0400 002 050");
+    expect(mail?.message.text).toContain("Site contact: Lena Park");
+    expect(mail?.message.text).not.toContain("0400 002 050");
+    expect(mail?.message.html).toContain("Site contact: Lena Park");
+    expect(mail?.message.html).not.toContain("0400 002 050");
+    const text = await bobsText(job.reference);
+    expect(text).toContain("Site contact: Lena Park");
+    expect(text).not.toContain("0400 002 050");
   });
 
   test("AC12: dispatching with no site contact -- both carry \"Site contact: Sarah Chen\"", async () => {

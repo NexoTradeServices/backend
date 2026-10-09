@@ -28,6 +28,7 @@ import { answersOf } from "../jobs/detail.js";
 import { readNotes } from "../jobs/notes.js";
 import { asSiteContact } from "../jobs/site-contact.js";
 import { effectiveAddress, suburbOf } from "../jobs/shared.js";
+import { cancelledKindOf } from "../jobs/booking.js";
 
 type Db = Prisma.TransactionClient;
 
@@ -70,6 +71,8 @@ export type RespondDead =
       officePhone: string;
     }
   | { state: "expired"; jobReference: string; officePhone: string }
+  // Feature 4006: a booking Mike ended says why -- the link answers 410 whatever its state was.
+  | { state: "moved" | "taken_off" | "cancelled"; jobReference: string; officePhone: string }
   | { state: "unknown"; officePhone: string };
 
 export type RespondRead = RespondOpen | RespondDead;
@@ -128,6 +131,13 @@ export async function inspectToken(db: Db, rawToken: string, now: Date): Promise
   const officePhone = await officePhoneOf(db);
   const job = assignment.job;
 
+  // Feature 4006: a cancelled booking answers first -- even a link he had already answered says
+  // what became of the booking (moved, taken off, or the job cancelled).
+  if (assignment.status === "cancelled") {
+    const kind = await cancelledKindOf(db, assignment, job);
+    return { kind: "dead", dead: { state: kind, jobReference: job.reference, officePhone } };
+  }
+
   if (token.usedAt !== null) {
     if (assignment.status === "declined" && assignment.declinedAt !== null) {
       return {
@@ -159,8 +169,8 @@ export async function inspectToken(db: Db, rawToken: string, now: Date): Promise
     return { kind: "dead", dead: { state: "expired", jobReference: job.reference, officePhone } };
   }
   // A live token on an assignment that is no longer waiting for an answer
-  // (4006's reassign and cancel delete the token; this is the belt to that
-  // braces) is never answerable.
+  // (4006's reassign and cancel expire the token and mark the assignment
+  // cancelled, read above; this is the belt to that braces) is never answerable.
   if (assignment.status !== "assigned") return unknown();
 
   return { kind: "open", tokenId: token.id, assignment };
