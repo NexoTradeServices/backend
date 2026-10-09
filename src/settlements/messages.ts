@@ -83,7 +83,7 @@ export async function askPayoutSentEmail(client: PrismaClient, settlementId: str
           period: periodLabel(ymdOf(settlement.periodStart), ymdOf(settlement.periodEnd)),
           accountLast4: account.replace(/\s/g, "").slice(-4),
           officePhone: settings.operatorPhone,
-          settlementUrl: `${origin}/contractor/settlements/${settlement.reference}`,
+          settlementUrl: `${origin}/contractor/payouts/${settlement.reference}`,
         },
       },
       client,

@@ -4,7 +4,7 @@
 //       counting unswept visits and unswept pay adjustments, and his invoices - never a
 //       superseded one - with their tags; opening one shows the invoice with each job's working;
 //       Bob cannot open Dave's invoice; the ops-only routes are closed to him
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
 import { resetReferenceSequences, testClient, truncateAll } from "./helpers/database.js";
@@ -24,6 +24,10 @@ let mike: string;
 beforeAll(() => {
   db = testClient();
   app = settlementApp(db);
+});
+
+afterEach(async () => {
+  await resetReferenceSequences(db);
 });
 
 afterAll(async () => {
@@ -93,7 +97,7 @@ describe("AC11 -- Bob's Settlements", () => {
     const body = res.body as {
       invoice: { heading: string; lines: { jobReference: string; weekend: boolean; working: { kind: string; calloutRate?: number; extraHours?: number; standardRate?: number; multiplier?: number } }[]; total: number };
     };
-    expect(body.invoice.heading).toBe("Tax Invoice");
+    expect(body.invoice.heading).toBe("Draft invoice");
     expect(body.invoice.lines[0]?.working).toEqual({ kind: "visit", calloutRate: 20_000, extraHours: 2, standardRate: 15_000, extraTotal: 30_000, multiplier: 1 });
     expect(body.invoice.lines[1]).toMatchObject({ weekend: true, working: { calloutRate: 30_000, multiplier: 1.5 } });
     expect(body.invoice.total).toBe(Math.round((50_000 + 30_000) * 1.1) + 4500);

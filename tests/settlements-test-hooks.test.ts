@@ -46,8 +46,9 @@ beforeEach(async () => {
   await seedAuthFixtures(db);
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.unstubAllEnvs();
+  await resetReferenceSequences(db);
 });
 
 const E2E = "ts-test-run=e2e";

@@ -11,7 +11,7 @@
 //       breakdown"); a second Mark paid is refused
 // AC12  the drill-down shows the invoice lines and working; Not yet invoiced lists each
 //       contractor's unswept work with the Monday it will be invoiced and the pay day after
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
 import { resetReferenceSequences, testClient, truncateAll } from "./helpers/database.js";
@@ -35,6 +35,10 @@ beforeAll(() => {
   db = testClient();
   app = settlementApp(db);
   registerProvider(email);
+});
+
+afterEach(async () => {
+  await resetReferenceSequences(db);
 });
 
 afterAll(async () => {
@@ -272,7 +276,7 @@ describe("AC10 -- Mark paid", () => {
     expect(text).toContain("We've paid your invoice CINV-518 (12 Oct - 18 Oct 2026) into your account ending 5678.");
     expect(text).toContain("It can take up to a business day to show.");
     expect(text).toContain(`ring the office on ${await officePhone()}`);
-    expect(text).toContain("See the breakdown: https://idelta.com.au/contractor/settlements/CINV-518");
+    expect(text).toContain("See the breakdown: https://idelta.com.au/contractor/payouts/CINV-518");
     // No amount, no job count, no date.
     expect(text).not.toContain("$");
     expect(text).not.toMatch(/\bjobs?\b/i);
@@ -334,7 +338,7 @@ describe("AC12 -- the drill-down and Not yet invoiced", () => {
         amount: number;
       };
       expect(body.contractor.name).toBe("Bob Reilly");
-      expect(body.invoice.heading).toBe("Tax Invoice");
+      expect(body.invoice.heading).toBe(status === "draft" ? "Draft invoice" : "Tax Invoice");
       expect(body.invoice.lines.map((line) => [line.day, line.amount, line.weekend])).toEqual([
         ["Wed 14 Oct", 50_000, false],
         ["Thu 15 Oct", 27_500, false],

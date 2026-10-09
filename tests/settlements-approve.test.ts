@@ -7,11 +7,11 @@
 //      ("gst_not_recorded" with the office phone); once Mike records a yes or no, the same link
 //      approves
 // and the dead states: replaced (410), approved (410), unknown (404) - each with the office phone
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import express, { type Express } from "express";
 import request from "supertest";
 import { resetReferenceSequences, testClient, truncateAll } from "./helpers/database.js";
-import { MONDAY_19_OCT, completedVisit } from "./helpers/settlements.js";
+import { MONDAY_19_OCT, completedVisit, settlementApp, signIn } from "./helpers/settlements.js";
 import { seedBase } from "../src/db/seed/base.js";
 import { seedFixtures } from "../src/db/seed/fixtures.js";
 import { seedAuthFixtures } from "../src/db/seed/auth.js";
@@ -29,6 +29,10 @@ beforeAll(() => {
   app = express();
   app.use(express.json());
   app.use("/api/approve", approveRoutes(db));
+});
+
+afterEach(async () => {
+  await resetReferenceSequences(db);
 });
 
 afterAll(async () => {
@@ -108,7 +112,7 @@ describe("AC5 -- the approve page reads the invoice", () => {
     expect(body.officePhone).toBe(await officePhone());
     expect(body.invoice).toMatchObject({
       reference: "CINV-518",
-      heading: "Tax Invoice",
+      heading: "Draft invoice",
       gstRegistered: true,
       subtotal: 107_500,
       gst: 10_750,
@@ -195,7 +199,7 @@ describe("AC5 -- the approve page reads the invoice", () => {
     await runWeekly(db, MONDAY_19_OCT);
     const { id, token } = await draftWithLink("CON-021");
     const open = (await read(token)).body as OpenBody;
-    expect(open.invoice).toMatchObject({ heading: "Invoice", gst: null, gstRegistered: false });
+    expect(open.invoice).toMatchObject({ heading: "Draft invoice", gst: null, gstRegistered: false });
     expect((await approve(token)).status).toBe(200);
     const settlement = await db.contractorSettlement.findUniqueOrThrow({ where: { id } });
     expect(settlement).toMatchObject({ contractorGstRegistered: false, gstAmount: null, status: "approved" });
@@ -211,6 +215,37 @@ describe("AC5 -- the approve page reads the invoice", () => {
   });
 });
 
+describe("approving from his own Payouts page, logged in", () => {
+  const fresh = async () => {
+    const draft = await bobsDraft();
+    const app = settlementApp(db);
+    return { ...draft, app, bob: await signIn(app, "bob@idelta.com.au"), dave: await signIn(app, "dave@idelta.com.au") };
+  };
+
+  test("a draft is approved the same way as by the email link - snapshot, GST, every link spent", async () => {
+    const { id, token, app, bob } = await fresh();
+    const res = await request(app).post("/api/contractor/settlements/CINV-518/approve").set("Cookie", bob);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ state: "approved", reference: "CINV-518", payDay: await livePayDay() });
+    const settlement = await db.contractorSettlement.findUniqueOrThrow({ where: { id } });
+    expect(settlement).toMatchObject({ status: "approved", contractorGstRegistered: true, gstAmount: 10_750 });
+    expect((await read(token)).status).toBe(410);
+    const again = await request(app).post("/api/contractor/settlements/CINV-518/approve").set("Cookie", bob);
+    expect(again.status).toBe(409);
+    expect(again.body).toEqual({ error: "Already approved." });
+  });
+
+  test("another contractor cannot approve it, and a not-asked registration is refused", async () => {
+    const { id, app, bob, dave } = await fresh();
+    await request(app).post("/api/contractor/settlements/CINV-518/approve").set("Cookie", dave).expect(404);
+    await db.contractor.update({ where: { code: "CON-014" }, data: { gstRegistered: null } });
+    const res = await request(app).post("/api/contractor/settlements/CINV-518/approve").set("Cookie", bob);
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ error: "gst_not_recorded", officePhone: await officePhone() });
+    expect((await db.contractorSettlement.findUniqueOrThrow({ where: { id } })).status).toBe("draft");
+  });
+});
+
 describe("AC6 -- GST registration not asked", () => {
   async function priyasDraft(): Promise<{ id: string; token: string }> {
     await completedVisit(db, { contractorCode: "CON-030", day: "2026-10-14", hours: 2 });
@@ -222,7 +257,7 @@ describe("AC6 -- GST registration not asked", () => {
     const { token } = await priyasDraft();
     const res = await read(token);
     expect(res.status).toBe(200);
-    expect((res.body as OpenBody).invoice).toMatchObject({ heading: "Invoice", gstNotRecorded: true, gst: null });
+    expect((res.body as OpenBody).invoice).toMatchObject({ heading: "Draft invoice", gstNotRecorded: true, gst: null });
   });
 
   test("AC6: Approve is refused - 409 gst_not_recorded with the office phone - and the draft stays a draft", async () => {
@@ -238,7 +273,7 @@ describe("AC6 -- GST registration not asked", () => {
     const { id, token } = await priyasDraft();
     await approve(token);
     await db.contractor.update({ where: { code: "CON-030" }, data: { gstRegistered: true } });
-    expect(((await read(token)).body as OpenBody).invoice).toMatchObject({ heading: "Tax Invoice", gstNotRecorded: false });
+    expect(((await read(token)).body as OpenBody).invoice).toMatchObject({ heading: "Draft invoice", gstNotRecorded: false });
     expect((await approve(token)).status).toBe(200);
     const settlement = await db.contractorSettlement.findUniqueOrThrow({ where: { id } });
     expect(settlement.contractorGstRegistered).toBe(true);

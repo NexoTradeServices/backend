@@ -7,7 +7,7 @@
 // AC3  Bob (GST registered): Wed $500 + $45 part, Thu $275, Sat $300 at T1.5 -> a Tax Invoice with
 //      Subtotal $1,075, GST $107.50, materials $45, Total $1,227.50; Dave (not registered) gets a
 //      plain Invoice with no Subtotal or GST
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { resetReferenceSequences, testClient, truncateAll } from "./helpers/database.js";
 import { MONDAY_12_OCT, MONDAY_19_OCT, completedVisit, noShowCallout } from "./helpers/settlements.js";
 import { seedBase } from "../src/db/seed/base.js";
@@ -23,6 +23,10 @@ let db: PrismaClient;
 
 beforeAll(() => {
   db = testClient();
+});
+
+afterEach(async () => {
+  await resetReferenceSequences(db);
 });
 
 afterAll(async () => {
@@ -110,7 +114,7 @@ describe("AC2/AC3 -- the Monday sweep", () => {
     expect(members).toHaveLength(3);
 
     const view = await buildInvoiceView(db, (await loadSettlementForView(db, { id: settlement?.id ?? "" }))!);
-    expect(view.heading).toBe("Tax Invoice");
+    expect(view.heading).toBe("Draft invoice");
     expect(view.subtotal).toBe(107_500);
     expect(view.gst).toBe(10_750);
     expect(view.materialsTotal).toBe(4500);
@@ -147,7 +151,7 @@ describe("AC2/AC3 -- the Monday sweep", () => {
       { trade: "Electrical", count: 1, amount: 21_000 + 15_500 },
     ]);
     const view = await buildInvoiceView(db, (await loadSettlementForView(db, { id: settlement?.id ?? "" }))!);
-    expect(view.heading).toBe("Invoice");
+    expect(view.heading).toBe("Draft invoice");
     expect(view.gstRegistered).toBe(false);
     expect(view.gst).toBeNull();
     expect(view.total).toBe(58_000);
@@ -290,7 +294,17 @@ describe("AC11 -- the next payout", () => {
     await db.contractorPayAdjustment.create({ data: { contractorId: bob.id, amount: 2500, reason: "Parking", createdByUserId: mike.id } });
 
     const next = await nextPayout(db, bob.id, thursday);
-    expect(next).toEqual({ amount: 50_000 + 27_500 + 4500 + 2500, jobs: 2, adjustments: 1, plusGst: true, payDay: "Wed 21 Oct", invoicedOn: "Mon 19 Oct" });
+    expect(next).toEqual({
+      amount: 50_000 + 27_500 + 4500 + 2500,
+      jobs: 2,
+      adjustments: 1,
+      plusGst: true,
+      payDay: "Wed 21 Oct",
+      invoicedOn: "Mon 19 Oct",
+      period: "12 Oct - 18 Oct 2026",
+      // The invoice total: pay for work $800 + GST $80 on top, plus the $45 part (never under GST) plus nothing else.
+      total: 80_000 + 8000 + 4500,
+    });
 
     const dave = await db.contractor.findUniqueOrThrow({ where: { code: "CON-021" } });
     expect(await nextPayout(db, dave.id, thursday)).toMatchObject({ amount: 0, jobs: 0, adjustments: 0, plusGst: false });

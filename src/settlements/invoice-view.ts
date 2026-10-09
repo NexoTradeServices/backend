@@ -77,7 +77,7 @@ export interface MaterialsLine {
 export interface InvoiceView {
   reference: string;
   status: "draft" | "approved" | "paid" | "superseded";
-  heading: "Tax Invoice" | "Invoice";
+  heading: "Tax Invoice" | "Invoice" | "Draft invoice";
   /** what the GST lines are based on: true = registered (GST on top) */
   gstRegistered: boolean;
   /** the contractor's registration is still empty -- Approve is refused */
@@ -97,6 +97,8 @@ export interface InvoiceView {
   materials: MaterialsLine[];
   materialsTotal: number;
   total: number;
+  /** the next payout, shown as an invoice before the run has made it: no number, no approval */
+  preview?: boolean;
 }
 
 /** GST on top of pay for work, to the cent; null when the contractor is not registered. */
@@ -207,7 +209,8 @@ export async function buildInvoiceView(db: Db, settlement: SettlementForView): P
   return {
     reference: settlement.reference,
     status: settlement.status,
-    heading: registeredNow ? "Tax Invoice" : "Invoice",
+    // A draft is not yet anyone's invoice: the contractor's approval is what issues it.
+    heading: settlement.status === "draft" ? "Draft invoice" : registeredNow ? "Tax Invoice" : "Invoice",
     gstRegistered: registeredNow,
     gstNotRecorded: !frozen && settlement.contractor.gstRegistered === null,
     from: { name: settlement.contractor.name, businessName: settlement.contractor.businessName, abn: settlement.contractor.abn },
@@ -223,4 +226,39 @@ export async function buildInvoiceView(db: Db, settlement: SettlementForView): P
     materialsTotal,
     total: subtotal + materialsTotal + (gst ?? 0),
   };
+}
+
+/**
+ * The next payout as the invoice it will become: every visit with money on it and every pay
+ * adjustment not yet on an invoice, laid out exactly like the real one. It has no number and no
+ * approval - the Monday run makes the invoice. Null when nothing is waiting.
+ */
+export async function buildNextPayoutView(db: Db, contractorId: string, now: Date, run: { periodStart: string; periodEnd: string }): Promise<InvoiceView | null> {
+  const include = settlementViewInclude;
+  const contractor = await db.contractor.findUniqueOrThrow({ where: { id: contractorId }, select: include.contractor.select });
+  const assignments = await db.assignment.findMany({
+    where: {
+      contractorId,
+      settlementId: null,
+      contractorPay: { not: null },
+      OR: [{ status: "completed" }, { status: "cancelled", cancelledAt: { not: null } }],
+    },
+    include: include.assignments.include,
+  });
+  const payAdjustments = await db.contractorPayAdjustment.findMany({ where: { contractorId, settlementId: null }, include: include.payAdjustments.include, orderBy: { createdAt: "asc" } });
+  if (assignments.length === 0 && payAdjustments.length === 0) return null;
+  const pretend = {
+    reference: "",
+    status: "draft",
+    contractor,
+    assignments,
+    payAdjustments,
+    approvedAt: null,
+    gstAmount: null,
+    contractorGstRegistered: null,
+    periodStart: new Date(`${run.periodStart}T00:00:00.000Z`),
+    periodEnd: new Date(`${run.periodEnd}T00:00:00.000Z`),
+  } as unknown as SettlementForView;
+  void now;
+  return { ...(await buildInvoiceView(db, pretend)), heading: "Draft invoice", dateLabel: "Not yet invoiced", preview: true };
 }

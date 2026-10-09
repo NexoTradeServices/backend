@@ -13,7 +13,7 @@ import type { PrismaClient } from "../db/client.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import { burnBySettlement, CapabilityTokenType, consumeCapabilityToken, findCapabilityToken } from "../capability-tokens/index.js";
 import { readNotes } from "../jobs/notes.js";
-import { dayLabel, friendlyDate, nextRunMonday, payDayAfter, payDayFor, ymdOf } from "./calendar.js";
+import { addDays, cycleDays, dayLabel, friendlyDate, nextRunMonday, payDayAfter, payDayFor, periodLabel, ymdOf } from "./calendar.js";
 import { buildInvoiceView, gstOnTop, labourOf, loadSettlementForView, type InvoiceView } from "./invoice-view.js";
 import { sweepContractor } from "./sweep.js";
 import { todayIn } from "../time/index.js";
@@ -229,6 +229,10 @@ export interface NextPayout {
   payDay: string;
   /** the next Monday run, "Mon 19 Oct" */
   invoicedOn: string;
+  /** the period that run will cover, "12 Oct - 18 Oct 2026" */
+  period: string;
+  /** what the invoice will total, GST on top included for a registered contractor */
+  total: number;
 }
 
 export async function nextPayout(db: Db, contractorId: string, now: Date): Promise<NextPayout> {
@@ -245,14 +249,49 @@ export async function nextPayout(db: Db, contractorId: string, now: Date): Promi
   });
   const adjustments = await db.contractorPayAdjustment.findMany({ where: { contractorId, settlementId: null }, select: { amount: true } });
   const run = nextRunMonday(settings, now);
+  const payForWork =
+    visits.reduce((sum, visit) => sum + (visit.contractorPay ?? 0), 0) +
+    adjustments.reduce((sum, adjustment) => sum + adjustment.amount, 0);
+  const parts = visits.reduce((sum, visit) => sum + (visit.materialsReimbursement ?? 0), 0);
+  const gst = gstOnTop(payForWork, contractor.gstRegistered === true, Number(settings.gstRatePercent)) ?? 0;
   return {
-    amount:
-      visits.reduce((sum, visit) => sum + (visit.contractorPay ?? 0) + (visit.materialsReimbursement ?? 0), 0) +
-      adjustments.reduce((sum, adjustment) => sum + adjustment.amount, 0),
+    amount: payForWork + parts,
+    period: periodLabel(addDays(run, -cycleDays(settings)), addDays(run, -1)),
+    total: payForWork + parts + gst,
     jobs: visits.length,
     adjustments: adjustments.length,
     plusGst: contractor.gstRegistered === true,
     payDay: dayLabel(payDayAfter(settings, run)),
     invoicedOn: dayLabel(run),
   };
+}
+
+/**
+ * The contractor approves his own draft from his Payouts page, logged in -- the same act as the
+ * email link, so the same rules: draft only, refused while his GST registration is not asked,
+ * the registration snapshotted, every approve link spent.
+ */
+export async function approveByContractor(client: PrismaClient, contractorId: string, reference: string, now: Date): Promise<ApproveResult> {
+  return client.$transaction(async (tx): Promise<ApproveResult> => {
+    const found = await tx.contractorSettlement.findFirst({ where: { reference, contractorId, status: { not: "superseded" } }, select: { id: true } });
+    if (found === null) return refuse(404, "not found");
+    await lockSettlement(tx, found.id);
+    const settlement = await tx.contractorSettlement.findUniqueOrThrow({
+      where: { id: found.id },
+      include: { contractor: { select: { gstRegistered: true } } },
+    });
+    const settings = await tx.platformSettings.findFirstOrThrow();
+    if (settlement.status !== "draft") return refuse(409, "Already approved.");
+    const registered = settlement.contractor.gstRegistered;
+    if (registered === null) {
+      return refuse(409, "gst_not_recorded", { state: "gst_not_recorded", officePhone: settings.operatorPhone });
+    }
+    const gstAmount = gstOnTop(labourOf(settlement.breakdownByTrade) + settlement.adjustmentsAmount, registered, Number(settings.gstRatePercent));
+    await tx.contractorSettlement.update({
+      where: { id: settlement.id },
+      data: { status: "approved", approvedAt: now, contractorGstRegistered: registered, gstAmount },
+    });
+    await burnBySettlement(tx, settlement.id, [CapabilityTokenType.approve], now);
+    return { ok: true, reference: settlement.reference, payDay: dayLabel(payDayFor(settings, now)) };
+  });
 }

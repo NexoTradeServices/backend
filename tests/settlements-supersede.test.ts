@@ -6,7 +6,7 @@
 // AC8  an unapproved draft whose job got a `correction` note after it was made shows "Job
 //      corrected since"; Rebuild supersedes it with supersededByUserId + supersededAt, makes a
 //      fresh draft with the same period end, emails a fresh link; the old link explains itself
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
 import { resetReferenceSequences, testClient, truncateAll } from "./helpers/database.js";
@@ -27,6 +27,10 @@ let bob: string;
 beforeAll(() => {
   db = testClient();
   app = settlementApp(db);
+});
+
+afterEach(async () => {
+  await resetReferenceSequences(db);
 });
 
 afterAll(async () => {

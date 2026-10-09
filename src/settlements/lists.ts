@@ -225,14 +225,20 @@ export async function listForContractor(client: PrismaClient, contractorId: stri
   const settings = await client.platformSettings.findFirstOrThrow();
   const rate = Number(settings.gstRatePercent);
   const contractor = await client.contractor.findUniqueOrThrow({ where: { id: contractorId }, select: { gstRegistered: true } });
+  // Awaiting approval comes first (on the first page only, so paging never repeats it); every other
+  // invoice follows newest first.
+  const awaiting =
+    after === null
+      ? await client.contractorSettlement.findMany({ where: { contractorId, status: "draft" }, orderBy: [{ createdAt: "desc" }, { id: "desc" }] })
+      : [];
   const found = await client.contractorSettlement.findMany({
-    where: { contractorId, status: { in: ["draft", "approved", "paid"] } },
+    where: { contractorId, status: { in: ["approved", "paid"] } },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: SETTLEMENTS_PAGE + 1,
     ...(after === null ? {} : { cursor: { id: after }, skip: 0 }),
   });
   const payDay = dayLabel(payDayFor(settings, now));
-  const settlements: ContractorCard[] = found.slice(0, SETTLEMENTS_PAGE).map((row) => {
+  const settlements: ContractorCard[] = [...awaiting, ...found.slice(0, SETTLEMENTS_PAGE)].map((row) => {
     const status = row.status as "draft" | "approved" | "paid";
     return {
       reference: row.reference,

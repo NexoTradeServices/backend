@@ -8,8 +8,9 @@ import type { Request, Response } from "express";
 import type { PrismaClient } from "../db/client.js";
 import { requireRole } from "../auth/middleware.js";
 import { Role } from "../generated/prisma/enums.js";
-import { dayLabel, payDayFor } from "./calendar.js";
-import { buildInvoiceView, loadSettlementForView } from "./invoice-view.js";
+import { addDays, cycleDays, dayLabel, nextRunMonday, payDayFor } from "./calendar.js";
+import { approveByContractor, nextPayout } from "./service.js";
+import { buildInvoiceView, buildNextPayoutView, loadSettlementForView } from "./invoice-view.js";
 import { listForContractor } from "./lists.js";
 
 function failWith(res: Response, route: string) {
@@ -34,6 +35,27 @@ export function contractorSettlementRoutes(client: PrismaClient): Router {
     })().catch(failWith(res, "GET /api/contractor/settlements"));
   });
 
+  // The next payout as the invoice it will become. Declared before "/:ref" so "next" is never read as a reference.
+  router.get("/next", requireRole(Role.contractor), (req: Request, res: Response) => {
+    void (async () => {
+      const contractor = req.authUser ? await client.contractor.findUnique({ where: { userId: req.authUser.id }, select: { id: true } }) : null;
+      if (contractor === null) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      const now = new Date();
+      const settings = await client.platformSettings.findFirstOrThrow();
+      const run = nextRunMonday(settings, now);
+      const invoice = await buildNextPayoutView(client, contractor.id, now, { periodStart: addDays(run, -cycleDays(settings)), periodEnd: addDays(run, -1) });
+      if (invoice === null) {
+        res.status(404).json({ error: "nothing is waiting" });
+        return;
+      }
+      const next = await nextPayout(client, contractor.id, now);
+      res.json({ invoice, payDay: next.payDay, invoicedOn: next.invoicedOn, paidLabel: null });
+    })().catch(failWith(res, "GET /api/contractor/settlements/next"));
+  });
+
   router.get("/:ref", requireRole(Role.contractor), (req: Request<{ ref: string }>, res: Response) => {
     void (async () => {
       const contractor = req.authUser ? await client.contractor.findUnique({ where: { userId: req.authUser.id }, select: { id: true } }) : null;
@@ -50,6 +72,22 @@ export function contractorSettlementRoutes(client: PrismaClient): Router {
         paidLabel: settlement.paidAt === null ? null : settlement.paidAt.toISOString(),
       });
     })().catch(failWith(res, "GET /api/contractor/settlements/:ref"));
+  });
+
+  router.post("/:ref/approve", requireRole(Role.contractor), (req: Request<{ ref: string }>, res: Response) => {
+    void (async () => {
+      const contractor = req.authUser ? await client.contractor.findUnique({ where: { userId: req.authUser.id }, select: { id: true } }) : null;
+      if (contractor === null) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      const result = await approveByContractor(client, contractor.id, req.params.ref, new Date());
+      if (!result.ok) {
+        res.status(result.status).json(result.body);
+        return;
+      }
+      res.json({ state: "approved", reference: result.reference, payDay: result.payDay });
+    })().catch(failWith(res, "POST /api/contractor/settlements/:ref/approve"));
   });
 
   return router;
