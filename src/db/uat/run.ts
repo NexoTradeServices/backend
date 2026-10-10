@@ -4,11 +4,12 @@
 // database in .env. Inside the backend dev container, never against production.
 import "dotenv/config";
 import { disconnectPrisma, getPrisma } from "../client.js";
+import { runWithLabel } from "../../test-data/label.js";
 import { clearUatData, makeUatData, uatLabel, type UatScript } from "./pattern.js";
 
 const [name, mode] = process.argv.slice(2);
-if (name === undefined || (mode !== "make" && mode !== "clear")) {
-  console.error("usage: npm run uat -- <id>-<slug> make|clear");
+if (name === undefined || (mode !== "make" && mode !== "clear" && mode !== "topup")) {
+  console.error("usage: npm run uat -- <id>-<slug> make|clear|topup");
   process.exit(1);
 }
 
@@ -21,6 +22,12 @@ try {
     await clearUatData(client, name, script);
     const lines = await makeUatData(client, name, script);
     console.log(`made ${String(lines.length)} record(s) labelled "${label}":`);
+    for (const line of lines) console.log(`  ${line}`);
+  } else if (mode === "topup") {
+    // During UAT: remake only the records the owner has used up; every other record stays as it is.
+    if (script.topUp === undefined) throw new Error(`${name} has no topUp -- use make`);
+    const lines = await runWithLabel(label, () => script.topUp?.(client) ?? Promise.resolve([]));
+    console.log(`topped up ${String(lines.length)} record(s) labelled "${label}":`);
     for (const line of lines) console.log(`  ${line}`);
   } else {
     const result = await clearUatData(client, name, script);

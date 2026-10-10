@@ -31,13 +31,20 @@ export async function loadContractorDay(
   contractorId: string,
   date: string,
   zone: string,
+  /** Feature 4006: a reschedule's day view does not count the job's own block, which is about to go. */
+  ignoreJobId?: string,
 ): Promise<DayBlock[]> {
   const dayStart = zonedDateTimeToUtc(zone, date, 0, 0);
   const nextDate = new Date(dateOnlyAsUtcMidnight(date).getTime() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const dayEnd = zonedDateTimeToUtc(zone, nextDate, 0, 0);
 
   const events = await client.calendarEvent.findMany({
-    where: { contractorId, startTime: { lt: dayEnd }, endTime: { gt: dayStart } },
+    where: {
+      contractorId,
+      startTime: { lt: dayEnd },
+      endTime: { gt: dayStart },
+      ...(ignoreJobId === undefined ? {} : { NOT: { jobId: ignoreJobId } }),
+    },
     orderBy: { startTime: "asc" },
     include: { job: { select: { reference: true, serviceLocation: true } }, assignment: { select: { status: true } } },
   });

@@ -8,12 +8,13 @@ import type { PrismaClient } from "../db/client.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { sendNotification } from "../notifications/index.js";
 import { CapabilityTokenType } from "../capability-tokens/index.js";
-import { zonedDateTimeToUtc, formatSlotLabel } from "../time/index.js";
+import { zonedDateTimeToUtc, formatSlotLabel, clockTimeIn, todayIn } from "../time/index.js";
 import { serviceLevelFor, priceFor, isServiceLevelMultipliers, type TierRates } from "./dispatch-level.js";
 import { formatDollars } from "../enquiries/money.js";
 import { currentAgreementLabel } from "../agreements/current.js";
 import { loadCandidates, guardReason, readyInputOf, type CandidatesResult } from "./candidates.js";
 import { siteContactLine } from "./site-contact.js";
+import { cancelBooking } from "./booking.js";
 import { asAddress, suburbOf, effectiveAddress, NO_ADDRESS_REASON, type Address } from "./shared.js";
 
 const WINDOW_START_MINUTES: Record<string, number> = { morning: 420, afternoon: 720, evening: 1020 };
@@ -52,7 +53,14 @@ export interface DispatchFacts {
   suburb: string;
   siteAddress: Address | null;
   customerName: string;
+  /** Feature 4006: the job's real status, for the page's tag (it was hardcoded New). */
+  status: string;
   defaults: { date: string; startMinutes: number; holdMinutes: number };
+  /** Feature 4006: "reschedule" fixes the contractor who holds the booking; absent at dispatch. */
+  mode?: "reschedule";
+  contractor?: { code: string; name: string; firstName: string };
+  /** Reschedule only: the booked slot's date and time, the page's starting point. */
+  currentSlot?: { date: string; startMinutes: number; holdMinutes: number } | null;
 }
 
 export function dispatchFactsOf(job: DispatchJobRow): DispatchFacts {
@@ -64,6 +72,7 @@ export function dispatchFactsOf(job: DispatchJobRow): DispatchFacts {
     suburb: suburbOf(job.serviceLocation),
     siteAddress: effectiveAddress(job),
     customerName: job.customer.name,
+    status: job.status,
     defaults: {
       date: job.preferredDate.toISOString().slice(0, 10),
       startMinutes: WINDOW_START_MINUTES[window] ?? 420,
@@ -121,6 +130,16 @@ export function slotInstants(zone: string, slot: SlotInput): { start: Date; end:
   return { start, end: new Date(start.getTime() + slot.holdMinutes * 60_000) };
 }
 
+/** The other way round: a booked block as the page's date, start and hold (Feature 4006's reschedule page). */
+export function slotParts(zone: string, start: Date, end: Date): { date: string; startMinutes: number; holdMinutes: number } {
+  const [hour = "0", minute = "0"] = clockTimeIn(zone, start).split(":");
+  return {
+    date: todayIn(zone, start),
+    startMinutes: Number(hour) * 60 + Number(minute),
+    holdMinutes: Math.round((end.getTime() - start.getTime()) / 60_000),
+  };
+}
+
 export interface CandidatesAndPrice {
   level: "normal" | "weekend" | "emergency";
   price: { calloutRate: number; standardRate: number };
@@ -131,6 +150,8 @@ export async function candidatesAndPriceFor(
   client: PrismaClient,
   job: DispatchJobRow,
   slot: SlotInput,
+  /** Feature 4006: a reschedule does not count the job's own block as busy. */
+  ignoreOwnBlock = false,
 ): Promise<CandidatesAndPrice | { error: string }> {
   const location = job.serviceLocation as { lat?: unknown; lng?: unknown } | null;
   if (!location || typeof location.lat !== "number" || typeof location.lng !== "number") {
@@ -150,6 +171,7 @@ export async function candidatesAndPriceFor(
     date: slot.date,
     holdStart: start,
     holdEnd: end,
+    ...(ignoreOwnBlock ? { ignoreJobId: job.id } : {}),
   });
   return { level, price, candidates };
 }
@@ -174,6 +196,13 @@ export interface DispatchSuccess {
   siteAddress: Address;
   /** Who to ask for at the site (Feature 4008, decision 6), read inside the dispatch transaction. */
   siteContactLine: string;
+  /** Feature 4006, reschedule only: the slot of the booking just swapped out. */
+  previousSlot: Date | null;
+}
+
+/** Feature 4006: a reschedule books the SAME contractor again, inside the swap. */
+export interface RescheduleBy {
+  userId: string;
 }
 
 class Refused extends Error {
@@ -185,9 +214,10 @@ class Refused extends Error {
 export async function dispatchJob(
   client: PrismaClient,
   reference: string,
-  contractorCode: string,
+  contractorCode: string | null,
   slot: SlotInput,
   now: Date = new Date(),
+  reschedule?: RescheduleBy,
 ): Promise<DispatchSuccess | DispatchFailure> {
   try {
     const result = await client.$transaction(async (tx) => {
@@ -221,17 +251,33 @@ export async function dispatchJob(
       // Lock the Job row (must still be `new`) -- 4001's pattern.
       await tx.$queryRaw`SELECT id FROM "Job" WHERE id = ${job.id} FOR UPDATE`;
       const freshStatus = (await tx.job.findUniqueOrThrow({ where: { id: job.id }, select: { status: true } })).status;
-      if (freshStatus !== "new") {
+
+      // Feature 4006: a reschedule is for a booked job, and books the contractor who holds it.
+      let active: { id: string; contractorId: string; slot: Date | null } | null = null;
+      if (reschedule !== undefined) {
+        if (freshStatus !== "assigned" && freshStatus !== "scheduled") {
+          throw new Refused({ ok: false, status: 409, error: `The job is ${freshStatus} -- it cannot be rescheduled.` });
+        }
+        const row = await tx.assignment.findFirst({
+          where: { jobId: job.id, status: { in: ["assigned", "accepted"] } },
+          orderBy: { dispatchedAt: "desc" },
+        });
+        if (row === null) {
+          throw new Refused({ ok: false, status: 409, error: "The job has no booking to move." });
+        }
+        active = { id: row.id, contractorId: row.contractorId, slot: row.confirmedSlot ?? row.proposedSlot };
+      } else if (freshStatus !== "new") {
         throw new Refused({ ok: false, status: 409, error: `The job is already ${freshStatus} -- it cannot be dispatched again.` });
       }
 
       // Lock the Contractor row -- two operators can never book one
       // contractor into the same hour (plan decision 8).
-      const contractorId = (
-        await tx.contractor.findUnique({ where: { code: contractorCode }, select: { id: true } })
-      )?.id;
+      const contractorId =
+        active !== null
+          ? active.contractorId
+          : (await tx.contractor.findUnique({ where: { code: contractorCode ?? "" }, select: { id: true } }))?.id;
       if (!contractorId) {
-        throw new Refused({ ok: false, status: 404, error: `no contractor "${contractorCode}"`, field: "contractorCode" });
+        throw new Refused({ ok: false, status: 404, error: `no contractor "${contractorCode ?? ""}"`, field: "contractorCode" });
       }
       await tx.$queryRaw`SELECT id FROM "Contractor" WHERE id = ${contractorId} FOR UPDATE`;
 
@@ -253,6 +299,12 @@ export async function dispatchJob(
       );
       if (!guarded.ready || guarded.why !== null) {
         throw new Refused({ ok: false, status: 409, error: guarded.why ?? "Not ready to dispatch" });
+      }
+
+      // Feature 4006: the old booking comes off first, so the clash check below never
+      // counts the job's own block. A refusal further down rolls the swap back whole.
+      if (active !== null && reschedule !== undefined) {
+        await cancelBooking(tx, active.id, reschedule.userId, now);
       }
 
       // Re-run under the contractor's own lock (AC27): sees any hold another
@@ -285,6 +337,8 @@ export async function dispatchJob(
           status: "assigned",
           proposedSlot: start,
           ratingAtDispatch: contractor.averageRating,
+          // The same instant a reschedule cancels the old booking: that is how Earlier bookings reads "Moved".
+          dispatchedAt: now,
         },
       });
 
@@ -313,6 +367,7 @@ export async function dispatchJob(
         level,
         siteAddress: updatedSite,
         siteContactLine: siteContactLine(job.siteContact, job.customer.name),
+        previousSlot: active?.slot ?? null,
       };
     });
     return result;
@@ -345,6 +400,45 @@ export async function sendDispatchNotifications(client: PrismaClient, success: D
         recipientType: "contractor",
         recipientId: success.contractorId,
         idempotencyKey: `job_dispatched:assignment:${success.assignmentId}:${channel}`,
+        relatedType: "assignment",
+        relatedId: success.assignmentId,
+        jobId: success.jobId,
+        context,
+        capabilityLink: {
+          type: CapabilityTokenType.respond,
+          assignmentId: success.assignmentId,
+          expiresAt: success.proposedSlot.toISOString(),
+        },
+      },
+      client,
+    );
+  }
+}
+
+/**
+ * Feature 4006: ONE "job moved" message to the contractor, with a fresh Accept link. The customer
+ * hears only when he accepts (her ordinary slot confirmation). Asked after commit, like dispatch.
+ */
+export async function sendRescheduleNotifications(client: PrismaClient, success: DispatchSuccess): Promise<void> {
+  const address = success.siteAddress;
+  const context = {
+    firstName: success.contractorFirstName,
+    jobReference: success.jobReference,
+    trade: success.trade,
+    street: address.street,
+    suburb: address.suburb,
+    oldSlotLabel: success.previousSlot === null ? "the old time" : formatSlotLabel(success.jobTimezone, success.previousSlot),
+    newSlotLabel: formatSlotLabel(success.jobTimezone, success.proposedSlot),
+    siteContact: success.siteContactLine,
+  };
+  for (const channel of ["email", "sms"] as const) {
+    await sendNotification(
+      {
+        type: "job_moved",
+        channel,
+        recipientType: "contractor",
+        recipientId: success.contractorId,
+        idempotencyKey: `job_moved:assignment:${success.assignmentId}:${channel}`,
         relatedType: "assignment",
         relatedId: success.assignmentId,
         jobId: success.jobId,

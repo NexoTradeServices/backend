@@ -350,3 +350,29 @@ describe("AC10 -- money is not job state", () => {
     ]);
   });
 });
+
+// Feature 4006, AC11: Foundations / Ground rules, the audit-trail convention -- every action on
+// money, status or contractor standing is a "who" and a "when" pair. A test that names every pair
+// that has shipped, so removing one fails here instead of silently losing the trail.
+describe("4006 AC11 -- the shipped audit pairs are all there", () => {
+  const AUDIT_PAIRS: { table: string; what: string; at: string; by: string }[] = [
+    { table: "Job", what: "job cancel", at: "cancelledAt", by: "cancelledByUserId" },
+    { table: "Assignment", what: "assignment cancel", at: "cancelledAt", by: "cancelledByUserId" },
+    { table: "Invoice", what: "invoice void", at: "voidedAt", by: "voidedByUserId" },
+    { table: "Refund", what: "refund approval", at: "approvedAt", by: "approvedByUserId" },
+    { table: "ContractorSettlement", what: "payout", at: "paidAt", by: "paidByUserId" },
+    { table: "ContractorSettlement", what: "settlement superseded", at: "supersededAt", by: "supersededByUserId" },
+    { table: "PlatformSettings", what: "GST switch", at: "gstStatusChangedAt", by: "gstStatusChangedByUserId" },
+    { table: "Contractor", what: "contractor status", at: "statusChangedAt", by: "statusChangedByUserId" },
+    { table: "ContractorSpecialty", what: "specialty status", at: "statusChangedAt", by: "statusChangedByUserId" },
+    { table: "ContractorAgreementVersion", what: "agreement issued", at: "issuedAt", by: "issuedByUserId" },
+    { table: "ContractorPayAdjustment", what: "pay adjustment", at: "createdAt", by: "createdByUserId" },
+  ];
+
+  test.each(AUDIT_PAIRS)("AC11: $what keeps $table.$at and $table.$by", async ({ table, at, by }) => {
+    const rows = await db.$queryRaw<{ column_name: string }[]>`
+      SELECT column_name FROM information_schema.columns
+       WHERE table_name = ${table} AND column_name IN (${at}, ${by})`;
+    expect(rows.map((row) => row.column_name).sort()).toEqual([at, by].sort());
+  });
+});

@@ -162,31 +162,37 @@ export async function consumeCapabilityToken(
 
 /**
  * Decision 7, revocation hook: reassigning or cancelling an assignment kills
- * its respond token (the old SMS goes dead). Row deletion IS revocation
- * (ADR 0004). Returns how many rows were deleted.
+ * its respond token (the old SMS goes dead). Feature 4006: revocation expires
+ * the row and KEEPS it, so a link killed by a reassign or cancel can still say
+ * why (the row's assignment says what happened). A row already past its expiry
+ * is left as it is. Returns how many rows were expired.
  */
 export async function revokeByAssignment(
   client: CapabilityTokenDb,
   assignmentId: string,
   types?: CapabilityTokenType[],
+  at: Date = new Date(),
 ): Promise<number> {
-  const { count } = await client.capabilityToken.deleteMany({
-    where: { assignmentId, ...(types === undefined ? {} : { type: { in: types } }) },
+  const { count } = await client.capabilityToken.updateMany({
+    where: { assignmentId, expiresAt: { gt: at }, ...(types === undefined ? {} : { type: { in: types } }) },
+    data: { expiresAt: at },
   });
   return count;
 }
 
 /**
- * Decision 7, revocation hook: cancelling a job kills its track token.
- * Returns how many rows were deleted.
+ * Decision 7, revocation hook: cancelling a job kills its track token
+ * (expired and kept, as above). Returns how many rows were expired.
  */
 export async function revokeByJob(
   client: CapabilityTokenDb,
   jobId: string,
   types?: CapabilityTokenType[],
+  at: Date = new Date(),
 ): Promise<number> {
-  const { count } = await client.capabilityToken.deleteMany({
-    where: { jobId, ...(types === undefined ? {} : { type: { in: types } }) },
+  const { count } = await client.capabilityToken.updateMany({
+    where: { jobId, expiresAt: { gt: at }, ...(types === undefined ? {} : { type: { in: types } }) },
+    data: { expiresAt: at },
   });
   return count;
 }

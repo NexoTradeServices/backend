@@ -23,6 +23,16 @@ import { paymentReceivedEmail } from "./payment-received.email.js";
 import { paymentClosedInvoiceEmail } from "./payment-closed-invoice.email.js";
 import { settlementDraftEmail } from "./settlement-draft.email.js";
 import { payoutSentEmail } from "./payout-sent.email.js";
+import { jobMovedEmail } from "./job-moved.email.js";
+import { jobMovedSms } from "./job-moved.sms.js";
+import { takenOffEmail } from "./taken-off.email.js";
+import { takenOffSms } from "./taken-off.sms.js";
+import { jobCancelledContractorEmail } from "./job-cancelled-contractor.email.js";
+import { jobCancelledContractorSms } from "./job-cancelled-contractor.sms.js";
+import { jobCancelledEmail } from "./job-cancelled.email.js";
+import { jobCancelledSms } from "./job-cancelled.sms.js";
+import { jobUpdateEmail } from "./job-update.email.js";
+import { jobUpdateSms } from "./job-update.sms.js";
 
 /** Every template this build ships. Features append; nothing else registers. */
 const BUILT_IN: NotificationTemplate[] = [
@@ -43,6 +53,16 @@ const BUILT_IN: NotificationTemplate[] = [
   paymentClosedInvoiceEmail,
   settlementDraftEmail,
   payoutSentEmail,
+  jobMovedEmail,
+  jobMovedSms,
+  takenOffEmail,
+  takenOffSms,
+  jobCancelledContractorEmail,
+  jobCancelledContractorSms,
+  jobCancelledEmail,
+  jobCancelledSms,
+  jobUpdateEmail,
+  jobUpdateSms,
 ];
 
 function key(type: string, channel: NotificationChannel): string {

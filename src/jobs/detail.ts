@@ -11,6 +11,7 @@ import { editableForSeconds, readNotes } from "./notes.js";
 import { jobMessages, type MessageView } from "./messages.js";
 import { asSiteContact, isClosed, type SiteContactView } from "./site-contact.js";
 import { billedHours } from "./billed-hours.js";
+import { CANCELLED_KIND_LABELS, cancelledKindOf } from "./booking.js";
 import { entryViewOf, returnVisitMinimum, savedEntries, type EntryView } from "./visit.js";
 import { isServiceLevelMultipliers, priceLine } from "./dispatch-level.js";
 import { invoiceViewOf, type InvoiceView } from "../invoices/view.js";
@@ -43,7 +44,7 @@ export interface NoteView {
 export interface EarlierBooking {
   contractorName: string;
   contractorCode: string;
-  /** "Declined" -- 4006's cancelled bookings join this list under their own word. */
+  /** "Declined", or (Feature 4006) "Rescheduled", "Reassigned", "Cancelled". */
   what: string;
   /** When it happened, in the job's zone. */
   whenLabel: string;
@@ -64,6 +65,31 @@ export interface VisitView {
   completionNotes: string | null;
   parts: { name: string; qty: number; unitPrice: number; lineTotal: number }[];
 }
+
+/** Feature 4006: the job page's three actions, read from the status alone. */
+export interface JobActions {
+  reschedule: boolean;
+  takeOff: boolean;
+  cancel: boolean;
+}
+
+/** Feature 4006: how a cancelled job reads on the Request card. */
+export interface CancelledFacts {
+  reasonLabel: string;
+  note: string | null;
+  byName: string;
+  /** "10 Oct 2026" -- the day, on the job's clock. */
+  atLabel: string;
+}
+
+const CANCEL_REASON_LABELS: Record<string, string> = {
+  customer_changed_mind: "Customer changed their mind",
+  customer_no_show: "Customer no-show",
+  no_coverage: "Nobody can cover the area",
+  duplicate: "Duplicate",
+  price: "Price",
+  other: "Other",
+};
 
 export interface JobDetail {
   reference: string;
@@ -107,6 +133,10 @@ export interface JobDetail {
   /** AC29: the level and its price, shown once the job is dispatched (Job.serviceLevel set). */
   serviceLevel: string | null;
   priceLine: string | null;
+  /** Feature 4006: which of Reschedule, Reassign and Cancel job the page offers. */
+  actions: JobActions;
+  /** Feature 4006: set once the job is cancelled. */
+  cancelled: CancelledFacts | null;
   /** AC1/AC2: the job page's own Dispatch button. */
   canDispatch: boolean;
   dispatchBlockedReason: string | null;
@@ -127,25 +157,67 @@ export function answersOf(selectedOptions: unknown): string[] {
 /**
  * Plan decision 10: every assignment on the job except the one in play,
  * newest first -- the contractor's name and code, what happened and when,
- * the slot, and his note when there is one. 4003 makes only declined ones.
+ * the slot, and his note when there is one. Declined (4003), and the ones
+ * Mike ended: Rescheduled, Reassigned, Cancelled (4006, derived -- see booking.ts).
  */
 async function earlierBookingsOf(client: PrismaClient, job: JobWithRelations, now: Date): Promise<EarlierBooking[]> {
   const inPlay = job.assignments[0]?.id;
   const rows = await client.assignment.findMany({
-    where: { jobId: job.id, status: "declined", ...(inPlay === undefined ? {} : { id: { not: inPlay } }) },
+    where: { jobId: job.id, status: { in: ["declined", "cancelled"] }, ...(inPlay === undefined ? {} : { id: { not: inPlay } }) },
     include: { contractor: { select: { name: true, code: true } } },
   });
-  return rows
-    .map((row) => ({ row, at: row.declinedAt ?? row.dispatchedAt }))
-    .sort((a, b) => b.at.getTime() - a.at.getTime() || b.row.id.localeCompare(a.row.id))
-    .map(({ row, at }) => ({
+  const entries = rows
+    .map((row) => ({
+      row,
+      at: row.status === "cancelled" ? (row.cancelledAt ?? row.dispatchedAt) : (row.declinedAt ?? row.dispatchedAt),
+    }))
+    .sort((a, b) => b.at.getTime() - a.at.getTime() || b.row.id.localeCompare(a.row.id));
+  const result: EarlierBooking[] = [];
+  for (const { row, at } of entries) {
+    const what =
+      row.status === "cancelled"
+        ? CANCELLED_KIND_LABELS[await cancelledKindOf(client, row, job)]
+        : "Declined";
+    result.push({
       contractorName: row.contractor.name,
       contractorCode: row.contractor.code,
-      what: "Declined",
+      what,
       whenLabel: formatDateTimeLabel(job.timezone, at, now),
-      slotLabel: row.proposedSlot === null ? null : formatSlotLabel(job.timezone, row.proposedSlot, now),
-      note: row.declineNote,
-    }));
+      slotLabel:
+        row.status === "cancelled"
+          ? slotLabelOf(job.timezone, row.confirmedSlot ?? row.proposedSlot, now)
+          : slotLabelOf(job.timezone, row.proposedSlot, now),
+      note: row.status === "cancelled" ? null : row.declineNote,
+    });
+  }
+  return result;
+}
+
+function slotLabelOf(zone: string, slot: Date | null, now: Date): string | null {
+  return slot === null ? null : formatSlotLabel(zone, slot, now);
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** Voice and tone: a friendly date reads "9 Sep 2026", in the job's own zone (month names fixed, never the ICU's "Sept"). */
+function friendlyDate(zone: string, moment: Date): string {
+  const parts = new Intl.DateTimeFormat("en-AU", { timeZone: zone, day: "numeric", month: "numeric", year: "numeric" }).formatToParts(moment);
+  const part = (type: string): string => parts.find((entry) => entry.type === type)?.value ?? "";
+  return `${part("day")} ${MONTHS[Number(part("month")) - 1] ?? ""} ${part("year")}`;
+}
+
+async function cancelledFactsOf(client: PrismaClient, job: JobWithRelations): Promise<CancelledFacts | null> {
+  if (job.status !== "cancelled") return null;
+  const by =
+    job.cancelledByUserId === null
+      ? null
+      : await client.user.findUnique({ where: { id: job.cancelledByUserId }, select: { name: true } });
+  return {
+    reasonLabel: job.cancelReason === null ? "Cancelled" : (CANCEL_REASON_LABELS[job.cancelReason] ?? job.cancelReason),
+    note: job.cancelNote,
+    byName: by === null ? "the office" : (by.name.split(" ")[0] ?? by.name),
+    atLabel: job.cancelledAt === null ? "" : friendlyDate(job.timezone, job.cancelledAt),
+  };
 }
 
 async function visitOf(client: PrismaClient, job: JobWithRelations): Promise<VisitView | null> {
@@ -228,6 +300,12 @@ export async function jobDetail(
     visit: await visitOf(client, job),
     invoice: await invoiceViewOf(client, job.id, job.timezone),
     earlierBookings,
+    actions: {
+      reschedule: job.status === "assigned" || job.status === "scheduled",
+      takeOff: job.status === "assigned" || job.status === "scheduled",
+      cancel: job.status === "new" || job.status === "assigned" || job.status === "scheduled",
+    },
+    cancelled: await cancelledFactsOf(client, job),
     serviceLevel: job.serviceLevel,
     priceLine: price,
     canDispatch: job.status === "new" && hasAddress,

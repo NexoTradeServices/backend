@@ -11,6 +11,9 @@
 //   PUT  /api/jobs/:reference/time-entries    Feature 5001: ops fixes the time entries until Complete
 //   POST /api/jobs/:reference/invoice/resend  Feature 6001: the invoice email and text, again
 //   POST /api/jobs/:reference/invoice/check-payment  Feature 6002: ask Stripe whether she has paid
+//   POST /api/jobs/:reference/reschedule      Feature 4006: new time for the same contractor
+//   POST /api/jobs/:reference/take-off        Feature 4006: free the contractor, job back to New
+//   POST /api/jobs/:reference/cancel          Feature 4006: close the job with a reason (Mike only)
 import type { Router } from "express";
 import { Router as createRouter } from "express";
 import type { Request, Response } from "express";
@@ -30,11 +33,15 @@ import {
   candidatesAndPriceFor,
   dispatchFactsOf,
   dispatchJob,
+  slotParts,
+  type DispatchFacts,
   formatDollarsPrice,
   loadDispatchJob,
   parseSlotInput,
   sendDispatchNotifications,
+  sendRescheduleNotifications,
 } from "./dispatch.js";
+import { cancelJob, parseCancelInput, takeOffJob } from "./changes.js";
 
 type WithReference = Request<{ reference: string }>;
 
@@ -272,7 +279,36 @@ export function jobRoutes(client: PrismaClient): Router {
         res.status(404).json({ error: "not found" });
         return;
       }
-      res.json(dispatchFactsOf(job));
+      const facts = dispatchFactsOf(job);
+      if (req.query["mode"] !== "reschedule") {
+        res.json(facts);
+        return;
+      }
+      // Feature 4006: reschedule mode -- the contractor holding the booking is fixed, and the page
+      // starts from the booked slot.
+      const booking = await client.assignment.findFirst({
+        where: { jobId: job.id, status: { in: ["assigned", "accepted"] } },
+        orderBy: { dispatchedAt: "desc" },
+        include: { contractor: { select: { code: true, name: true } }, calendarEvents: { take: 1 } },
+      });
+      if ((job.status !== "assigned" && job.status !== "scheduled") || booking === null) {
+        res.status(409).json({ error: `The job is ${job.status} -- it cannot be rescheduled.` });
+        return;
+      }
+      const block = booking.calendarEvents[0] ?? null;
+      const currentSlot: DispatchFacts["currentSlot"] =
+        block === null ? null : slotParts(job.timezone, block.startTime, block.endTime);
+      res.json({
+        ...facts,
+        mode: "reschedule",
+        contractor: {
+          code: booking.contractor.code,
+          name: booking.contractor.name,
+          firstName: booking.contractor.name.split(" ")[0] ?? booking.contractor.name,
+        },
+        currentSlot,
+        defaults: currentSlot ?? facts.defaults,
+      });
     })().catch(failWith(res, "GET /api/jobs/:reference/dispatch"));
   });
 
@@ -292,7 +328,7 @@ export function jobRoutes(client: PrismaClient): Router {
           res.status(parsed.status).json({ error: parsed.error, field: parsed.field });
           return;
         }
-        const result = await candidatesAndPriceFor(client, job, parsed.data);
+        const result = await candidatesAndPriceFor(client, job, parsed.data, req.query["mode"] === "reschedule");
         if ("error" in result) {
           res.status(400).json({ error: result.error });
           return;
@@ -333,6 +369,88 @@ export function jobRoutes(client: PrismaClient): Router {
         toast: `${result.jobReference} dispatched to ${result.contractorFirstName}. Waiting for his answer.`,
       });
     })().catch(failWith(res, "POST /api/jobs/:reference/dispatch"));
+  });
+
+  // Feature 4006 -- reschedule: the old booking off and a fresh one to the SAME contractor, in one
+  // step; he is asked once, with a new Accept link. The customer hears when he accepts.
+  router.post("/:reference/reschedule", requireRole(Role.ops), (req: WithReference, res: Response) => {
+    void (async () => {
+      if (!req.authUser) {
+        res.status(401).json({ error: "not signed in" });
+        return;
+      }
+      const parsed = parseSlotInput((req.body ?? {}) as Record<string, unknown>);
+      if (!parsed.ok) {
+        res.status(parsed.status).json({ error: parsed.error, field: parsed.field });
+        return;
+      }
+      const result = await dispatchJob(client, req.params.reference, null, parsed.data, new Date(), {
+        userId: req.authUser.id,
+      });
+      if (!result.ok) {
+        res.status(result.status).json({ error: result.error, field: result.field });
+        return;
+      }
+      await sendRescheduleNotifications(client, result);
+      const fresh = await loadJob(client, result.jobReference);
+      if (!fresh) {
+        res.status(500).json({ error: "internal error" });
+        return;
+      }
+      res.json({
+        job: await jobDetail(client, fresh, req.authUser.id),
+        toast: `${result.jobReference} rescheduled. Waiting for ${result.contractorFirstName}'s answer.`,
+      });
+    })().catch(failWith(res, "POST /api/jobs/:reference/reschedule"));
+  });
+
+  router.post("/:reference/take-off", requireRole(Role.ops), (req: WithReference, res: Response) => {
+    void (async () => {
+      if (!req.authUser) {
+        res.status(401).json({ error: "not signed in" });
+        return;
+      }
+      const result = await takeOffJob(client, req.params.reference, req.authUser.id);
+      if (!result.ok) {
+        res.status(result.status).json({ error: result.error, field: result.field });
+        return;
+      }
+      const fresh = await loadJob(client, result.jobReference);
+      if (!fresh) {
+        res.status(500).json({ error: "internal error" });
+        return;
+      }
+      res.json({
+        job: await jobDetail(client, fresh, req.authUser.id),
+        toast: `${result.jobReference} reassigned. It's back in New.`,
+      });
+    })().catch(failWith(res, "POST /api/jobs/:reference/take-off"));
+  });
+
+  // Cancel is Mike's, on the customer's call (Cancellation policy): ops only, which admits the owner.
+  router.post("/:reference/cancel", requireRole(Role.ops), (req: WithReference, res: Response) => {
+    void (async () => {
+      if (!req.authUser) {
+        res.status(401).json({ error: "not signed in" });
+        return;
+      }
+      const parsed = parseCancelInput(req.body);
+      if (!parsed.ok) {
+        res.status(parsed.status).json({ error: parsed.error, field: parsed.field });
+        return;
+      }
+      const result = await cancelJob(client, req.params.reference, req.authUser.id, parsed.data);
+      if (!result.ok) {
+        res.status(result.status).json({ error: result.error, field: result.field });
+        return;
+      }
+      const fresh = await loadJob(client, result.jobReference);
+      if (!fresh) {
+        res.status(500).json({ error: "internal error" });
+        return;
+      }
+      res.json({ job: await jobDetail(client, fresh, req.authUser.id), toast: `${result.jobReference} cancelled.` });
+    })().catch(failWith(res, "POST /api/jobs/:reference/cancel"));
   });
 
   // The Phase 2 stub (Dispatch Logic -- Phase 2): nothing calls it, no badge renders.
