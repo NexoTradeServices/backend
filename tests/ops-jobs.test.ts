@@ -117,6 +117,17 @@ interface DetailBody {
   description: string | null;
   answers: string[];
   customer: { code: string; name: string; businessName: string | null; phone: string | null; email: string; billingAddress: unknown };
+  customerRating: {
+    label: string;
+    jobsInLastYear: number;
+    line: string;
+    missedVisits: number;
+    waived: number;
+    lateCancellations: number;
+    disputes: number;
+    overdueInvoices: number;
+    totalDue: number;
+  };
   siteAddress: unknown;
   siteSameAsBilling: boolean;
   siteLocked: boolean;
@@ -661,6 +672,21 @@ describe("AC12 -- the contractor card", () => {
 
     const fresh = await makeJob();
     expect((await detail(mike, fresh.reference)).contractor).toBeNull();
+  });
+
+  test("4010 AC8: every job page carries the customer rating -- a first-time customer's fresh job, and a job in any status", async () => {
+    const mike = await signInCookie("mike@idelta.com.au");
+    const fresh = await makeJob({ newCustomer: { name: "Karl", email: "karl.rating@idelta.com.au", phone: "0400 000 998" }, place: JOONDALUP });
+    const first = (await detail(mike, fresh.reference)).customerRating;
+    expect(first.label).toBe("first_time");
+    expect(first.line).toBe("No earlier jobs with us");
+    expect(first).toMatchObject({ missedVisits: 0, waived: 0, lateCancellations: 0, disputes: 0, overdueInvoices: 0, totalDue: 0 });
+
+    for (const reference of ["JOB-1042", "JOB-1051", "JOB-1039"]) {
+      const rating = (await detail(mike, reference)).customerRating;
+      expect(["first_time", "returning", "regular", "old"]).toContain(rating.label);
+      expect(typeof rating.line).toBe("string");
+    }
   });
 });
 

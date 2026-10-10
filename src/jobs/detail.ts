@@ -11,6 +11,7 @@ import { editableForSeconds, readNotes } from "./notes.js";
 import { jobMessages, type MessageView } from "./messages.js";
 import { asSiteContact, isClosed, type SiteContactView } from "./site-contact.js";
 import { billedHours } from "./billed-hours.js";
+import { customerRatingOf, friendlyDate, type CustomerRating } from "./customer-rating.js";
 import { CANCELLED_KIND_LABELS, cancelledKindOf } from "./booking.js";
 import { entryViewOf, returnVisitMinimum, savedEntries, type EntryView } from "./visit.js";
 import { isServiceLevelMultipliers, priceLine } from "./dispatch-level.js";
@@ -114,6 +115,8 @@ export interface JobDetail {
     email: string;
     billingAddress: Address | null;
   };
+  /** Feature 4010: who she is, worked out from her history on every read -- nothing stored. */
+  customerRating: CustomerRating;
   siteAddress: Address | null;
   /** Plan decision 6: derived, never stored. */
   siteSameAsBilling: boolean;
@@ -195,15 +198,6 @@ async function earlierBookingsOf(client: PrismaClient, job: JobWithRelations, no
 
 function slotLabelOf(zone: string, slot: Date | null, now: Date): string | null {
   return slot === null ? null : formatSlotLabel(zone, slot, now);
-}
-
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-/** Voice and tone: a friendly date reads "9 Sep 2026", in the job's own zone (month names fixed, never the ICU's "Sept"). */
-function friendlyDate(zone: string, moment: Date): string {
-  const parts = new Intl.DateTimeFormat("en-AU", { timeZone: zone, day: "numeric", month: "numeric", year: "numeric" }).formatToParts(moment);
-  const part = (type: string): string => parts.find((entry) => entry.type === type)?.value ?? "";
-  return `${part("day")} ${MONTHS[Number(part("month")) - 1] ?? ""} ${part("year")}`;
 }
 
 async function cancelledFactsOf(client: PrismaClient, job: JobWithRelations): Promise<CancelledFacts | null> {
@@ -291,6 +285,7 @@ export async function jobDetail(
       email: job.customer.email,
       billingAddress,
     },
+    customerRating: await customerRatingOf(client, job.customerId, job.id, settings?.timezone ?? job.timezone, now),
     siteAddress,
     siteSameAsBilling: siteAddress === null || sameAddress(siteAddress, billingAddress),
     siteLocked: job.status !== "new",
