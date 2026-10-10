@@ -427,7 +427,7 @@ export async function sendRescheduleNotifications(client: PrismaClient, success:
     trade: success.trade,
     street: address.street,
     suburb: address.suburb,
-    oldSlotLabel: success.previousSlot === null ? "The old time" : formatSlotLabel(success.jobTimezone, success.previousSlot),
+    oldSlotLabel: success.previousSlot === null ? "the old time" : formatSlotLabel(success.jobTimezone, success.previousSlot),
     newSlotLabel: formatSlotLabel(success.jobTimezone, success.proposedSlot),
     siteContact: success.siteContactLine,
   };

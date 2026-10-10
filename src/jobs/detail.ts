@@ -44,7 +44,7 @@ export interface NoteView {
 export interface EarlierBooking {
   contractorName: string;
   contractorCode: string;
-  /** "Declined", or (Feature 4006) "Moved", "Taken off", "Cancelled". */
+  /** "Declined", or (Feature 4006) "Rescheduled", "Reassigned", "Cancelled". */
   what: string;
   /** When it happened, in the job's zone. */
   whenLabel: string;
@@ -133,7 +133,7 @@ export interface JobDetail {
   /** AC29: the level and its price, shown once the job is dispatched (Job.serviceLevel set). */
   serviceLevel: string | null;
   priceLine: string | null;
-  /** Feature 4006: which of Reschedule, Take off and Cancel job the page offers. */
+  /** Feature 4006: which of Reschedule, Reassign and Cancel job the page offers. */
   actions: JobActions;
   /** Feature 4006: set once the job is cancelled. */
   cancelled: CancelledFacts | null;
@@ -158,7 +158,7 @@ export function answersOf(selectedOptions: unknown): string[] {
  * Plan decision 10: every assignment on the job except the one in play,
  * newest first -- the contractor's name and code, what happened and when,
  * the slot, and his note when there is one. Declined (4003), and the ones
- * Mike ended: Moved, Taken off, Cancelled (4006, derived -- see booking.ts).
+ * Mike ended: Rescheduled, Reassigned, Cancelled (4006, derived -- see booking.ts).
  */
 async function earlierBookingsOf(client: PrismaClient, job: JobWithRelations, now: Date): Promise<EarlierBooking[]> {
   const inPlay = job.assignments[0]?.id;

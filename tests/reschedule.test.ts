@@ -1,14 +1,14 @@
 // Feature 4006 -- reschedule (Ops job actions; Contractor Workflow step 5)
 //
 // AC1  rescheduling the scheduled JOB-1042 swaps Bob's bookings in one step: old cancelled (Mike + time),
-//      block off, new booking + hold block, the new date's level, job Assigned; Bob gets ONE "Job moved"
+//      block off, new booking + hold block, the new date's level, job Assigned; Bob gets ONE "Job rescheduled"
 //      email + text with the old time off, the new time and an Accept link; Sarah gets nothing
 // AC2  Bob accepting the new time sends Sarah her slot confirmation with the new time and that date's
 //      price (a Saturday move states the weekend price); Lena gets her own wording
 // AC3  the dispatch guards run again without counting the job's own old block; a refusal leaves the old
 //      booking untouched
 // AC8  Bob's old link says "moved" - even one he had already answered
-// AC9  Earlier bookings lists the old booking as Moved
+// AC9  Earlier bookings lists the old booking as Rescheduled
 // AC12 the old link's row is kept, expired
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import type { Express } from "express";
@@ -17,7 +17,6 @@ import { resetReferenceSequences, testClient } from "./helpers/database.js";
 import { recordingAdapter } from "./helpers/notifications.js";
 import { drainOnce } from "../src/notifications/index.js";
 import { registerProvider, resetProviders } from "../src/notifications/providers/registry.js";
-import { formatDollars } from "../src/enquiries/money.js";
 import {
   MONDAY,
   SATURDAY,
@@ -71,7 +70,7 @@ describe("AC1 -- the swap", () => {
 
     const res = await reschedule(mike, MONDAY_7AM);
     expect(res.status).toBe(200);
-    expect((res.body as { toast: string }).toast).toBe("JOB-1042 moved. Waiting for Bob's answer.");
+    expect((res.body as { toast: string }).toast).toBe("JOB-1042 rescheduled. Waiting for Bob's answer.");
 
     const old = await db.assignment.findUniqueOrThrow({ where: { id: assignmentId } });
     expect(old.status).toBe("cancelled");
@@ -94,16 +93,16 @@ describe("AC1 -- the swap", () => {
     expect(job.status).toBe("assigned");
     expect(job.serviceLevel).toBe("normal");
 
-    // ONE "Job moved" per channel to Bob, nothing new to the customer or the site contact.
+    // ONE "Job rescheduled" per channel to Bob, nothing new to the customer or the site contact.
     const moved = await rowsOf(db, jobId, "job_moved");
     expect(moved.map((row) => row.channel).sort()).toEqual(["email", "sms"]);
     expect(moved.every((row) => row.recipientType === "contractor")).toBe(true);
     expect(await db.notification.count({ where: { jobId, recipientType: { in: ["customer", "site_contact"] } } })).toBe(before);
 
     await drainOnce(db);
-    const mail = email.sent.find((m) => m.to === "bob@idelta.com.au" && (m.message.subject ?? "").startsWith("Job moved"));
+    const mail = email.sent.find((m) => m.to === "bob@idelta.com.au" && (m.message.subject ?? "").startsWith("Job rescheduled"));
     expect(mail?.message.subject).toContain("JOB-1042");
-    expect(mail?.message.text).toMatch(/is off/);
+    expect(mail?.message.text).toMatch(/has been rescheduled to Mon 15\/03, 7:00am AWST\. You are no longer booked for /);
     expect(mail?.message.text).toContain("Site contact: Lena Park");
     expect(mail?.message.text).not.toContain("0400"); // the phone is never given
     expect(mail?.message.text).toMatch(/\/a\/[\w-]+/);
@@ -119,7 +118,7 @@ describe("AC1 -- the swap", () => {
 });
 
 describe("AC2 -- Bob accepts the new time", () => {
-  test("AC2: Sarah's slot confirmation states the new time and the Saturday (weekend) price; Lena gets her own wording", async () => {
+  test("AC2: Sarah's slot confirmation states the new time (no message states a price); Lena gets her own wording", async () => {
     const mike = await signIn(app, "mike@idelta.com.au");
     await acceptJob1042(db, app);
     await drainOnce(db);
@@ -132,14 +131,11 @@ describe("AC2 -- Bob accepts the new time", () => {
     expect((await request(app).post(`/api/respond/${token}/accept`).send({})).status).toBe(200);
     await drainOnce(db);
 
-    const serviceType = await db.serviceType.findUniqueOrThrow({ where: { trade: "Plumbing" } });
-    const multipliers = serviceType.serviceLevelMultipliers as { weekend: number };
-    const callout = formatDollars(Math.round(serviceType.customerCalloutRate * multipliers.weekend));
-    const standard = formatDollars(Math.round(serviceType.customerStandardRate * multipliers.weekend));
-
-    const sarah = email.sent.find((m) => m.to === "sarah@idelta.com.au" && (m.message.subject ?? "").startsWith("Booked"));
+    const sarah = email.sent.find((m) => m.to === "sarah@idelta.com.au" && (m.message.subject ?? "").startsWith("Job booked"));
     expect(sarah?.message.text).toContain("Sat 20/03, 8:00am AWST");
-    expect(sarah?.message.text).toContain(`${callout} call-out including the first hour, then ${standard} an hour`);
+    // Reworded at UAT: no message states a price.
+    expect(sarah?.message.text).not.toContain("$");
+    expect(sarah?.message.text).toContain("The site contact has been informed.");
     expect(sarah?.message.text).not.toContain("Lena");
 
     const lena = email.sent.find((m) => m.to === "lena@idelta.com.au");
@@ -240,7 +236,7 @@ describe("AC8, AC9, AC12 -- the old link and the history", () => {
     for (const row of rows) expect(row.expiresAt.getTime()).toBeLessThanOrEqual(Date.now());
   });
 
-  test("AC9: the job page lists the old booking under Earlier bookings as Moved, with the old time", async () => {
+  test("AC9: the job page lists the old booking under Earlier bookings as Rescheduled, with the old time", async () => {
     const mike = await signIn(app, "mike@idelta.com.au");
     const { assignmentId } = await acceptJob1042(db, app);
     const old = await db.assignment.findUniqueOrThrow({ where: { id: assignmentId } });
@@ -250,7 +246,7 @@ describe("AC8, AC9, AC12 -- the old link and the history", () => {
       contractor: { standing: string } | null;
     };
     expect(detail.earlierBookings).toHaveLength(1);
-    expect(detail.earlierBookings[0]).toMatchObject({ contractorName: "Bob Reilly", what: "Moved" });
+    expect(detail.earlierBookings[0]).toMatchObject({ contractorName: "Bob Reilly", what: "Rescheduled" });
     expect(detail.earlierBookings[0]?.slotLabel).not.toBeNull();
     expect(old.confirmedSlot).not.toBeNull();
     expect(detail.contractor?.standing).toMatch(/^Waiting for Bob's answer/);

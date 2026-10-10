@@ -135,15 +135,16 @@ describe("AC6 -- who is told", () => {
     );
 
     await drainOnce(db);
-    const mail = email.sent.find((m) => m.to === "sarah@idelta.com.au" && (m.message.subject ?? "").startsWith("Cancelled"));
-    expect(mail?.message.text).toContain("As you asked");
-    expect(mail?.message.text).toContain("Nothing is owed");
+    const mail = email.sent.find((m) => m.to === "sarah@idelta.com.au" && (m.message.subject ?? "").startsWith("Job cancelled"));
+    expect(mail?.message.text).toContain("As requested");
+    expect(mail?.message.text).toContain("There is no charge.");
     expect(mail?.message.text).toContain("JOB-1042");
-    const lena = email.sent.find((m) => m.to === "lena@idelta.com.au" && (m.message.subject ?? "").startsWith("Visit cancelled"));
-    expect(lena?.message.subject).toContain("Visit cancelled");
-    expect(lena?.message.text).toContain("Nobody will come");
+    const lena = email.sent.find((m) => m.to === "lena@idelta.com.au" && (m.message.subject ?? "").startsWith("Job cancelled"));
+    expect(lena?.message.subject).toBe("Job cancelled - JOB-1042");
+    expect(lena?.message.text).toContain("has been cancelled");
+    expect(lena?.message.text).not.toContain("Nobody will come");
     const bob = email.sent.find((m) => m.to === "bob@idelta.com.au" && (m.message.subject ?? "").startsWith("Job cancelled"));
-    expect(bob?.message.text).toContain("Don't go");
+    expect(bob?.message.text).toContain("please don't attend");
   });
 
   test("AC6: still waiting on Bob (assigned): Sarah and Bob told, Lena not (the visit was never confirmed to her)", async () => {
@@ -161,9 +162,10 @@ describe("AC6 -- who is told", () => {
     expect(await recipients(job.id, "job_cancelled")).toEqual(["customer:email", "customer:sms"]);
     expect(await recipients(job.id, "job_cancelled_contractor")).toEqual([]);
     await drainOnce(db);
-    const mail = email.sent.find((m) => m.to === "sarah@idelta.com.au" && (m.message.subject ?? "").startsWith("Sorry"));
-    expect(mail?.message.text).toContain("nobody can cover your area");
-    expect(mail?.message.text).toContain("Nothing is owed");
+    const mail = email.sent.find((m) => m.to === "sarah@idelta.com.au" && (m.message.subject ?? "").startsWith("Job cancelled"));
+    expect(mail?.message.text).toContain("unable to find anyone available");
+    expect(mail?.message.text).not.toMatch(/contractor/i);
+    expect(mail?.message.text).toContain("There is no charge.");
   });
 
   test("AC6: Duplicate: nobody customer-side hears; Bob still does when he held a booking", async () => {
@@ -248,7 +250,7 @@ describe("AC8, AC9 -- the old link and the history", () => {
       earlierBookings: { what: string }[];
       cancelled: { reasonLabel: string; note: string };
     };
-    expect(detail.earlierBookings.map((entry) => entry.what).sort()).toEqual(["Cancelled", "Taken off"]);
+    expect(detail.earlierBookings.map((entry) => entry.what).sort()).toEqual(["Cancelled", "Reassigned"]);
     expect(detail.cancelled).toMatchObject({ reasonLabel: "Other", note: "Moved house" });
   });
 });

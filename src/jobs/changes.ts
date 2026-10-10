@@ -1,4 +1,4 @@
-// Take off and cancel -- Feature 4006, reschedule / take off / cancel.
+// Reassign (internally "take off") and cancel -- Feature 4006, reschedule / reassign / cancel.
 //
 // Operations Admin Workflow / Ops job actions; Cancellation policy. Mike's two ways of ending a
 // booked job's current plan: TAKE OFF (the design's Reassign) frees the contractor and puts the job
@@ -54,7 +54,7 @@ async function lockJobAndBooking(
 }
 
 // ---------------------------------------------------------------------------
-// Take off
+// Reassign (the button was "Take off" until UAT)
 // ---------------------------------------------------------------------------
 
 export interface TakeOffSuccess {
@@ -73,7 +73,7 @@ export async function takeOffJob(
     const facts = await client.$transaction(async (tx) => {
       const { job, booking } = await lockJobAndBooking(tx, reference);
       if ((job.status !== "assigned" && job.status !== "scheduled") || booking === null) {
-        throw new Refused({ ok: false, status: 409, error: `The job is ${job.status} -- there is no booking to take off.` });
+        throw new Refused({ ok: false, status: 409, error: `The job is ${job.status} -- there is no booking to reassign.` });
       }
       await cancelBooking(tx, booking.id, userId, now);
       await tx.job.update({ where: { id: job.id }, data: { status: "new" } });

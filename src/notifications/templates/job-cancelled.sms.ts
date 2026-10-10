@@ -2,9 +2,9 @@
 import type { NotificationTemplate } from "../types.js";
 import { fill } from "./render.js";
 
-const AS_ASKED_TEXT = `As you asked, {{jobReference}} ({{trade}}) is cancelled. Nothing is owed. To book again: {{officePhone}} -- {{platformName}}`;
-const NO_COVER_TEXT = `Sorry {{firstName}} - nobody can cover your area for {{jobReference}}, so it's cancelled. Nothing is owed. {{officePhone}} -- {{platformName}}`;
-const SITE_TEXT = `The {{trade}} visit at {{street}}, {{suburb}} on {{slotLabel}} is cancelled - nobody will come. -- {{platformName}}`;
+const AS_ASKED_TEXT = `Job cancelled, {{firstName}}: as requested, {{jobReference}} ({{trade}}) has been cancelled. There is no charge. To book again, ring {{officePhone}}. -- {{platformName}}`;
+const NO_COVER_TEXT = `Job cancelled, {{firstName}}: sorry, we were unable to find anyone available for {{jobReference}} in your area. There is no charge. To try again later, ring {{officePhone}}. -- {{platformName}}`;
+const SITE_TEXT = `Job cancelled, {{firstName}}: the {{trade}} visit at {{street}}, {{suburb}} on {{slotLabel}} has been cancelled. -- {{platformName}}`;
 
 export const jobCancelledSms: NotificationTemplate = {
   type: "job_cancelled",

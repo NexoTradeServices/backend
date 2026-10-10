@@ -2,7 +2,7 @@
 import type { NotificationTemplate } from "../types.js";
 import { fill } from "./render.js";
 
-const TEXT = `Job moved, {{firstName}}: {{jobReference}} at {{street}}, {{suburb}}. {{oldSlotLabel}} is off. New time {{newSlotLabel}}. Accept or decline: {{linkUrl}} -- {{platformName}}`;
+const TEXT = `Job rescheduled, {{firstName}}: {{jobReference}} at {{street}}, {{suburb}} has been rescheduled to {{newSlotLabel}}. You are no longer booked for {{oldSlotLabel}}. Accept or decline: {{linkUrl}} -- {{platformName}}`;
 
 export const jobMovedSms: NotificationTemplate = {
   type: "job_moved",

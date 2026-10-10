@@ -2,7 +2,7 @@
 import type { NotificationTemplate } from "../types.js";
 import { fill } from "./render.js";
 
-const TEXT = `{{firstName}}, you're no longer booked on {{jobReference}} ({{slotLabel}}, {{suburb}}). Time's free again, nothing to do. -- {{platformName}}`;
+const TEXT = `Job reassigned, {{firstName}}: {{jobReference}} at {{street}}, {{suburb}}. You are no longer booked for {{slotLabel}}. Your calendar is clear for that time. -- {{platformName}}`;
 
 export const takenOffSms: NotificationTemplate = {
   type: "taken_off",

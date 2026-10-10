@@ -26,7 +26,57 @@ const KALAMUNDA = { suburb: "Kalamunda", state: "WA", country: "AU", lat: -31.97
 const APPLECROSS = { suburb: "Applecross", state: "WA", country: "AU", lat: -32.015475, lng: 115.836868, placeId: "fixture-place-applecross" };
 const JOONDALUP = { suburb: "Joondalup", state: "WA", country: "AU", lat: -31.7448, lng: 115.7661, placeId: "fixture-place-joondalup" };
 
+/** The marker each record's description carries, so a top-up can tell which are still in their starting state. */
+const KEYS = ["sarah", "tom", "margaret", "margaret-copy", "karl", "nina"] as const;
+type Key = (typeof KEYS)[number];
+const markerOf = (key: Key): string => `[uat-4006:${key}]`;
+/** The wording the first make wrote, before the markers: a top-up still finds those records by it. */
+const FIRST_DESCRIPTION: Record<Key, string> = {
+  sarah: "UAT 4006: the kitchen mixer tap is leaking from the base.",
+  tom: "UAT 4006: a blocked kitchen sink.",
+  margaret: "UAT 4006: the garden tap is dripping.",
+  "margaret-copy": "UAT 4006: the garden tap is dripping (second copy).",
+  karl: "UAT 4006: a burst pipe under the laundry.",
+  nina: "UAT 4006: the cafe's grease trap is blocked.",
+};
+
 export async function make(client: PrismaClient): Promise<string[]> {
+  return makeRecords(client, new Set(KEYS));
+}
+
+/**
+ * Top up, never wipe (the UAT rules): remake only the records the owner has used up, as fresh
+ * records, and leave every other record exactly as it was. A record is still fresh while its job
+ * is in its starting state: Sarah's scheduled with an accepted booking, Tom's assigned and
+ * waiting, Margaret's and Karl's new, Nina's in progress.
+ */
+export async function topUp(client: PrismaClient): Promise<string[]> {
+  const START: Record<Key, { status: string; assignment: string | null }> = {
+    sarah: { status: "scheduled", assignment: "accepted" },
+    tom: { status: "assigned", assignment: "assigned" },
+    margaret: { status: "new", assignment: null },
+    "margaret-copy": { status: "new", assignment: null },
+    karl: { status: "new", assignment: null },
+    nina: { status: "in_progress", assignment: "in_progress" },
+  };
+  const used = new Set<Key>();
+  for (const key of KEYS) {
+    const job = await client.job.findFirst({
+      where: {
+        testData: "uat-4006",
+        OR: [{ description: { contains: markerOf(key) } }, { description: FIRST_DESCRIPTION[key] }],
+      },
+      orderBy: { createdAt: "desc" },
+      include: { assignments: { where: { status: { in: ["assigned", "accepted", "in_progress"] } } } },
+    });
+    const want = START[key];
+    const live = job?.assignments[0]?.status ?? null;
+    if (job === null || job.status !== want.status || live !== want.assignment) used.add(key);
+  }
+  return makeRecords(client, used);
+}
+
+async function makeRecords(client: PrismaClient, which: Set<Key>): Promise<string[]> {
   const sarah = await client.customer.findUniqueOrThrow({ where: { code: "CUS-1050" } });
   const tom = await client.customer.findUniqueOrThrow({ where: { code: "CUS-1052" } });
   const margaret = await client.customer.findUniqueOrThrow({ where: { code: "CUS-1053" } });
@@ -38,6 +88,7 @@ export async function make(client: PrismaClient): Promise<string[]> {
   const lines: string[] = [];
 
   async function newJob(
+    key: Key,
     customer: { id: string; billingAddress: unknown },
     place: typeof HILTON,
     postcode: string,
@@ -59,7 +110,7 @@ export async function make(client: PrismaClient): Promise<string[]> {
         siteContact: extra.siteContact,
         ...(status === "new" ? {} : { serviceLevel: "normal" as const }),
         timezone: ZONE,
-        description,
+        description: `${description} ${markerOf(key)}`,
         selectedOptions: [],
         source: "web",
         preferredWindow: "morning",
@@ -70,61 +121,84 @@ export async function make(client: PrismaClient): Promise<string[]> {
   }
 
   // 1. Sarah's leaking tap, accepted by Bob for a weekday morning, Lena Park the site contact.
-  const slot1 = nextWeekdayAt(ZONE, "wed", 8, 0, now);
-  const job1 = await newJob(sarah, HILTON, "6163", "scheduled", "UAT 4006: the kitchen mixer tap is leaking from the base.", {
-    siteContact: { name: "Lena Park", phone: "0400 002 050", email: "lena@idelta.com.au" },
-  });
-  const assignment1 = await client.assignment.create({
-    data: { jobId: job1.id, contractorId: bob.id, specialtyId: specialty.id, status: "accepted", proposedSlot: slot1, confirmedSlot: slot1, acceptedAt: now },
-  });
-  await client.calendarEvent.create({
-    data: { contractorId: bob.id, type: "job", jobId: job1.id, assignmentId: assignment1.id, startTime: slot1, endTime: new Date(slot1.getTime() + 60 * 60_000) },
-  });
-  lines.push(`${job1.reference} - Sarah's leaking-tap job in Hilton, accepted by Bob for a weekday morning, Lena Park the site contact (text and email)`);
+  if (which.has("sarah")) {
+    const slot1 = nextWeekdayAt(ZONE, "wed", 8, 0, now);
+    const job1 = await newJob("sarah", sarah, HILTON, "6163", "scheduled", FIRST_DESCRIPTION.sarah, {
+      siteContact: { name: "Lena Park", phone: "0400 002 050", email: "lena@idelta.com.au" },
+    });
+    const assignment1 = await client.assignment.create({
+      data: { jobId: job1.id, contractorId: bob.id, specialtyId: specialty.id, status: "accepted", proposedSlot: slot1, confirmedSlot: slot1, acceptedAt: now },
+    });
+    await client.calendarEvent.create({
+      data: { contractorId: bob.id, type: "job", jobId: job1.id, assignmentId: assignment1.id, startTime: slot1, endTime: new Date(slot1.getTime() + 60 * 60_000) },
+    });
+    lines.push(`${job1.reference} - Sarah's leaking-tap job in Hilton, accepted by Bob for a weekday morning, Lena Park the site contact (text and email)`);
+  }
 
   // 2. Tom's job, dispatched to Bob through the real dispatch: its Accept link is in /dev/texts.
-  const job2 = await newJob(tom, KALAMUNDA, "6076", "new", "UAT 4006: a blocked kitchen sink.");
-  const friday = nextWeekdayAt(ZONE, "fri", 9, 0, now);
-  const dispatched = await dispatchJob(client, job2.reference, "CON-014", {
-    date: todayIn(ZONE, friday),
-    startMinutes: 540,
-    holdMinutes: 60,
-    emergency: false,
-  });
-  if (!dispatched.ok) throw new Error(`could not dispatch Tom's job to Bob: ${dispatched.error}`);
-  await sendDispatchNotifications(client, dispatched);
-  lines.push(`${job2.reference} - Tom's blocked-sink job, dispatched to Bob and still waiting for his answer; his Accept link is in the Texts sent page (/dev/texts)`);
+  if (which.has("tom")) {
+    const job2 = await newJob("tom", tom, KALAMUNDA, "6076", "new", FIRST_DESCRIPTION.tom);
+    // A free Friday morning for Bob: step a week on at a time from the next Friday, a clash is only a busy answer.
+    let dispatched: Awaited<ReturnType<typeof dispatchJob>> | null = null;
+    for (let week = 0; week < 8; week += 1) {
+      const friday = new Date(nextWeekdayAt(ZONE, "fri", 9, 0, now).getTime() + week * 7 * 24 * 60 * 60_000);
+      dispatched = await dispatchJob(client, job2.reference, "CON-014", {
+        date: todayIn(ZONE, friday),
+        startMinutes: 540,
+        holdMinutes: 60,
+        emergency: false,
+      });
+      if (dispatched.ok || dispatched.status !== 409) break;
+    }
+    if (dispatched === null || !dispatched.ok) {
+      throw new Error(`could not dispatch Tom's job to Bob: ${dispatched === null ? "no attempt" : dispatched.error}`);
+    }
+    await sendDispatchNotifications(client, dispatched);
+    lines.push(`${job2.reference} - Tom's blocked-sink job, dispatched to Bob and still waiting for his answer; his Accept link is in the Texts sent page (/dev/texts)`);
+  }
 
   // 3. Margaret's new job and a second copy of it, to cancel as a duplicate.
-  const job3 = await newJob(margaret, APPLECROSS, "6153", "new", "UAT 4006: the garden tap is dripping.");
-  const job3b = await newJob(margaret, APPLECROSS, "6153", "new", "UAT 4006: the garden tap is dripping (second copy).");
-  lines.push(`${job3.reference} - Margaret's garden-tap job in Applecross, new, no contractor`);
-  lines.push(`${job3b.reference} - a second copy of Margaret's job, to cancel as a duplicate`);
+  if (which.has("margaret")) {
+    const job3 = await newJob("margaret", margaret, APPLECROSS, "6153", "new", FIRST_DESCRIPTION.margaret);
+    lines.push(`${job3.reference} - Margaret's garden-tap job in Applecross, new, no contractor`);
+  }
+  if (which.has("margaret-copy")) {
+    const job3b = await newJob("margaret-copy", margaret, APPLECROSS, "6153", "new", FIRST_DESCRIPTION["margaret-copy"]);
+    lines.push(`${job3b.reference} - a second copy of Margaret's job, to cancel as a duplicate`);
+  }
 
   // 4. Karl's job in Joondalup, nobody covering.
-  const karl = await client.customer.create({
-    data: { code: await nextReference("CUS", client), name: "Karl", email: "karl@idelta.com.au", phone: "0400 002 070" },
-  });
-  const job4 = await newJob(karl, JOONDALUP, "6027", "new", "UAT 4006: a burst pipe under the laundry.", { withAddress: false });
-  lines.push(`${job4.reference} - Karl's burst-pipe job in Joondalup, new, nobody covering the area`);
+  if (which.has("karl")) {
+    const karl =
+      (await client.customer.findFirst({ where: { email: "karl@idelta.com.au", testData: "uat-4006" } })) ??
+      (await client.customer.create({
+        data: { code: await nextReference("CUS", client), name: "Karl", email: "karl@idelta.com.au", phone: "0400 002 070" },
+      }));
+    const job4 = await newJob("karl", karl, JOONDALUP, "6027", "new", FIRST_DESCRIPTION.karl, { withAddress: false });
+    lines.push(`${job4.reference} - Karl's burst-pipe job in Joondalup, new, nobody covering the area`);
+  }
 
   // 5. Nina's job for Rossi's Cafe, in progress with Bob.
-  const nina = await client.customer.create({
-    data: {
-      code: await nextReference("CUS", client),
-      name: "Nina Rossi",
-      email: "nina@idelta.com.au",
-      phone: "0400 002 060",
-      businessName: "Rossi's Cafe",
-      billingAddress: { street: "14 Marine Terrace", suburb: "Fremantle", state: "WA", country: "AU", postcode: "6160", lat: -32.0569, lng: 115.7439, placeId: "fixture-place-fremantle" },
-    },
-  });
-  const job5 = await newJob(nina, { ...HILTON, suburb: "Fremantle", lat: -32.0569, lng: 115.7439, placeId: "fixture-place-fremantle" }, "6160", "in_progress", "UAT 4006: the cafe's grease trap is blocked.");
-  const slot5 = todayAt(ZONE, 8, 0, now);
-  await client.assignment.create({
-    data: { jobId: job5.id, contractorId: bob.id, specialtyId: specialty.id, status: "in_progress", proposedSlot: slot5, confirmedSlot: slot5, acceptedAt: now },
-  });
-  lines.push(`${job5.reference} - Nina's job for Rossi's Cafe, in progress with Bob -- Cancel job is refused on it`);
+  if (which.has("nina")) {
+    const nina =
+      (await client.customer.findFirst({ where: { email: "nina@idelta.com.au", testData: "uat-4006" } })) ??
+      (await client.customer.create({
+        data: {
+          code: await nextReference("CUS", client),
+          name: "Nina Rossi",
+          email: "nina@idelta.com.au",
+          phone: "0400 002 060",
+          businessName: "Rossi's Cafe",
+          billingAddress: { street: "14 Marine Terrace", suburb: "Fremantle", state: "WA", country: "AU", postcode: "6160", lat: -32.0569, lng: 115.7439, placeId: "fixture-place-fremantle" },
+        },
+      }));
+    const job5 = await newJob("nina", nina, { ...HILTON, suburb: "Fremantle", lat: -32.0569, lng: 115.7439, placeId: "fixture-place-fremantle" }, "6160", "in_progress", FIRST_DESCRIPTION.nina);
+    const slot5 = todayAt(ZONE, 8, 0, now);
+    await client.assignment.create({
+      data: { jobId: job5.id, contractorId: bob.id, specialtyId: specialty.id, status: "in_progress", proposedSlot: slot5, confirmedSlot: slot5, acceptedAt: now },
+    });
+    lines.push(`${job5.reference} - Nina's job for Rossi's Cafe, in progress with Bob -- Cancel job is refused on it`);
+  }
 
   return lines;
 }

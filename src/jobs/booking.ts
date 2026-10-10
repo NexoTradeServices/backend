@@ -1,4 +1,4 @@
-// Taking a booking off the books -- Feature 4006, reschedule / take off / cancel.
+// Taking a booking off the books -- Feature 4006, reschedule / reassign / cancel.
 //
 // One shared step for every way a held booking ends by Mike's hand (Ops job
 // actions; Foundations / Ground rules, the audit-trail convention): the
@@ -23,8 +23,8 @@ export async function cancelBooking(tx: Tx, assignmentId: string, userId: string
 export type CancelledKind = "moved" | "taken_off" | "cancelled";
 
 export const CANCELLED_KIND_LABELS: Record<CancelledKind, string> = {
-  moved: "Moved",
-  taken_off: "Taken off",
+  moved: "Rescheduled",
+  taken_off: "Reassigned",
   cancelled: "Cancelled",
 };
 
@@ -38,7 +38,7 @@ interface CancelledAssignment {
  * Moved: a reschedule books the replacement in the same step, so the same
  * contractor's next booking was dispatched at the very moment this one was
  * cancelled. Cancelled: the job itself was closed at that moment. Anything
- * else is a take off (the job went back to New).
+ * else is a reassign, called "take off" in the code (the job went back to New).
  */
 export async function cancelledKindOf(
   db: Tx,

@@ -61,7 +61,7 @@ describe("AC4 -- taking Bob off", () => {
     const res = await takeOff(mike);
     expect(res.status).toBe(200);
     const body = res.body as { toast: string; job: { status: string; canDispatch: boolean; actions: { takeOff: boolean }; contractor: unknown } };
-    expect(body.toast).toBe("Bob taken off JOB-1042. It's back in New.");
+    expect(body.toast).toBe("JOB-1042 reassigned. It's back in New.");
     expect(body.job).toMatchObject({ status: "new", canDispatch: true, contractor: null });
     expect(body.job.actions.takeOff).toBe(false);
 
@@ -76,8 +76,8 @@ describe("AC4 -- taking Bob off", () => {
     expect(await db.notification.count({ where: { jobId, recipientType: { in: ["customer", "site_contact"] } } })).toBe(before);
 
     await drainOnce(db);
-    const mail = email.sent.find((m) => m.to === "bob@idelta.com.au" && (m.message.subject ?? "") === "You're off JOB-1042");
-    expect(mail?.message.text).toContain("Nothing to do");
+    const mail = email.sent.find((m) => m.to === "bob@idelta.com.au" && (m.message.subject ?? "") === "Job reassigned - JOB-1042");
+    expect(mail?.message.text).toContain("Your calendar is clear for that time.");
   });
 
   test("AC4: a booking still waiting for his answer comes off the same way", async () => {
@@ -118,7 +118,7 @@ describe("AC8, AC9, AC12 -- the old link and the history", () => {
     for (const row of rows) expect(row.expiresAt.getTime()).toBeLessThanOrEqual(Date.now());
   });
 
-  test("AC9: Earlier bookings shows Bob as Taken off with the old time; a later dispatch of Bob again does not turn it into Moved", async () => {
+  test("AC9: Earlier bookings shows Bob as Reassigned with the old time; a later dispatch of Bob again does not turn it into Rescheduled", async () => {
     const mike = await signIn(app, "mike@idelta.com.au");
     await takeOff(mike);
     const again = await request(app)
@@ -130,7 +130,7 @@ describe("AC8, AC9, AC12 -- the old link and the history", () => {
       earlierBookings: { contractorName: string; what: string; slotLabel: string | null }[];
     };
     expect(detail.earlierBookings).toHaveLength(1);
-    expect(detail.earlierBookings[0]).toMatchObject({ contractorName: "Bob Reilly", what: "Taken off" });
+    expect(detail.earlierBookings[0]).toMatchObject({ contractorName: "Bob Reilly", what: "Reassigned" });
     expect(detail.earlierBookings[0]?.slotLabel).not.toBeNull();
   });
 });

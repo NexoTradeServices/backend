@@ -399,7 +399,7 @@ export function jobRoutes(client: PrismaClient): Router {
       }
       res.json({
         job: await jobDetail(client, fresh, req.authUser.id),
-        toast: `${result.jobReference} moved. Waiting for ${result.contractorFirstName}'s answer.`,
+        toast: `${result.jobReference} rescheduled. Waiting for ${result.contractorFirstName}'s answer.`,
       });
     })().catch(failWith(res, "POST /api/jobs/:reference/reschedule"));
   });
@@ -422,7 +422,7 @@ export function jobRoutes(client: PrismaClient): Router {
       }
       res.json({
         job: await jobDetail(client, fresh, req.authUser.id),
-        toast: `${result.contractorFirstName} taken off ${result.jobReference}. It's back in New.`,
+        toast: `${result.jobReference} reassigned. It's back in New.`,
       });
     })().catch(failWith(res, "POST /api/jobs/:reference/take-off"));
   });

@@ -2,7 +2,7 @@
 import type { NotificationTemplate } from "../types.js";
 import { fill } from "./render.js";
 
-const TEXT = `Cancelled: {{jobReference}}, {{slotLabel}} at {{street}}, {{suburb}}. Don't go - time's free again. -- {{platformName}}`;
+const TEXT = `Job cancelled, {{firstName}}: {{jobReference}} at {{street}}, {{suburb}}. You are no longer booked for {{slotLabel}}, so please don't attend. Your calendar is clear for that time. -- {{platformName}}`;
 
 export const jobCancelledContractorSms: NotificationTemplate = {
   type: "job_cancelled_contractor",

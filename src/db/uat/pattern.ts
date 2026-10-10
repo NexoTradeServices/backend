@@ -23,6 +23,11 @@ import { sweepTestData, type SweepResult } from "../../test-data/sweep.js";
 export interface UatScript {
   make(client: PrismaClient): Promise<string[]>;
   restoreCast?(client: PrismaClient): Promise<void>;
+  /**
+   * optional: during UAT, remake only the records the owner has used up as fresh records and leave
+   * every other record as it is (`npm run uat -- <id>-<slug> topup`). Returns the new lines.
+   */
+  topUp?(client: PrismaClient): Promise<string[]>;
 }
 
 /** The leading feature number of a `<id>-<slug>` name: `9002-test-data-hygiene` -> `9002`. */

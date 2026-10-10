@@ -5,12 +5,12 @@ import { fill, fillHtml } from "./render.js";
 
 const TEXT = `Hi {{firstName}},
 
-{{jobReference}} at {{street}}, {{suburb}} on {{slotLabel}} is cancelled. Don't go - the time is free again.
+{{jobReference}} at {{street}}, {{suburb}} has been cancelled. You are no longer booked for {{slotLabel}}, so please don't attend. Your calendar is clear for that time.
 
 -- {{platformName}}`;
 
 const HTML = `<p>Hi {{firstName}},</p>
-<p><strong>{{jobReference}}</strong> at {{street}}, {{suburb}} on {{slotLabel}} is cancelled. Don't go - the time is free again.</p>
+<p><strong>{{jobReference}}</strong> at {{street}}, {{suburb}} has been cancelled. You are no longer booked for {{slotLabel}}, so please don't attend. Your calendar is clear for that time.</p>
 <p>-- {{platformName}}</p>`;
 
 export const jobCancelledContractorEmail: NotificationTemplate = {

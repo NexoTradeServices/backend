@@ -7,8 +7,6 @@
 import type { PrismaClient } from "../db/client.js";
 import { sendNotification } from "../notifications/index.js";
 import type { NotificationChannel, NotificationContext } from "../notifications/index.js";
-import { formatDollars } from "../enquiries/money.js";
-import { isServiceLevelMultipliers, priceFor } from "../jobs/dispatch-level.js";
 import { asSiteContact } from "../jobs/site-contact.js";
 import { effectiveAddress } from "../jobs/shared.js";
 import { formatSlotLabel } from "../time/index.js";
@@ -18,24 +16,10 @@ function firstNameOf(name: string): string {
   return name.split(" ")[0] ?? name;
 }
 
-/**
- * Plan decision 5: the job's frozen rate card times the job's stamped service
- * level, through 4002's own price helper -- never the live catalog. Names the
- * RATES, never a total.
- */
-function rateLine(base: { calloutRate: number; standardRate: number }, multipliers: unknown, level: "normal" | "weekend" | "emergency"): string {
-  if (!isServiceLevelMultipliers(multipliers)) {
-    throw new Error("the trade's service level multipliers are misconfigured");
-  }
-  const price = priceFor(base, multipliers, level);
-  return `${formatDollars(price.calloutRate)} call-out including the first hour, then ${formatDollars(price.standardRate)} an hour`;
-}
-
 export async function sendSlotConfirmed(client: PrismaClient, facts: AnswerFacts): Promise<void> {
   const job = await client.job.findUniqueOrThrow({
     where: { id: facts.jobId },
     include: {
-      serviceType: { select: { serviceLevelMultipliers: true } },
       customer: { select: { id: true, name: true, billingAddress: true } },
     },
   });
@@ -58,11 +42,6 @@ export async function sendSlotConfirmed(client: PrismaClient, facts: AnswerFacts
     ...common,
     audience: "customer",
     firstName: firstNameOf(job.customer.name),
-    priceLine: rateLine(
-      { calloutRate: job.customerCalloutRate, standardRate: job.customerStandardRate },
-      job.serviceType.serviceLevelMultipliers,
-      job.serviceLevel ?? "normal",
-    ),
     // The customer's wording says the site contact has been told, and never who.
     ...(siteContact === null ? {} : { siteContactTold: true }),
   };
