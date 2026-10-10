@@ -35,6 +35,7 @@ const TYPE_NAMES: Record<string, string> = {
   taken_off: "Job reassigned",
   job_cancelled: "Job cancelled",
   job_cancelled_contractor: "Job cancelled",
+  job_update: "Job update",
   invoice: "Invoice",
   payment_receipt: "Payment receipt",
   payment_received: "Payment received",

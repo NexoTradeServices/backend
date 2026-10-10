@@ -77,7 +77,7 @@ export async function takeOffJob(
       }
       await cancelBooking(tx, booking.id, userId, now);
       await tx.job.update({ where: { id: job.id }, data: { status: "new" } });
-      return { job, booking };
+      return { job, booking, wasScheduled: job.status === "scheduled" };
     });
 
     const { job, booking } = facts;
@@ -106,10 +106,79 @@ export async function takeOffJob(
         client,
       );
     }
+    // CL-04: a booked job (she had been sent a confirmed time, and so had the site contact) gets a
+    // short "Job update" at once; before a booking was confirmed nobody customer-side had a time.
+    if (facts.wasScheduled) await askJobUpdate(client, job, booking, now);
     return { ok: true, jobReference: job.reference, contractorFirstName: firstNameOf(booking.contractor.name) };
   } catch (error: unknown) {
     if (error instanceof Refused) return error.failure;
     throw error;
+  }
+}
+
+/**
+ * CL-04: "Job update" to the customer (email + text) and the site contact (text always, email only
+ * when given), each in their own wording. Asked after commit, like every other message here.
+ */
+async function askJobUpdate(
+  client: PrismaClient,
+  job: Awaited<ReturnType<typeof lockJobAndBooking>>["job"],
+  booking: NonNullable<Awaited<ReturnType<typeof lockJobAndBooking>>["booking"]>,
+  now: Date,
+): Promise<void> {
+  const settings = await client.platformSettings.findFirst({ select: { operatorPhone: true } });
+  const address = effectiveAddress(job);
+  const slot = booking.confirmedSlot ?? booking.proposedSlot;
+  const common = {
+    jobReference: job.reference,
+    trade: job.serviceType.trade.toLowerCase(),
+    street: address?.street ?? "",
+    suburb: address?.suburb ?? suburbOf(job.serviceLocation),
+    slotLabel: slot === null ? "the booked time" : formatSlotLabel(job.timezone, slot, now),
+    officePhone: settings?.operatorPhone ?? "",
+  } satisfies NotificationContext;
+
+  const ask = async (
+    channel: NotificationChannel,
+    audience: "customer" | "site_contact",
+    recipientId: string,
+    context: NotificationContext,
+  ): Promise<void> => {
+    await sendNotification(
+      {
+        type: "job_update",
+        channel,
+        recipientType: audience,
+        recipientId,
+        idempotencyKey: `job_update:assignment:${booking.id}:${audience}:${channel}`,
+        relatedType: "assignment",
+        relatedId: booking.id,
+        jobId: job.id,
+        context,
+      },
+      client,
+    );
+  };
+
+  for (const channel of ["email", "sms"] as const) {
+    await ask(channel, "customer", job.customer.id, {
+      ...common,
+      audience: "customer",
+      firstName: firstNameOf(job.customer.name),
+    });
+  }
+  const siteContact = asSiteContact(job.siteContact);
+  if (siteContact !== null) {
+    const context: NotificationContext = {
+      ...common,
+      audience: "site_contact",
+      firstName: firstNameOf(siteContact.name),
+      recipientName: siteContact.name,
+    };
+    await ask("sms", "site_contact", job.id, context);
+    if (siteContact.email !== null && siteContact.email.trim() !== "") {
+      await ask("email", "site_contact", job.id, context);
+    }
   }
 }
 

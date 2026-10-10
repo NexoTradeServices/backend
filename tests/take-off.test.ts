@@ -1,8 +1,9 @@
 // Feature 4006 -- take off (the design's Reassign)
 //
 // AC4  taking Bob off JOB-1042 cancels his booking (audit pair), removes the block, kills his link,
-//      sends him "You're off JOB-1042" email + text, and puts the job back to New with the Dispatch
-//      button; Sarah gets nothing
+//      sends him "Job reassigned" email + text, and puts the job back to New with the Dispatch
+//      button; when the job was booked Sarah and Lena each get a "Job update" email + text (CL-04),
+//      when it was not nobody customer-side is told
 // AC8  his old link says "You're no longer booked" (taken_off)
 // AC9  Earlier bookings lists it as Taken off
 // AC12 the link's row is kept, expired
@@ -13,6 +14,7 @@ import { resetReferenceSequences, testClient } from "./helpers/database.js";
 import { recordingAdapter } from "./helpers/notifications.js";
 import { drainOnce } from "../src/notifications/index.js";
 import { registerProvider, resetProviders } from "../src/notifications/providers/registry.js";
+import { Prisma } from "../src/generated/prisma/client.js";
 import {
   acceptJob1042,
   activeAssignment,
@@ -51,11 +53,10 @@ const takeOff = (cookie: string, reference = "JOB-1042") =>
   request(app).post(`/api/jobs/${reference}/take-off`).set("Cookie", cookie).send({});
 
 describe("AC4 -- taking Bob off", () => {
-  test("AC4: an accepted booking comes off: cancelled by Mike, block gone, link dead, Bob told, job New with Dispatch, Sarah told nothing", async () => {
+  test("AC4: an accepted booking comes off: cancelled by Mike, block gone, link dead, Bob told, job New with Dispatch", async () => {
     const mike = await signIn(app, "mike@idelta.com.au");
     const { jobId, assignmentId } = await acceptJob1042(db, app);
     await drainOnce(db);
-    const before = await db.notification.count({ where: { jobId, recipientType: { in: ["customer", "site_contact"] } } });
     const mikeUser = await db.user.findUniqueOrThrow({ where: { email: "mike@idelta.com.au" } });
 
     const res = await takeOff(mike);
@@ -73,20 +74,76 @@ describe("AC4 -- taking Bob off", () => {
     const rows = await rowsOf(db, jobId, "taken_off");
     expect(rows.map((row) => row.channel).sort()).toEqual(["email", "sms"]);
     expect(rows.every((row) => row.recipientType === "contractor")).toBe(true);
-    expect(await db.notification.count({ where: { jobId, recipientType: { in: ["customer", "site_contact"] } } })).toBe(before);
 
     await drainOnce(db);
     const mail = email.sent.find((m) => m.to === "bob@idelta.com.au" && (m.message.subject ?? "") === "Job reassigned - JOB-1042");
     expect(mail?.message.text).toContain("Your calendar is clear for that time.");
   });
 
-  test("AC4: a booking still waiting for his answer comes off the same way", async () => {
+  test("AC4 (CL-04): a booked job sends Sarah and Lena a Job update, each in their own wording; nothing states a time that is still on", async () => {
+    const mike = await signIn(app, "mike@idelta.com.au");
+    const { jobId } = await acceptJob1042(db, app);
+    await drainOnce(db);
+    email.reset();
+    expect((await takeOff(mike)).status).toBe(200);
+
+    const rows = await rowsOf(db, jobId, "job_update");
+    expect(rows.map((row) => `${row.recipientType}:${row.channel}`).sort()).toEqual([
+      "customer:email",
+      "customer:sms",
+      "site_contact:email",
+      "site_contact:sms",
+    ]);
+    // Keys are derivable, so a retry is the same ask.
+    expect(new Set(rows.map((row) => row.idempotencyKey)).size).toBe(4);
+
+    await drainOnce(db);
+    const sarah = email.sent.find((m) => m.to === "sarah@idelta.com.au" && (m.message.subject ?? "").startsWith("Job update"));
+    expect(sarah?.message.subject).toBe("Job update - JOB-1042");
+    expect(sarah?.message.text).toContain("Hi Sarah,");
+    expect(sarah?.message.text).toContain("is being re-arranged. We'll send you the new time shortly.");
+    expect(sarah?.message.text).toContain("12 Paget Street, Hilton");
+    expect(sarah?.message.text).not.toContain("Lena");
+    expect(sarah?.message.text).not.toContain("$");
+    const lena = email.sent.find((m) => m.to === "lena@idelta.com.au" && (m.message.subject ?? "").startsWith("Job update"));
+    expect(lena?.message.subject).toMatch(/^Job update - 12 Paget Street, /);
+    expect(lena?.message.text).toContain("Hi Lena,");
+    expect(lena?.message.text).toContain("is being re-arranged. You'll hear the new time shortly.");
+    expect(lena?.message.text).not.toContain("Sarah");
+    expect(lena?.message.text).not.toContain("0400");
+  });
+
+  test("AC4 (CL-04): a site contact who gave no email gets the text only", async () => {
+    const mike = await signIn(app, "mike@idelta.com.au");
+    const { jobId } = await acceptJob1042(db, app);
+    await db.job.update({ where: { id: jobId }, data: { siteContact: { name: "Lena Park", phone: "0400 002 050" } } });
+    expect((await takeOff(mike)).status).toBe(200);
+    const rows = await rowsOf(db, jobId, "job_update");
+    expect(rows.filter((row) => row.recipientType === "site_contact").map((row) => row.channel)).toEqual(["sms"]);
+    expect(rows.filter((row) => row.recipientType === "customer")).toHaveLength(2);
+  });
+
+  test("AC4 (CL-04): no site contact on the job - only the customer is told", async () => {
+    const mike = await signIn(app, "mike@idelta.com.au");
+    const { jobId } = await acceptJob1042(db, app);
+    await db.job.update({ where: { id: jobId }, data: { siteContact: Prisma.DbNull } });
+    expect((await takeOff(mike)).status).toBe(200);
+    const rows = await rowsOf(db, jobId, "job_update");
+    expect(rows.map((row) => row.recipientType)).toEqual(["customer", "customer"]);
+  });
+
+  test("AC4 (CL-04): a booking still waiting for his answer comes off the same way, and nobody customer-side is told", async () => {
     const mike = await signIn(app, "mike@idelta.com.au");
     const waiting = await activeAssignment(db, "JOB-1042");
     expect(waiting.status).toBe("assigned");
     expect((await takeOff(mike)).status).toBe(200);
     expect((await db.job.findUniqueOrThrow({ where: { reference: "JOB-1042" } })).status).toBe("new");
     expect((await db.assignment.findUniqueOrThrow({ where: { id: waiting.id } })).status).toBe("cancelled");
+    // No confirmed time ever went to Sarah or Lena, so there is nothing to update.
+    expect(await db.notification.count({ where: { jobId: waiting.jobId, type: "job_update" } })).toBe(0);
+    expect(
+      await db.notification.count({ where: { jobId: waiting.jobId, recipientType: { in: ["customer", "site_contact"] } } }),
+    ).toBe(0);
   });
 
   test("AC4: refused from New and from work in progress; nothing is sent", async () => {
