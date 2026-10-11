@@ -2,22 +2,23 @@
 //
 // Public, no session (Foundations / Brand identity, decision 4): the login
 // gate shows the wordmark logged out, so this cannot sit behind requireAuth
-// the way settingsRoutes does. Answers only { displayName } -- nothing else
-// on PlatformSettings is public.
+// the way settingsRoutes does. Answers only { displayName, operatorPhone } --
+// the support identity the Footer shows (Foundations / Brand identity, the
+// surfaces); nothing else on PlatformSettings is public.
 import type { Router } from "express";
 import { Router as createRouter } from "express";
 import type { Request, Response } from "express";
 import type { PrismaClient } from "../db/client.js";
-import { getCachedDisplayName, setCachedDisplayName } from "./identity-cache.js";
+import { getCachedIdentity, setCachedIdentity } from "./identity-cache.js";
 
 export function identityRoutes(client: PrismaClient): Router {
   const router = createRouter();
 
   router.get("/", (_req: Request, res: Response) => {
     void (async () => {
-      const cached = getCachedDisplayName();
+      const cached = getCachedIdentity();
       if (cached !== null) {
-        res.json({ displayName: cached });
+        res.json(cached);
         return;
       }
 
@@ -29,8 +30,9 @@ export function identityRoutes(client: PrismaClient): Router {
         return;
       }
 
-      setCachedDisplayName(settings.displayName);
-      res.json({ displayName: settings.displayName });
+      const identity = { displayName: settings.displayName, operatorPhone: settings.operatorPhone };
+      setCachedIdentity(identity);
+      res.json(identity);
     })().catch((error: unknown) => {
       console.error("GET /api/identity failed", error);
       res.status(500).json({ error: "internal error" });
