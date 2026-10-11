@@ -352,13 +352,13 @@ describe("AC10 -- the guard reads the slot's date", () => {
     let res = await candidates(mike, job.reference, { date: MONDAY, startMinutes: "420", holdMinutes: "60" });
     let row = (res.body as CandidatesBody).serves.find((r) => r.code === "CON-021");
     expect(row?.pickable).toBe(false);
-    expect(row?.why).toBe("Electrical licence expires 14/03/27, before this slot");
+    expect(row?.why).toBe("Electrical licence expires 14 Mar 2027, before this slot");
 
     await db.contractorSpecialty.update({ where: { id: dave.id }, data: { licenceExpiry: new Date("2027-03-15") } });
     res = await candidates(mike, job.reference, { date: MONDAY, startMinutes: "420", holdMinutes: "60" });
     row = (res.body as CandidatesBody).serves.find((r) => r.code === "CON-021");
     expect(row?.pickable).toBe(false);
-    expect(row?.why).toBe("Electrical licence expires 15/03/27, before this slot");
+    expect(row?.why).toBe("Electrical licence expires 15 Mar 2027, before this slot");
 
     await db.contractorSpecialty.update({ where: { id: dave.id }, data: { licenceExpiry: new Date("2027-03-16") } });
     res = await candidates(mike, job.reference, { date: MONDAY, startMinutes: "420", holdMinutes: "60" });

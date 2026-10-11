@@ -432,6 +432,19 @@ describe("AC5 -- the status chips", () => {
     }
   });
 
+  test("9001 AC2: Closed writes this year's job without a year and last year's with it", async () => {
+    const mike = await signInCookie("mike@idelta.com.au");
+    const thisYear = await makeJob({ customerCode: "CUS-1052", status: "completed", place: KALAMUNDA });
+    const lastYear = await makeJob({ status: "cancelled", cancelledAt: new Date("2025-09-09T04:00:00.000Z") });
+    await db.job.update({ where: { id: thisYear.id }, data: { updatedAt: minutesAgo(5) } });
+    await db.job.update({ where: { id: lastYear.id }, data: { updatedAt: minutesAgo(10) } });
+
+    const body = await queue(mike, { status: "closed" });
+    const label = (reference: string) => body.rows.find((row) => row.reference === reference)?.closedLabel;
+    expect(label(thisYear.reference)).toMatch(/^Completed [A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}$/);
+    expect(label(lastYear.reference)).toBe("Cancelled Tue 9 Sep 2025");
+  });
+
   test("AC5: Closed shows the completed and the cancelled job, the more recently changed first", async () => {
     const mike = await signInCookie("mike@idelta.com.au");
     const completed = await makeJob({ customerCode: "CUS-1052", status: "completed", place: KALAMUNDA });
@@ -442,8 +455,8 @@ describe("AC5 -- the status chips", () => {
     const body = await queue(mike, { status: "closed" });
     expect(body.rows.map((row) => row.reference)).toEqual([completed.reference, cancelled.reference]);
     expect(body.counts["closed"]).toBe(2);
-    expect(body.rows[0]?.closedLabel).toMatch(/^Completed [A-Z][a-z]{2} \d{2}\/\d{2}\/\d{2}$/);
-    expect(body.rows[1]?.closedLabel).toMatch(/^Cancelled [A-Z][a-z]{2} \d{2}\/\d{2}\/\d{2}$/);
+    expect(body.rows[0]?.closedLabel).toMatch(/^Completed [A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}( \d{4})?$/);
+    expect(body.rows[1]?.closedLabel).toMatch(/^Cancelled [A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}( \d{4})?$/);
 
     // The order is by recency, not by status: touch the cancelled job last and it leads.
     await db.job.update({ where: { id: cancelled.id }, data: { updatedAt: minutesAgo(1) } });
@@ -505,10 +518,10 @@ describe("AC8 -- what a row carries", () => {
       windowLabel: "morning 7:00-12:00",
       source: "web",
     });
-    expect(row?.receivedLabel).toMatch(/^(Today|[A-Z][a-z]{2} \d{2}\/\d{2}\/\d{2}), \d{1,2}:\d{2}(am|pm) AWST$/);
+    expect(row?.receivedLabel).toMatch(/^(Today|[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}( \d{4})?), \d{1,2}:\d{2}(am|pm) AWST$/);
     expect(row?.contractor?.name).toBe("Bob Reilly");
     expect(row?.contractor?.code).toBe("CON-014");
-    expect(row?.contractor?.standing).toMatch(/^Waiting for Bob's answer - proposed [A-Z][a-z]{2} \d{2}\/\d{2}, 8:00am AWST$/);
+    expect(row?.contractor?.standing).toMatch(/^Waiting for Bob's answer - proposed [A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am AWST$/);
 
     expect(body.rows.find((r) => r.reference === "JOB-1051")?.contractor?.standing).toBe("Booked - Today, 1:00pm AWST");
     expect(body.rows.find((r) => r.reference === "JOB-1039")?.contractor?.standing).toBe("On hold - no return date yet");
@@ -525,10 +538,13 @@ describe("AC8 -- what a row carries", () => {
   test("AC8: times render in the given zone and are labelled -- today, another day with its year, and a plain date read as stored", () => {
     const now = new Date("2026-09-10T02:42:00.000Z"); // 10:42am in Perth
     expect(formatDateTimeLabel("Australia/Perth", new Date("2026-09-10T01:14:00.000Z"), now)).toBe("Today, 9:14am AWST");
-    expect(formatDateTimeLabel("Australia/Perth", new Date("2026-09-08T07:20:00.000Z"), now)).toBe("Tue 08/09/26, 3:20pm AWST");
+    expect(formatDateTimeLabel("Australia/Perth", new Date("2026-09-08T07:20:00.000Z"), now)).toBe("Tue 8 Sep, 3:20pm AWST");
+    // Another year carries its year (frontend-conventions / Formats).
+    expect(formatDateTimeLabel("Australia/Perth", new Date("2025-09-08T07:20:00.000Z"), now)).toBe("Mon 8 Sep 2025, 3:20pm AWST");
     // 11pm UTC on the 9th is already the 10th in Perth.
-    expect(formatDateLabel("Australia/Perth", new Date("2026-09-09T23:00:00.000Z"))).toBe("Thu 10/09/26");
-    expect(formatPlainDate(new Date("2026-09-11T00:00:00.000Z"))).toBe("Fri 11/09/26");
+    expect(formatDateLabel("Australia/Perth", new Date("2026-09-09T23:00:00.000Z"), now)).toBe("Thu 10 Sep");
+    expect(formatDateLabel("Australia/Perth", new Date("2025-09-09T23:00:00.000Z"), now)).toBe("Wed 10 Sep 2025");
+    expect(formatPlainDate(new Date("2026-09-11T00:00:00.000Z"), now)).toBe("Fri 11 Sep");
   });
 });
 
@@ -588,11 +604,11 @@ describe("AC11 -- the request, read-only", () => {
       selectedOptions: ["Is the hot water gas or electric?: Gas", "Roughly how old is it?: About 12 years"],
     });
     const page = await detail(mike, job.reference);
+    expect(page.wantedDate).toMatch(/^Thu 17 Sep( 2026)?$/);
     expect(page).toMatchObject({
       trade: "Plumbing",
       suburb: "Hilton",
       postcode: "6163",
-      wantedDate: "Thu 17/09/26",
       windowLabel: "morning 7:00-12:00",
       source: "phone",
       description: "Hot water system making a banging noise.",

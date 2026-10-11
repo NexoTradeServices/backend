@@ -11,7 +11,7 @@
 //   - Pay day is `PlatformSettings.payoutDay`; a contractor is always told the NEXT one, today
 //     counting. Work not yet invoiced is paid on the first pay day AFTER the next run.
 import type { PlatformSettings } from "../generated/prisma/client.js";
-import { todayIn, zonedDateTimeToUtc } from "../time/index.js";
+import { MONTH_NAMES, formatDate, formatDateWithDay, todayIn, zonedDateTimeToUtc } from "../time/index.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -23,8 +23,7 @@ export const FORTNIGHT_ANCHOR = "2026-01-05";
 
 type CalendarSettings = Pick<PlatformSettings, "timezone" | "payoutCycle" | "payoutDay">;
 
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
+const MONTHS = MONTH_NAMES;
 const PAYOUT_DAY_INDEX: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
 
 function atUtcMidnight(ymd: string): Date {
@@ -54,16 +53,14 @@ export function ymdOf(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-/** "Wed 21 Oct" -- the short form a person is told a day in. */
-export function dayLabel(ymd: string): string {
-  const date = atUtcMidnight(ymd);
-  return `${WEEKDAYS[date.getUTCDay()] ?? ""} ${String(date.getUTCDate())} ${MONTHS[date.getUTCMonth()] ?? ""}`;
+/** "Wed 21 Oct" (this year) or "Wed 21 Oct 2027" -- the form a person is told a day in. */
+export function dayLabel(ymd: string, now: Date = new Date()): string {
+  return formatDateWithDay("UTC", atUtcMidnight(ymd), now);
 }
 
 /** "14 Oct 2026" -- the friendly full date. */
 export function friendlyDate(ymd: string): string {
-  const date = atUtcMidnight(ymd);
-  return `${String(date.getUTCDate())} ${MONTHS[date.getUTCMonth()] ?? ""} ${String(date.getUTCFullYear())}`;
+  return formatDate("UTC", atUtcMidnight(ymd));
 }
 
 /** "12 Oct - 18 Oct 2026"; the year shows on both ends only when they differ. */

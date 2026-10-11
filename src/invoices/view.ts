@@ -5,7 +5,7 @@
 // customer or the live GST switch. Money is whole cents, GST-inclusive.
 import type { PrismaClient } from "../db/client.js";
 import type { InvoiceStatus } from "../generated/prisma/enums.js";
-import { formatLongDate } from "../agreements/pdf.js";
+import { formatDate } from "../time/index.js";
 import type { BilledTo } from "./issue.js";
 import { methodWords } from "../payments/messages.js";
 
@@ -66,11 +66,11 @@ export async function invoiceViewOf(client: PrismaClient, jobId: string, zone: s
     canCheckPayment: hasPayableLink(invoice),
     paidLabel:
       invoice.status === "paid" && paidAt !== null
-        ? `${formatLongDate(paidAt, zone)}, ${methodWords(paidWith?.method ?? null)}`
+        ? `${formatDate(zone, paidAt)}, ${methodWords(paidWith?.method ?? null)}`
         : null,
     billedTo: { name: billed.name, businessName: billed.businessName ?? null, address: billed.address ?? null },
-    issuedLabel: formatLongDate(invoice.sentAt ?? invoice.createdAt, zone),
-    dueLabel: formatLongDate(invoice.dueAt, zone),
+    issuedLabel: formatDate(zone, invoice.sentAt ?? invoice.createdAt),
+    dueLabel: formatDate(zone, invoice.dueAt),
     lines: invoice.lines.map((line) => ({
       kind: line.kind,
       description: line.description,

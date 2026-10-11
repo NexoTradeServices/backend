@@ -85,7 +85,7 @@ describe("AC11 -- Bob's Settlements", () => {
     await db.contractorSettlement.updateMany({ where: { status: "draft" }, data: { status: "approved", approvedAt: new Date(), contractorGstRegistered: true, gstAmount: 7000 } });
     expect((await mine(bob)).settlements[0]).toMatchObject({ tag: "Approved", amount: 77_000 });
     await db.contractorSettlement.updateMany({ where: { status: "approved" }, data: { status: "paid", paidAt: new Date("2026-10-21T03:00:00.000Z") } });
-    expect((await mine(bob)).settlements[0]).toMatchObject({ tag: "Paid", dateLine: "Paid on 21/10/26" });
+    expect((await mine(bob)).settlements[0]).toMatchObject({ tag: "Paid", dateLine: "Paid on 21 Oct 2026" });
   });
 
   test("AC11: opening one of his invoices shows it with each job's working", async () => {

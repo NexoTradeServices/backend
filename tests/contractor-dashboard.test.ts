@@ -231,7 +231,7 @@ describe("AC1-AC4 -- Bob's live job list, sorted", () => {
     const body = await dashboard(cookie);
     const card = body.jobs.find((j) => j.reference === "JOB-9104");
     expect(card?.slotLabel).toBe(formatSlotLabel(zone, fixedSlot));
-    expect(card?.slotLabel).toMatch(/^[A-Z][a-z]{2} \d{2}\/\d{2}, \d{1,2}:\d{2}(am|pm) AWST$/);
+    expect(card?.slotLabel).toMatch(/^(Today|[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}( \d{4})?), \d{1,2}:\d{2}(am|pm) AWST$/);
   });
 });
 

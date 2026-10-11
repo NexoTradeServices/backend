@@ -10,7 +10,8 @@ import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf
 import type { PrismaClient } from "../db/client.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import { addressLine } from "../settings/address.js";
-import { formatLongDate, plain, wrap } from "../agreements/pdf.js";
+import { plain, wrap } from "../agreements/pdf.js";
+import { formatDate } from "../time/index.js";
 import type { BilledTo } from "./issue.js";
 
 export interface InvoicePdfInput {
@@ -96,8 +97,8 @@ export async function makeInvoicePdf(input: InvoicePdfInput): Promise<Uint8Array
   const facts: [string, string][] = [
     ["Invoice number", input.reference],
     ["Job", input.jobReference],
-    ["Issued", formatLongDate(input.issuedAt, input.timezone)],
-    ["Due", formatLongDate(input.dueAt, input.timezone)],
+    ["Issued", formatDate(input.timezone, input.issuedAt)],
+    ["Due", formatDate(input.timezone, input.dueAt)],
   ];
   for (const [label, value] of facts) {
     room(30);

@@ -12,7 +12,7 @@ import { sendNotification } from "../notifications/index.js";
 import type { NotificationContext } from "../notifications/index.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import { formatDollars } from "../enquiries/money.js";
-import { formatLongDate } from "../agreements/pdf.js";
+import { formatDate } from "../time/index.js";
 
 type Db = Prisma.TransactionClient;
 
@@ -52,7 +52,7 @@ export async function askInvoiceMessages(db: Db, invoiceId: string, resendAtMs?:
     totalText: formatDollars(invoice.amount),
     gstApplied,
     ...(gstApplied ? { gstText: formatDollars(invoice.gstAmount ?? 0) } : {}),
-    dueText: formatLongDate(invoice.dueAt, zone),
+    dueText: formatDate(zone, invoice.dueAt),
     payUrl: invoice.stripePaymentLinkUrl,
     officePhone: settings.operatorPhone,
   };

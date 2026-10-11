@@ -5,13 +5,13 @@
 // the customer's contact, the two addresses, and the notes log newest first.
 import type { PrismaClient } from "../db/client.js";
 import type { JobStatus } from "../generated/prisma/enums.js";
-import { formatDateTimeLabel, formatPlainDate, formatSlotLabel } from "../time/index.js";
+import { formatDate, formatDateTimeLabel, formatPlainDate, formatSlotLabel } from "../time/index.js";
 import { customerPhotosOf, type PhotoView } from "../photos/cloudinary.js";
 import { editableForSeconds, readNotes } from "./notes.js";
 import { jobMessages, type MessageView } from "./messages.js";
 import { asSiteContact, isClosed, type SiteContactView } from "./site-contact.js";
 import { billedHours } from "./billed-hours.js";
-import { customerRatingOf, friendlyDate, type CustomerRating } from "./customer-rating.js";
+import { customerRatingOf, type CustomerRating } from "./customer-rating.js";
 import { CANCELLED_KIND_LABELS, cancelledKindOf } from "./booking.js";
 import { entryViewOf, returnVisitMinimum, savedEntries, type EntryView } from "./visit.js";
 import { isServiceLevelMultipliers, priceLine } from "./dispatch-level.js";
@@ -210,7 +210,7 @@ async function cancelledFactsOf(client: PrismaClient, job: JobWithRelations): Pr
     reasonLabel: job.cancelReason === null ? "Cancelled" : (CANCEL_REASON_LABELS[job.cancelReason] ?? job.cancelReason),
     note: job.cancelNote,
     byName: by === null ? "the office" : (by.name.split(" ")[0] ?? by.name),
-    atLabel: job.cancelledAt === null ? "" : friendlyDate(job.timezone, job.cancelledAt),
+    atLabel: job.cancelledAt === null ? "" : formatDate(job.timezone, job.cancelledAt),
   };
 }
 

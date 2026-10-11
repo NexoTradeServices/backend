@@ -4,6 +4,7 @@
 // from where, and the fingerprint of the exact file. Laid out by hand.
 import { PDFDocument, StandardFonts, rgb, type PDFFont } from "pdf-lib";
 import { addressLine } from "../settings/address.js";
+import { formatDate, formatDateTimeZoned } from "../time/index.js";
 
 export interface AcceptanceRecordInput {
   legalEntityName: string;
@@ -27,24 +28,9 @@ export function plain(text: string): string {
   return text.replace(/[^\x20-\x7E\xA0-\xFF]/g, "?");
 }
 
-/** "9 Sep 2026" in the business's own clock. */
-export function formatLongDate(date: Date, timezone: string): string {
-  return new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", year: "numeric", timeZone: timezone }).format(date);
-}
-
-/** "9 Sep 2026, 2:15 pm AWST" in the business's own clock. */
+/** "9 Sep 2026, 2:15pm AWST" in the business's own clock -- the shared date writer (Time module). */
 export function formatMoment(date: Date, timezone: string): string {
-  const day = formatLongDate(date, timezone);
-  const parts = new Intl.DateTimeFormat("en-AU", {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-    timeZone: timezone,
-    timeZoneName: "short",
-  }).formatToParts(date);
-  const pick = (type: string): string => parts.find((part) => part.type === type)?.value ?? "";
-  const zone = pick("timeZoneName").replace(/^GMT\+8$/, "AWST");
-  return `${day}, ${pick("hour")}:${pick("minute")} ${pick("dayPeriod").toLowerCase()} ${zone}`.trim();
+  return formatDateTimeZoned(timezone, date);
 }
 
 export function wrap(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
@@ -105,7 +91,7 @@ export async function makeAcceptanceRecord(input: AcceptanceRecordInput): Promis
 
   const facts: [string, string][] = [
     ["Contractor", `${input.contractorName} (${input.contractorCode})`],
-    ["Agreement version", `Version ${input.version}, issued ${formatLongDate(input.versionIssuedAt, input.timezone)}`],
+    ["Agreement version", `Version ${input.version}, issued ${formatDate(input.timezone, input.versionIssuedAt)}`],
     ["Accepted", formatMoment(input.acceptedAt, input.timezone)],
     ["IP address", input.ip],
     ["Device", input.userAgent ?? "Not recorded"],

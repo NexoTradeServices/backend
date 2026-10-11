@@ -4,6 +4,7 @@
 // from her history every time the job page opens. Read-only; nothing is stored.
 import type { PrismaClient } from "../db/client.js";
 import { dueStateOf } from "../payments/receivables.js";
+import { formatDate } from "../time/index.js";
 import { readNotes } from "./notes.js";
 
 export type RatingLabel = "first_time" | "returning" | "regular" | "old";
@@ -24,15 +25,6 @@ export interface CustomerRating {
   overdueInvoices: number;
   /** Cents, GST-inclusive. */
   totalDue: number;
-}
-
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-/** Voice and tone: a friendly date reads "9 Sep 2026", in the given zone (month names fixed, never the ICU's "Sept"). */
-export function friendlyDate(zone: string, moment: Date): string {
-  const parts = new Intl.DateTimeFormat("en-AU", { timeZone: zone, day: "numeric", month: "numeric", year: "numeric" }).formatToParts(moment);
-  const part = (type: string): string => parts.find((entry) => entry.type === type)?.value ?? "";
-  return `${String(Number(part("day")))} ${MONTHS[Number(part("month")) - 1] ?? ""} ${part("year")}`;
 }
 
 const YEAR_MS = 365 * 86_400_000;
@@ -75,7 +67,7 @@ export async function customerRatingOf(
   const label = labelOf(moments, now);
   const jobsInLastYear = moments.filter((at) => at.getTime() > now.getTime() - YEAR_MS).length;
   const last = moments.reduce<Date | null>((best, at) => (best === null || at > best ? at : best), null);
-  const lastJobLabel = last === null ? null : friendlyDate(zone, last);
+  const lastJobLabel = last === null ? null : formatDate(zone, last);
 
   // The figures count every job of hers, this one included.
   const noShows = await client.job.findMany({
