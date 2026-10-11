@@ -5,6 +5,7 @@
 // POST /api/test-data/settlements/run -- Feature 6003.
 // POST /api/test-data/settlements/:reference/approve-link -- Feature 6003.
 // POST /api/test-data/jobs/:reference/correction-note -- Feature 6003.
+// POST /api/test-data/customer-login -- Feature 1018.
 //
 // Lets the browser tests clear their own label from wherever they run (the dev
 // machine, CI). Mounted only when NODE_ENV is not production -- absent, not
@@ -34,6 +35,11 @@
 // hands back its URL: the real link only ever exists inside a delivered email, which a browser
 // test cannot read. The correction-note hook writes the `correction` note Correct & reissue
 // (Feature 6007) will write, onto a labelled job, so the "Job corrected since" flag can be seen.
+//
+// The customer-login hook makes a labelled customer User with the dev password and answers its
+// email and name. The seeded cast has no customer login (Sarah is a guest by design, 1003 AC9),
+// so a browser test of the customer portal makes its own. Only with the test-run cookie: the row
+// carries the label and the sweep removes it with the rest.
 import type { Express, Router } from "express";
 import { Router as createRouter } from "express";
 import type { Request, Response } from "express";
@@ -48,6 +54,8 @@ import { runWeekly } from "../settlements/sweep.js";
 import { randomUUID } from "node:crypto";
 import { CapabilityTokenType, mintCapabilityLink } from "../capability-tokens/index.js";
 import { readNotes } from "../jobs/notes.js";
+import { passwordHasher } from "../auth/dev-password.js";
+import { DEV_PASSWORD } from "../db/seed/auth.js";
 
 export function testDataRoutes(client: PrismaClient): Router {
   const router = createRouter();
@@ -192,6 +200,24 @@ export function testDataRoutes(client: PrismaClient): Router {
       res.json({ added: true });
     })().catch((error: unknown) => {
       console.error("POST /api/test-data/jobs/:reference/correction-note failed", error);
+      res.status(500).json({ error: error instanceof Error ? error.message : "internal error" });
+    });
+  });
+
+  router.post("/customer-login", (_req: Request, res: Response) => {
+    void (async () => {
+      if (currentLabel() === null) {
+        res.status(400).json({ error: "a customer login is made only for a test run" });
+        return;
+      }
+      const email = `customer-${randomUUID().slice(0, 8)}@idelta.com.au`;
+      const name = "Sarah Chen";
+      const user = await client.user.create({ data: { name, email, role: "customer" } });
+      const hash = await passwordHasher().hash(DEV_PASSWORD);
+      await client.account.create({ data: { userId: user.id, providerId: "credential", accountId: user.id, password: hash } });
+      res.json({ email, name, password: DEV_PASSWORD });
+    })().catch((error: unknown) => {
+      console.error("POST /api/test-data/customer-login failed", error);
       res.status(500).json({ error: error instanceof Error ? error.message : "internal error" });
     });
   });

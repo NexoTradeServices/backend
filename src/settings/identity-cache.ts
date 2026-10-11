@@ -7,19 +7,26 @@
 // some other way (a direct DB edit, a second app instance).
 const TTL_MS = 60_000;
 
-let cached: { displayName: string; expiresAt: number } | null = null;
+// Feature 1018: the public identity is the name AND the support phone (the
+// frontend Footer reads both), held together so one save clears both.
+export interface PublicIdentity {
+  displayName: string;
+  operatorPhone: string;
+}
 
-export function getCachedDisplayName(): string | null {
+let cached: { identity: PublicIdentity; expiresAt: number } | null = null;
+
+export function getCachedIdentity(): PublicIdentity | null {
   if (cached === null) return null;
   if (Date.now() >= cached.expiresAt) {
     cached = null;
     return null;
   }
-  return cached.displayName;
+  return cached.identity;
 }
 
-export function setCachedDisplayName(displayName: string): void {
-  cached = { displayName, expiresAt: Date.now() + TTL_MS };
+export function setCachedIdentity(identity: PublicIdentity): void {
+  cached = { identity, expiresAt: Date.now() + TTL_MS };
 }
 
 /** Called by the settings PUT on every save -- the next identity read is never stale. */

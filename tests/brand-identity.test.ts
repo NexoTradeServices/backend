@@ -6,6 +6,8 @@
 //      name is refused server-side with the field error
 // AC3  GET /api/identity needs no login and returns displayName; after a
 //      settings save it returns the new name on the very next call
+// 1018 AC11  GET /api/identity answers exactly displayName and operatorPhone,
+//      no session needed; a save of either shows on the next read
 // AC4  the password-reset email signs "-- <name>" in text and HTML, and the
 //      provider call carries the name as fromName; the address is unchanged
 // AC5  the password-reset template has no name of its own: a context
@@ -199,6 +201,32 @@ describe("AC3 -- the public identity endpoint", () => {
 
     const after = await request(app).get("/api/identity");
     expect((after.body as { displayName: string }).displayName).toBe("Renamed Trades");
+  });
+});
+
+describe("1018 AC11 -- the identity answers the name and the support phone, nothing else", () => {
+  test("AC11: GET /api/identity answers exactly displayName and operatorPhone, with no session", async () => {
+    await seedBase(db);
+    const settings = await db.platformSettings.findFirstOrThrow();
+    const res = await request(app).get("/api/identity");
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body as object).sort()).toEqual(["displayName", "operatorPhone"]);
+    expect(res.body).toEqual({ displayName: INTERIM_WORDING, operatorPhone: settings.operatorPhone });
+  });
+
+  test("AC11: after saving operatorPhone on Settings, the very next identity read shows it", async () => {
+    await seedCastForApp();
+    const cookie = await signInCookie("owner@idelta.com.au");
+    await request(app).get("/api/identity"); // fills the cache
+
+    const saved = await request(app)
+      .put("/api/settings")
+      .set("Cookie", cookie)
+      .send(validBody({ operatorPhone: "08 9000 1234" }));
+    expect(saved.status).toBe(200);
+
+    const after = await request(app).get("/api/identity");
+    expect(after.body).toEqual({ displayName: INTERIM_WORDING, operatorPhone: "08 9000 1234" });
   });
 });
 
