@@ -56,8 +56,8 @@ export async function make(client: PrismaClient): Promise<string[]> {
 /**
  * Top up, never wipe: remake only what the owner has used up. The respond job is used up once Bob
  * answered it or it was cancelled; the draft once it was approved or replaced; Dave's licence job
- * once it was dispatched. The static records (the closed jobs, today's job, the answered link, the
- * agreement) are never used up.
+ * once it was dispatched; today's job once the day has rolled over (its slot is no longer today).
+ * The static records (the closed jobs, the answered link, the agreement) are never used up.
  */
 export async function topUp(client: PrismaClient): Promise<string[]> {
   const used = new Set<string>();
@@ -81,6 +81,17 @@ export async function topUp(client: PrismaClient): Promise<string[]> {
     orderBy: { createdAt: "desc" },
   });
   if (licenceJob === null || licenceJob.status !== "new") used.add("licence");
+
+  const todayJob = await client.job.findFirst({
+    where: { testData: LABEL, description: { contains: markerOf("today") } },
+    orderBy: { createdAt: "desc" },
+    include: { assignments: true },
+  });
+  const zone = (await client.platformSettings.findFirstOrThrow()).timezone;
+  const todaySlot = todayAt(zone, 17, 0, new Date()).getTime();
+  if (todayJob === null || !todayJob.assignments.some((a) => a.status === "accepted" && a.confirmedSlot?.getTime() === todaySlot)) {
+    used.add("today");
+  }
 
   return makeRecords(client, used);
 }
