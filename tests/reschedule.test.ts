@@ -102,7 +102,7 @@ describe("AC1 -- the swap", () => {
     await drainOnce(db);
     const mail = email.sent.find((m) => m.to === "bob@idelta.com.au" && (m.message.subject ?? "").startsWith("Job rescheduled"));
     expect(mail?.message.subject).toContain("JOB-1042");
-    expect(mail?.message.text).toMatch(/has been rescheduled to Mon 15\/03, 7:00am AWST\. You are no longer booked for /);
+    expect(mail?.message.text).toMatch(/has been rescheduled to Mon 15 Mar( 2027)?, 7:00am AWST\. You are no longer booked for /);
     expect(mail?.message.text).toContain("Site contact: Lena Park");
     expect(mail?.message.text).not.toContain("0400"); // the phone is never given
     expect(mail?.message.text).toMatch(/\/a\/[\w-]+/);
@@ -132,14 +132,14 @@ describe("AC2 -- Bob accepts the new time", () => {
     await drainOnce(db);
 
     const sarah = email.sent.find((m) => m.to === "sarah@idelta.com.au" && (m.message.subject ?? "").startsWith("Job booked"));
-    expect(sarah?.message.text).toContain("Sat 20/03, 8:00am AWST");
+    expect(sarah?.message.text).toMatch(/Sat 20 Mar( 2027)?, 8:00am AWST/);
     // Reworded at UAT: no message states a price.
     expect(sarah?.message.text).not.toContain("$");
     expect(sarah?.message.text).toContain("The site contact has been informed.");
     expect(sarah?.message.text).not.toContain("Lena");
 
     const lena = email.sent.find((m) => m.to === "lena@idelta.com.au");
-    expect(lena?.message.text).toContain("Sat 20/03, 8:00am AWST");
+    expect(lena?.message.text).toMatch(/Sat 20 Mar( 2027)?, 8:00am AWST/);
     expect(lena?.message.text).not.toContain("$");
   });
 });

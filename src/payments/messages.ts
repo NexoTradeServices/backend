@@ -10,8 +10,7 @@ import { sendNotification } from "../notifications/index.js";
 import type { NotificationContext } from "../notifications/index.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import { formatDollars } from "../enquiries/money.js";
-import { formatLongDate } from "../agreements/pdf.js";
-import { formatLabelled } from "../time/index.js";
+import { formatDate, formatLabelled } from "../time/index.js";
 
 type Db = Prisma.TransactionClient;
 
@@ -47,7 +46,7 @@ async function contextOf(db: Db, paymentId: string): Promise<{ context: Notifica
       jobReference: invoice.job.reference,
       amountText: formatDollars(payment.amount),
       methodText: methodWords(payment.method),
-      paidDate: formatLongDate(paidAt, zone),
+      paidDate: formatDate(zone, paidAt),
       paidTime: formatLabelled(zone, paidAt),
       invoiceState: invoice.status === "void" ? "void" : "already paid",
       ...(webOrigin ? { jobUrl: `${webOrigin}/ops/jobs/${invoice.job.reference}` } : {}),

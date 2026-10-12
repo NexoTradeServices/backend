@@ -6,17 +6,16 @@ import type { PrismaClient } from "../db/client.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import { dayLabel, nextRunMonday, payDayAfter, payDayFor, periodLabel, ymdOf } from "./calendar.js";
 import { amountOf, correctedSince, nextPayout, type NextPayout } from "./service.js";
-import { todayIn } from "../time/index.js";
+import { formatDate, todayIn } from "../time/index.js";
 
 export const SETTLEMENTS_PAGE = 50;
 
 export type OpsView = "ready" | "awaiting" | "upcoming" | "paid";
 export const OPS_VIEWS: readonly OpsView[] = ["ready", "awaiting", "upcoming", "paid"];
 
-/** "21/10/26" -- a table date, on the business clock. */
+/** "21 Oct 2026" -- a table date, on the business clock (the shared date writer). */
 function shortDate(zone: string, moment: Date): string {
-  const [year, month, day] = todayIn(zone, moment).split("-");
-  return `${day ?? ""}/${month ?? ""}/${(year ?? "").slice(2)}`;
+  return formatDate(zone, moment);
 }
 
 function firstNameOf(name: string): string {
@@ -209,7 +208,7 @@ export interface ContractorCard {
   tag: string;
   period: string;
   amount: number;
-  /** "To be paid on Wed 21 Oct" | "Paid on 21/10/26" */
+  /** "To be paid on Wed 21 Oct" | "Paid on 21 Oct 2026" */
   dateLine: string;
 }
 

@@ -376,7 +376,7 @@ describe("AC13-AC16 -- the Messages list", () => {
     const { messages } = await detail(await mike(), "JOB-1042");
     expect(messages.map((m) => m.channel)).toEqual(["Text", "Text", "Email", "Email"]);
     // sentAt 02:14 UTC is 10:14am in Perth; the queued row shows createdAt, 03:00 UTC = 11:00am.
-    expect(messages.map((m) => m.whenLabel)).toEqual(["29/09/26 11:00am", "29/09/26 10:14am", "29/09/26 9:05am", "29/09/26 9:00am"]);
+    expect(messages.map((m) => m.whenLabel)).toEqual(["29 Sep 2026, 11:00am", "29 Sep 2026, 10:14am", "29 Sep 2026, 9:05am", "29 Sep 2026, 9:00am"]);
     expect(messages.map((m) => m.what)).toEqual(["on my way", "Job dispatched", "New job request", "Enquiry received"]);
   });
 });

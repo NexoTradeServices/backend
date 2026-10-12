@@ -257,7 +257,7 @@ describe("the respond read", () => {
       contractorFirstName: "Bob",
       customerFirstName: "Sarah",
     });
-    expect(body.slotLabel).toMatch(/^Thu \d\d\/\d\d, 8:00am AWST$/);
+    expect(body.slotLabel).toMatch(/^Thu \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am AWST$/);
     // V3: the name only -- no phone and no email of the site contact anywhere in the read.
     const raw = JSON.stringify(res.body);
     expect(raw).not.toContain("0400 002 050");
@@ -334,7 +334,7 @@ describe("the respond read", () => {
     const body = res.body as Read;
     expect(body.instructions).toHaveLength(1);
     expect(body.instructions?.[0]).toMatchObject({ authorFirstName: "Mike", note: "Dog in the back yard - use the side gate." });
-    expect(body.instructions?.[0]?.dateLabel).toMatch(/\d\d\/\d\d\/26/);
+    expect(body.instructions?.[0]?.dateLabel).toMatch(/^[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}( \d{4})?$/);
     const raw = JSON.stringify(res.body);
     expect(raw).not.toContain("GENERAL-ONLY");
     expect(raw).not.toContain("COMPLAINT-ONLY");
@@ -473,7 +473,7 @@ describe("the slot confirmation", () => {
     for (const part of ["Bob", "12 Paget Street, Hilton", "JOB-1042", "Plumbing", office]) {
       expect(text).toContain(part);
     }
-    expect(text).toMatch(/Thu \d\d\/\d\d, 8:00am AWST/);
+    expect(text).toMatch(/Thu \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am AWST/);
     // Reworded at 4006's UAT: no message states a price.
     expect(text).not.toContain("$");
     expect(html).not.toContain("$");
@@ -489,7 +489,7 @@ describe("the slot confirmation", () => {
       expect(sms?.text).toContain(part);
     }
     expect(sms?.text).not.toContain("$");
-    expect(sms?.text).toMatch(/Thu \d\d\/\d\d, 8:00am AWST/);
+    expect(sms?.text).toMatch(/Thu \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am AWST/);
     expect(sms?.text).not.toMatch(/track|remind|http/i);
   });
 
@@ -541,7 +541,7 @@ describe("the slot confirmation", () => {
     for (const body of [mail?.message.text ?? "", mail?.message.html ?? "", sms?.text ?? ""]) {
       expect(body).toContain("Bob");
       expect(body).toContain("12 Paget Street, Hilton");
-      expect(body).toMatch(/Thu \d\d\/\d\d, 8:00am AWST/);
+      expect(body).toMatch(/Thu \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am AWST/);
       expect(body).not.toContain("$");
       expect(body).not.toMatch(/http|track/i);
     }
@@ -691,7 +691,7 @@ describe("decline", () => {
     for (const part of ["Bob Reilly", "CON-014", "JOB-1042", KALAMUNDA_NOTE, "/ops/jobs/JOB-1042"]) {
       expect(text).toContain(part);
     }
-    expect(text).toMatch(/Thu \d\d\/\d\d, 8:00am AWST/);
+    expect(text).toMatch(/Thu \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am AWST/);
     expect(mails[0]?.message.html).toContain('href="');
     expect(await db.notification.count({ where: { jobId, type: "contractor_declined" } })).toBe(1);
     // Sarah is only ever told a confirmed slot.
@@ -762,7 +762,7 @@ describe("decline", () => {
       note: KALAMUNDA_NOTE,
     });
     expect(before.earlierBookings[0]?.whenLabel).toMatch(/AWST/);
-    expect(before.earlierBookings[0]?.slotLabel).toMatch(/Thu \d\d\/\d\d, 8:00am AWST/);
+    expect(before.earlierBookings[0]?.slotLabel).toMatch(/Thu \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am AWST/);
     expect(proposedSlot.getTime()).toBeGreaterThan(0);
 
     const redo = await request(app)

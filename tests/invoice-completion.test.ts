@@ -48,6 +48,7 @@ import {
   labourTotal,
 } from "../src/invoices/arithmetic.js";
 import { buildInvoicePdf } from "../src/invoices/pdf.js";
+import { formatDate } from "../src/time/index.js";
 import { issueInvoice } from "../src/invoices/issue.js";
 import { payLinkPass, startPayLinkLoop } from "../src/invoices/pay-link.js";
 import { recordConfirmedPayment } from "../src/payments/paid.js";
@@ -539,7 +540,7 @@ describe("AC5 / AC6 / AC7 -- GST, billed to, the PDF", () => {
     expect(text).toContain("INV-2042");
     expect(text).toContain(made.reference);
     // Issued today, due paymentTermsDays later -- both in the job's zone ("15 Oct 2026").
-    const day = (d: Date) => new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", year: "numeric", timeZone: PERTH }).format(d);
+    const day = (d: Date) => formatDate(PERTH, d);
     expect(text).toContain(day(invoice.sentAt ?? invoice.createdAt));
     expect(text).toContain(day(invoice.dueAt));
     expect(text).toContain("Call-out + first hour - Plumbing, normal");

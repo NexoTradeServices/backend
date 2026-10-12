@@ -213,83 +213,103 @@ export function nextWeekdayAt(
   return zonedTimeToUtc(zone, addDays(todayYmd, delta), hour, minute);
 }
 
+// ---- Writing a date for a person (Data Model / Time; frontend-conventions /
+// Organisms / Lists and tables / Formats). ONE writer: month names are fixed
+// here, never the ICU's ("Sept"), and a date is never written in numbers.
+//
+//   formatDate            9 Sep 2026
+//   formatDateWithDay     Wed 14 Oct   (this year, in the zone that decides)
+//                         Wed 14 Oct 2025   (any other year)
+//   formatDateTime        9 Sep 2026, 10:14am        (formatShortDateTime)
+//   formatSlotLabel       Today, 8:00am AWST / Thu 10 Sep, 8:00am AWST
+
+export const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
+
+function weekdayName(zone: string, moment: Date): string {
+  const day = weekdayIn(zone, moment);
+  return `${day.charAt(0).toUpperCase()}${day.slice(1)}`;
+}
+
+/** The calendar date `moment` falls on in `zone` -- `9 Sep 2026`. */
+export function formatDate(zone: string, moment: Date): string {
+  const { year, month, day } = ymdIn(zone, moment);
+  return `${String(day)} ${MONTH_NAMES[month - 1] ?? ""} ${String(year)}`;
+}
+
+/**
+ * The date with its weekday -- `Wed 14 Oct` inside the current year, `Wed 14 Oct 2025`
+ * outside it. "Current" is `now`'s year read in the same `zone` as the date.
+ */
+export function formatDateWithDay(zone: string, moment: Date, now: Date = new Date()): string {
+  const { year, month, day } = ymdIn(zone, moment);
+  const base = `${weekdayName(zone, moment)} ${String(day)} ${MONTH_NAMES[month - 1] ?? ""}`;
+  return year === ymdIn(zone, now).year ? base : `${base} ${String(year)}`;
+}
+
 /**
  * `moment` rendered for a dashboard card, in `zone` -- `Today, 1:00pm AWST`
- * on the same calendar day as `now`, otherwise `Thu 10/09, 8:00am AWST`
+ * on the same calendar day as `now`, otherwise `Thu 10 Sep, 8:00am AWST`
  * (Contractor Workflow step 3; Flow walkthrough "Contractor dashboard and
- * rates (2003)", state 1).
+ * rates (2003)", state 1). Another year carries it: `Thu 10 Sep 2025, 8:00am AWST`.
  */
 export function formatSlotLabel(zone: string, moment: Date, now: Date = new Date()): string {
   const time = formatLabelled(zone, moment);
   if (todayIn(zone, moment) === todayIn(zone, now)) {
     return `Today, ${time}`;
   }
-  const weekdayLabel = new Intl.DateTimeFormat("en-AU", { timeZone: zone, weekday: "short" }).format(moment);
-  const { month, day } = ymdIn(zone, moment);
-  const dd = String(day).padStart(2, "0");
-  const mm = String(month).padStart(2, "0");
-  return `${weekdayLabel} ${dd}/${mm}, ${time}`;
+  return `${formatDateWithDay(zone, moment, now)}, ${time}`;
 }
 
 /**
- * The calendar date `moment` falls on in `zone`, for a person -- `Tue 08/09/26`.
- * Carries the year, unlike formatSlotLabel: the ops queue reaches closed
- * jobs from any year through its Closed filter and search (Feature 4001).
+ * The calendar date `moment` falls on in `zone`, with its weekday -- `Tue 8 Sep`,
+ * `Tue 8 Sep 2025`. The ops queue reaches closed jobs from any year through its
+ * Closed filter and search (Feature 4001), so another year shows its year.
  */
-export function formatDateLabel(zone: string, moment: Date): string {
-  const weekdayLabel = new Intl.DateTimeFormat("en-AU", { timeZone: zone, weekday: "short" }).format(moment);
-  const { year, month, day } = ymdIn(zone, moment);
-  const dd = String(day).padStart(2, "0");
-  const mm = String(month).padStart(2, "0");
-  const yy = String(year % 100).padStart(2, "0");
-  return `${weekdayLabel} ${dd}/${mm}/${yy}`;
+export function formatDateLabel(zone: string, moment: Date, now: Date = new Date()): string {
+  return formatDateWithDay(zone, moment, now);
 }
 
 /**
  * `moment` as a dated time for a person, in `zone` -- `Today, 9:14am AWST`
- * on the same calendar day as `now`, otherwise `Tue 08/09/26, 3:20pm AWST`.
+ * on the same calendar day as `now`, otherwise `Tue 8 Sep, 3:20pm AWST`.
  * When a job arrived, when a note was written (Feature 4001).
  */
 export function formatDateTimeLabel(zone: string, moment: Date, now: Date = new Date()): string {
-  const time = formatLabelled(zone, moment);
-  if (todayIn(zone, moment) === todayIn(zone, now)) {
-    return `Today, ${time}`;
-  }
-  return `${formatDateLabel(zone, moment)}, ${time}`;
+  return formatSlotLabel(zone, moment, now);
 }
 
 /**
- * `moment` as a numeric date and time, no zone name -- `29/09/26 10:14am`
+ * `moment` as a date and time, no zone name -- `9 Sep 2026, 10:14am`
  * (Feature 4008, the job page's Messages card, on the business clock).
  */
 export function formatShortDateTime(zone: string, moment: Date): string {
-  const { year, month, day } = ymdIn(zone, moment);
-  const dd = String(day).padStart(2, "0");
-  const mm = String(month).padStart(2, "0");
-  const yy = String(year % 100).padStart(2, "0");
-  return `${dd}/${mm}/${yy} ${hourMinuteLabel(zone, moment)}`;
+  return `${formatDate(zone, moment)}, ${hourMinuteLabel(zone, moment)}`;
 }
 
 /**
- * A plain DATE (preferredDate, an expiry) for a person -- `Fri 11/09/26`.
- * A plain date carries no zone and is stored at UTC midnight, so it is read
- * in UTC, the frame it is stored in: no zone conversion happens here.
+ * `moment` as a date and a labelled time -- `9 Sep 2026, 2:15pm AWST` (the agreement's
+ * acceptance line).
  */
-export function formatPlainDate(date: Date): string {
-  return formatDateLabel("UTC", date);
+export function formatDateTimeZoned(zone: string, moment: Date): string {
+  return `${formatDate(zone, moment)}, ${formatLabelled(zone, moment)}`;
 }
 
 /**
- * A plain DATE, without its weekday -- `14/09/26` (Feature 4002, the
+ * A plain DATE (preferredDate, an expiry) for a person -- `Fri 11 Sep`. A plain date
+ * carries no zone and is stored at UTC midnight, so it is read in UTC, the frame it
+ * is stored in: no zone conversion happens here.
+ */
+export function formatPlainDate(date: Date, now: Date = new Date()): string {
+  return formatDateWithDay("UTC", date, now);
+}
+
+/**
+ * A plain DATE, written out in full -- `14 Sep 2026` (Feature 4002, the
  * licence-expiry reason on a greyed candidate row: "Electrical licence
- * expires 14/09/26, before this slot"). Read in UTC, same as formatPlainDate.
+ * expires 14 Sep 2026, before this slot"). Read in UTC, same as formatPlainDate.
  */
 export function formatPlainDateShort(date: Date): string {
-  const { year, month, day } = ymdIn("UTC", date);
-  const dd = String(day).padStart(2, "0");
-  const mm = String(month).padStart(2, "0");
-  const yy = String(year % 100).padStart(2, "0");
-  return `${dd}/${mm}/${yy}`;
+  return formatDate("UTC", date);
 }
 
 /**

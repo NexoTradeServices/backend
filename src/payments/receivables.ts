@@ -6,8 +6,7 @@
 // from dueAt against the business clock (PlatformSettings.timezone), never stored.
 // A paid or void invoice is not owed, so it leaves the list by itself.
 import type { PrismaClient } from "../db/client.js";
-import { formatLongDate } from "../agreements/pdf.js";
-import { todayIn } from "../time/index.js";
+import { formatDate, todayIn } from "../time/index.js";
 import type { BilledTo } from "../invoices/issue.js";
 
 export const RECEIVABLES_PAGE = 50;
@@ -114,7 +113,7 @@ export async function listReceivables(
         billedTo: { name: billed.name, businessName: billed.businessName ?? null },
         phone: invoice.customer.phone,
         amount: invoice.amount,
-        dueLabel: formatLongDate(invoice.dueAt, zone),
+        dueLabel: formatDate(zone, invoice.dueAt),
         due: dueStateOf(invoice.dueAt, zone, now),
         waitingForPayLink: invoice.stripePaymentLinkUrl === null,
       };
