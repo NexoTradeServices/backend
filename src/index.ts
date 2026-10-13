@@ -28,6 +28,7 @@ import { approveRoutes } from './approve/routes.js'
 import { settlementRoutes } from './settlements/routes.js'
 import { contractorSettlementRoutes } from './settlements/contractor-routes.js'
 import { startSettlementLoop } from './settlements/loop.js'
+import { startDailyLoop } from './daily/index.js'
 import { devTextsRoutes } from './notifications/dev-texts-routes.js'
 import { getPrisma } from './db/client.js'
 import { testRunSignal } from './test-data/label.js'
@@ -161,6 +162,9 @@ startNotifications()
     startPayLinkLoop()
     // Feature 6003: the Monday 6:00am settlement run. Nothing to configure; a missed Monday runs on the first tick.
     startSettlementLoop(prisma)
+    // Feature 6008: the 9:00am daily sweep -- invoice reminders and pay-link switch-off today; later
+    // features add their own step to it. A missed morning runs on the first tick after.
+    startDailyLoop(prisma)
     // Feature 6002: no STRIPE_WEBHOOK_SECRET only warns -- the webhook refuses every call until it is set.
     warnIfWebhookSecretMissing()
     // 0.0.0.0, not localhost: Caddy on 192.168.1.41 has to reach this from another machine.

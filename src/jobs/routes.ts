@@ -11,6 +11,7 @@
 //   PUT  /api/jobs/:reference/time-entries    Feature 5001: ops fixes the time entries until Complete
 //   POST /api/jobs/:reference/invoice/resend  Feature 6001: the invoice email and text, again
 //   POST /api/jobs/:reference/invoice/check-payment  Feature 6002: ask Stripe whether she has paid
+//   POST /api/jobs/:reference/invoice/void  Feature 6008: void an unpaid invoice, with a reason
 //   POST /api/jobs/:reference/reschedule      Feature 4006: new time for the same contractor
 //   POST /api/jobs/:reference/take-off        Feature 4006: free the contractor, job back to New
 //   POST /api/jobs/:reference/cancel          Feature 4006: close the job with a reason (Mike only)
@@ -27,6 +28,7 @@ import { OPEN_VISIT_STATUSES, Refused, lockAssignment, lockedFailure, parseTimeE
 import { hasPayableLink } from "../invoices/view.js";
 import { askInvoiceMessages } from "../invoices/messages.js";
 import { checkPaymentWithStripe } from "../payments/check.js";
+import { VOID_REFUSALS, parseVoidReason, voidInvoice } from "../invoices/void.js";
 import { formatLabelled } from "../time/index.js";
 import { addNote, editNote, parseEditedNote, parseNewNote } from "./notes.js";
 import {
@@ -149,6 +151,39 @@ export function jobRoutes(client: PrismaClient): Router {
         job: await jobDetail(client, job, req.authUser?.id ?? ""),
       });
     })().catch(failWith(res, "POST /api/jobs/:reference/invoice/check-payment"));
+  });
+
+  // Feature 6008: Void invoice. Ops (the owner too). The reason is required; a paid, already
+  // void or zero-dollar invoice is refused 409. Answers the fresh job detail, like resend.
+  router.post("/:reference/invoice/void", requireRole(Role.ops), (req: WithReference, res: Response) => {
+    void (async () => {
+      const job = await loadJob(client, req.params.reference);
+      if (!job) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      const invoice = await client.invoice.findFirst({ where: { jobId: job.id }, orderBy: { createdAt: "desc" } });
+      if (invoice === null) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      const parsed = parseVoidReason(req.body);
+      if (!parsed.ok) {
+        res.status(400).json({ error: parsed.error, field: "reason" });
+        return;
+      }
+      const outcome = await voidInvoice(client, { invoiceId: invoice.id, userId: req.authUser?.id ?? "", reason: parsed.reason });
+      if (outcome === "not_found") {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      if (outcome !== "voided") {
+        res.status(409).json({ error: VOID_REFUSALS[outcome] });
+        return;
+      }
+      const fresh = await loadJob(client, req.params.reference);
+      res.json(await jobDetail(client, fresh ?? job, req.authUser?.id ?? ""));
+    })().catch(failWith(res, "POST /api/jobs/:reference/invoice/void"));
   });
 
   router.put("/:reference/addresses", requireRole(Role.ops), (req: WithReference, res: Response) => {

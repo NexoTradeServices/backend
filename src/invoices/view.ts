@@ -5,7 +5,7 @@
 // customer or the live GST switch. Money is whole cents, GST-inclusive.
 import type { PrismaClient } from "../db/client.js";
 import type { InvoiceStatus } from "../generated/prisma/enums.js";
-import { formatDate } from "../time/index.js";
+import { formatDate, formatShortDateTime } from "../time/index.js";
 import type { BilledTo } from "./issue.js";
 import { methodWords } from "../payments/messages.js";
 
@@ -27,6 +27,10 @@ export interface InvoiceView {
   canResend: boolean;
   /** Feature 6002: Check payment with Stripe is offered only when this is true (= canResend). */
   canCheckPayment: boolean;
+  /** Feature 6008: Void invoice is offered only when this is true (sent and not zero-dollar, with or without a pay link). */
+  canVoid: boolean;
+  /** Feature 6008: who voided it, when and why; null unless void. */
+  voided: { byName: string; atLabel: string; reason: string } | null;
   /** Feature 6002: "15 Oct 2026, card" once paid, from the succeeded Payment; null otherwise. */
   paidLabel: string | null;
   billedTo: { name: string; businessName: string | null; address: BilledTo["address"] | null };
@@ -51,6 +55,7 @@ export async function invoiceViewOf(client: PrismaClient, jobId: string, zone: s
     include: {
       lines: { orderBy: { id: "asc" } },
       payments: { where: { status: "succeeded" }, orderBy: { paidAt: "asc" }, take: 1 },
+      voidedBy: { select: { name: true } },
     },
   });
   if (invoice === null) return null;
@@ -64,6 +69,15 @@ export async function invoiceViewOf(client: PrismaClient, jobId: string, zone: s
     payLinkUrl: invoice.stripePaymentLinkUrl,
     canResend: hasPayableLink(invoice),
     canCheckPayment: hasPayableLink(invoice),
+    canVoid: invoice.status === "sent" && !invoice.isZeroDollar,
+    voided:
+      invoice.status === "void"
+        ? {
+            byName: invoice.voidedBy?.name ?? "Unknown",
+            atLabel: invoice.voidedAt === null ? "" : formatShortDateTime(zone, invoice.voidedAt),
+            reason: invoice.voidReason ?? "",
+          }
+        : null,
     paidLabel:
       invoice.status === "paid" && paidAt !== null
         ? `${formatDate(zone, paidAt)}, ${methodWords(paidWith?.method ?? null)}`

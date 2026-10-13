@@ -8,6 +8,7 @@
 import type { PrismaClient } from "../db/client.js";
 import { formatDate, todayIn } from "../time/index.js";
 import type { BilledTo } from "../invoices/issue.js";
+import { REMINDER_1, REMINDER_2 } from "../invoices/reminders.js";
 
 export const RECEIVABLES_PAGE = 50;
 
@@ -27,6 +28,10 @@ export interface ReceivableRow {
   dueLabel: string;
   due: DueState;
   waitingForPayLink: boolean;
+  /** Feature 6008: the reminders sent so far (0, 1 or 2) and the latest one's date ("9 Oct 2026"). */
+  reminders: { sent: 0 | 1 | 2; lastLabel: string | null };
+  /** Feature 6008: both reminders are out -- collection is the operator's turn to ring. */
+  yourTurn: boolean;
 }
 
 export interface ReceivablesResult {
@@ -100,6 +105,19 @@ export async function listReceivables(
     }),
   ]);
   const page = invoices.slice(0, limit);
+  // Feature 6008: one read for the page's reminders, never one per row.
+  const reminderRows =
+    page.length === 0
+      ? []
+      : await client.notification.findMany({
+          where: {
+            type: { in: [REMINDER_1, REMINDER_2] },
+            channel: "email",
+            relatedType: "invoice",
+            relatedId: { in: page.map((invoice) => invoice.id) },
+          },
+          select: { type: true, relatedId: true, createdAt: true },
+        });
   const last = page[page.length - 1];
   const now = options.now ?? new Date();
   return {
@@ -107,6 +125,11 @@ export async function listReceivables(
     total: summary._sum.amount ?? 0,
     rows: page.map((invoice) => {
       const billed = invoice.billedTo as unknown as BilledTo;
+      const mine = reminderRows.filter((row) => row.relatedId === invoice.id);
+      const second = mine.find((row) => row.type === REMINDER_2);
+      const first = mine.find((row) => row.type === REMINDER_1);
+      const latest = second ?? first;
+      const sent: 0 | 1 | 2 = second !== undefined ? 2 : first !== undefined ? 1 : 0;
       return {
         invoiceReference: invoice.reference,
         jobReference: invoice.job.reference,
@@ -116,6 +139,8 @@ export async function listReceivables(
         dueLabel: formatDate(zone, invoice.dueAt),
         due: dueStateOf(invoice.dueAt, zone, now),
         waitingForPayLink: invoice.stripePaymentLinkUrl === null,
+        reminders: { sent, lastLabel: latest === undefined ? null : formatDate(zone, latest.createdAt) },
+        yourTurn: second !== undefined,
       };
     }),
     nextCursor: invoices.length > limit && last !== undefined ? encodeCursor({ dueAt: last.dueAt.toISOString(), id: last.id }) : null,
