@@ -366,6 +366,46 @@ describe("AC5 -- money on a voided invoice", () => {
   });
 });
 
+// Feature 6008, AC7: the receivables read carries each invoice's reminders.
+describe("Feature 6008 AC7 -- reminders on the Receivables read", () => {
+  test("AC7: None yet, 1 sent with its date, 2 sent with its date and yourTurn -- read from the reminder messages", async () => {
+    const DAY = 86_400_000;
+    const sarahs = await owedInvoice(db, { dueAt: new Date(Date.now() + 4 * DAY) });
+    const ninas = await owedInvoice(db, {
+      customer: { name: "Nina Rossi", email: "nina@idelta.com.au", businessName: "Rossi's Cafe" },
+      dueAt: new Date(Date.now() - 8 * DAY),
+    });
+    const toms = await owedInvoice(db, { customerCode: "CUS-1052", dueAt: new Date(Date.now() - 10 * DAY) });
+
+    const reminder = async (invoice: OwedInvoice, type: string, createdAt: string): Promise<void> => {
+      await db.notification.create({
+        data: {
+          recipientType: "customer",
+          recipientId: invoice.customerId,
+          channel: "email",
+          type,
+          category: "transactional",
+          relatedType: "invoice",
+          relatedId: invoice.invoiceId,
+          jobId: invoice.jobId,
+          idempotencyKey: `${type}:invoice:${invoice.invoiceId}:email`,
+          createdAt: new Date(createdAt),
+        },
+      });
+    };
+    await reminder(ninas, "invoice_reminder_1", "2026-10-09T02:00:00.000Z");
+    await reminder(toms, "invoice_reminder_1", "2026-10-02T02:00:00.000Z");
+    await reminder(toms, "invoice_reminder_2", "2026-10-09T02:00:00.000Z");
+
+    const mike = await signInCookie("mike@idelta.com.au");
+    const body = (await request(app).get("/api/receivables").set("Cookie", mike)).body as ReceivablesResult;
+    const by = (invoice: OwedInvoice) => body.rows.find((r) => r.invoiceReference === invoice.invoiceReference);
+    expect(by(sarahs)).toMatchObject({ reminders: { sent: 0, lastLabel: null }, yourTurn: false });
+    expect(by(ninas)).toMatchObject({ reminders: { sent: 1, lastLabel: "9 Oct 2026" }, yourTurn: false });
+    expect(by(toms)).toMatchObject({ reminders: { sent: 2, lastLabel: "9 Oct 2026" }, yourTurn: true });
+  });
+});
+
 describe("AC11 -- no STRIPE_WEBHOOK_SECRET", () => {
   test("AC11: one warning, and the webhook refuses every call, however it is signed", async () => {
     vi.stubEnv("STRIPE_WEBHOOK_SECRET", "");

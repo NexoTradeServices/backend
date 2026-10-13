@@ -29,6 +29,8 @@ export interface PayLink {
 /** What the pay-link loop needs from Stripe. */
 export interface PayLinkProvider {
   createPayLink(request: PayLinkRequest): Promise<PayLink>;
+  /** Feature 6008: switch a link off so it cannot be paid (a voided invoice). Harmless when already off. */
+  deactivatePayLink(paymentLinkId: string): Promise<void>;
 }
 
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -72,6 +74,9 @@ function providerFor(secretKey: string): PayLinkProvider {
         idempotencyKey: idempotencyKeyFor(request.invoiceId),
       });
       return { url: link.url, id: link.id };
+    },
+    async deactivatePayLink(paymentLinkId) {
+      await stripe.paymentLinks.update(paymentLinkId, { active: false });
     },
   };
 }

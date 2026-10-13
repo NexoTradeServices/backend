@@ -91,6 +91,7 @@ function fakeStripe(): FakeStripe {
       if (fake.failWith !== null) throw new Error(fake.failWith);
       return { url: `https://pay.test/${req.invoiceReference}`, id: `plink_${req.invoiceReference}` };
     },
+    deactivatePayLink: () => Promise.resolve(),
   };
   return fake;
 }

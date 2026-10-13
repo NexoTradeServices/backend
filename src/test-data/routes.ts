@@ -3,6 +3,7 @@
 // POST /api/test-data/jobs/:reference/paid -- Feature 6002.
 // POST /api/test-data/jobs/:reference/due -- Feature 6002.
 // POST /api/test-data/settlements/run -- Feature 6003.
+// POST /api/test-data/daily/run -- Feature 6008.
 // POST /api/test-data/settlements/:reference/approve-link -- Feature 6003.
 // POST /api/test-data/jobs/:reference/correction-note -- Feature 6003.
 // POST /api/test-data/customer-login -- Feature 1018.
@@ -31,6 +32,12 @@
 // Called with the test-run cookie it sweeps only that label's own work (the owner's UAT records
 // are never touched).
 //
+// The daily hook runs the daily sweep's steps now (daily/index.ts), whatever the hour; the optional
+// `today` (YYYY-MM-DD) runs it as that business day, so the 7-day gap between the two invoice
+// reminders can be crossed without waiting. Like the live run it is idempotent. Called with the
+// test-run cookie it does only that label's own invoices (the owner's UAT records are never
+// touched); without the cookie it acts on every owed invoice, the same as the real morning run.
+//
 // The approve-link hook mints a fresh approve link for a settlement labelled as test data and
 // hands back its URL: the real link only ever exists inside a delivered email, which a browser
 // test cannot read. The correction-note hook writes the `correction` note Correct & reissue
@@ -51,6 +58,7 @@ import { recordConfirmedPayment } from "../payments/paid.js";
 import { FAKE_PAY_LINK_PREFIX } from "./fake-stripe.js";
 import { sweepTestData } from "./sweep.js";
 import { runWeekly } from "../settlements/sweep.js";
+import { runDailySteps } from "../daily/index.js";
 import { randomUUID } from "node:crypto";
 import { CapabilityTokenType, mintCapabilityLink } from "../capability-tokens/index.js";
 import { readNotes } from "../jobs/notes.js";
@@ -87,6 +95,7 @@ export function testDataRoutes(client: PrismaClient): Router {
         provider: {
           createPayLink: (request) =>
             Promise.resolve({ url: `https://pay.test/${request.invoiceReference}`, id: `${FAKE_PAY_LINK_PREFIX}${request.invoiceReference}` }),
+          deactivatePayLink: () => Promise.resolve(),
         },
       });
       // `linked` tells the test whether the invoice has a link now: false while a real
@@ -120,6 +129,22 @@ export function testDataRoutes(client: PrismaClient): Router {
       res.json({ outcome });
     })().catch((error: unknown) => {
       console.error("POST /api/test-data/jobs/:reference/paid failed", error);
+      res.status(500).json({ error: error instanceof Error ? error.message : "internal error" });
+    });
+  });
+
+  router.post("/daily/run", (req: Request, res: Response) => {
+    void (async () => {
+      const today = (req.body as { today?: unknown } | undefined)?.today;
+      if (today !== undefined && (typeof today !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(today))) {
+        res.status(400).json({ error: "today must be a YYYY-MM-DD business day" });
+        return;
+      }
+      // A browser test's run (its cookie carries the e2e label) does only its own labelled work:
+      // it never sends a reminder for the owner's UAT invoices.
+      res.json(await runDailySteps(client, { ...(today === undefined ? {} : { today }), label: currentLabel() }));
+    })().catch((error: unknown) => {
+      console.error("POST /api/test-data/daily/run failed", error);
       res.status(500).json({ error: error instanceof Error ? error.message : "internal error" });
     });
   });
