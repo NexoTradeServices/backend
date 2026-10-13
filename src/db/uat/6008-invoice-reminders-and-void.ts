@@ -209,7 +209,7 @@ async function stillFresh(client: PrismaClient, key: string): Promise<boolean> {
   });
   const expectedStatus = key === "sarah-paid" ? "paid" : "sent";
   const expectedReminders = key === "nina-second" ? 1 : key === "tom-void" ? 2 : 0;
-  return invoice.status === expectedStatus && reminders === expectedReminders && invoice.stripePaymentLinkUrl !== null;
+  return invoice.status === expectedStatus && reminders >= expectedReminders && invoice.stripePaymentLinkUrl !== null;
 }
 
 /** During UAT: remake only the scenarios the owner has used up; every other record stays as it is. */
