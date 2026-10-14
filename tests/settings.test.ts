@@ -10,6 +10,9 @@
 //      not restamp
 // AC6  operatorEmail is backfilled ops@idelta.com.au by the seed, and the
 //      settings PUT can change it
+// 8002 AC2  approvedPublicDomain saves, reloads, clears to null, lower-cases;
+//      a scheme, path, port, space or dot-less value is refused with the field
+//      error and the row unchanged
 import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import express, { type Express } from "express";
@@ -400,5 +403,71 @@ describe("2006 AC5 -- the count the dialog shows", () => {
 
     await db.contractor.update({ where: { code: "CON-030" }, data: { status: "suspended" } });
     expect((await request(app).get("/api/agreements").set("Cookie", cookie)).body).toMatchObject({ activeContractors: all - 1 });
+  });
+});
+
+describe("8002 AC2 -- the public web address", () => {
+  async function ownerCookie(): Promise<string> {
+    await seedCast();
+    return signInCookie("owner@idelta.com.au");
+  }
+
+  test("AC2: a domain saves, reads back on GET, and upper case is stored lower case", async () => {
+    const cookie = await ownerCookie();
+    const put = await request(app)
+      .put("/api/settings")
+      .set("Cookie", cookie)
+      .send(validBody({ approvedPublicDomain: "  Example.COM.au " }));
+    expect(put.status).toBe(200);
+    expect(put.body).toMatchObject({ approvedPublicDomain: "example.com.au" });
+
+    const get = await request(app).get("/api/settings").set("Cookie", cookie);
+    expect(get.body).toMatchObject({ approvedPublicDomain: "example.com.au" });
+    expect((await db.platformSettings.findFirstOrThrow()).approvedPublicDomain).toBe("example.com.au");
+  });
+
+  test("AC2: an empty string and null both clear it to null", async () => {
+    const cookie = await ownerCookie();
+    await db.platformSettings.updateMany({ data: { approvedPublicDomain: "example.com.au" } });
+
+    const cleared = await request(app)
+      .put("/api/settings")
+      .set("Cookie", cookie)
+      .send(validBody({ approvedPublicDomain: "" }));
+    expect(cleared.status).toBe(200);
+    expect(cleared.body).toMatchObject({ approvedPublicDomain: null });
+
+    await db.platformSettings.updateMany({ data: { approvedPublicDomain: "example.com.au" } });
+    const nulled = await request(app)
+      .put("/api/settings")
+      .set("Cookie", cookie)
+      .send(validBody({ approvedPublicDomain: null }));
+    expect(nulled.status).toBe(200);
+    expect((await db.platformSettings.findFirstOrThrow()).approvedPublicDomain).toBeNull();
+  });
+
+  test.each([
+    "https://example.com.au",
+    "example.com.au/home",
+    "example",
+    "example.com.au:3000",
+    "exam ple.com.au",
+    "-bad.example.com.au",
+    `${"a".repeat(250)}.com`,
+    "example..com",
+  ])("AC2: %s is refused with the field error and the row is unchanged", async (bad) => {
+    const cookie = await ownerCookie();
+    await db.platformSettings.updateMany({ data: { approvedPublicDomain: "kept.com.au" } });
+
+    const res = await request(app)
+      .put("/api/settings")
+      .set("Cookie", cookie)
+      .send(validBody({ approvedPublicDomain: bad, paymentTermsDays: 21 }));
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ field: "approvedPublicDomain" });
+
+    const row = await db.platformSettings.findFirstOrThrow();
+    expect(row.approvedPublicDomain).toBe("kept.com.au");
+    expect(row.paymentTermsDays).toBe(7);
   });
 });

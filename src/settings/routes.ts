@@ -22,6 +22,10 @@ import { parseStreetAddress } from "./address.js";
 
 const DISPLAY_NAME_MAX_LENGTH = 80;
 
+const APPROVED_DOMAIN_MAX_LENGTH = 253;
+// Feature 8002: a bare host name -- labels of letters, digits, hyphens, at least one dot.
+const HOST_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
+
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 interface SettingsInput {
@@ -38,6 +42,7 @@ interface SettingsInput {
   operatorPhone: string;
   operatorEmail: string;
   displayName: string;
+  approvedPublicDomain: string | null;
   timezone: string;
   payoutCycle: PayoutCycle;
   payoutDay: PayoutDay | null;
@@ -147,6 +152,24 @@ function parseSettingsInput(body: unknown): ParseResult {
     };
   }
 
+  // Feature 8002: blank, absent or whitespace saves blank (invisible to search).
+  const rawDomain = b["approvedPublicDomain"];
+  let approvedPublicDomain: string | null = null;
+  if (rawDomain !== undefined && rawDomain !== null) {
+    const domain = typeof rawDomain === "string" ? rawDomain.trim().toLowerCase() : null;
+    if (
+      domain === null ||
+      (domain !== "" && (domain.length > APPROVED_DOMAIN_MAX_LENGTH || !HOST_PATTERN.test(domain)))
+    ) {
+      return {
+        ok: false,
+        error: "Type the address only, like example.com.au.",
+        field: "approvedPublicDomain",
+      };
+    }
+    approvedPublicDomain = domain === "" ? null : domain;
+  }
+
   const timezone = b["timezone"];
   if (!isNonEmptyString(timezone) || !isValidTimezone(timezone)) {
     return { ok: false, error: "timezone must be a valid IANA timezone name", field: "timezone" };
@@ -188,6 +211,7 @@ function parseSettingsInput(body: unknown): ParseResult {
       operatorPhone,
       operatorEmail,
       displayName,
+      approvedPublicDomain,
       timezone,
       payoutCycle: payoutCycle as PayoutCycle,
       payoutDay: (payoutDay ?? null) as PayoutDay | null,
@@ -255,6 +279,7 @@ export function settingsRoutes(client: PrismaClient): Router {
           operatorPhone: input.operatorPhone,
           operatorEmail: input.operatorEmail,
           displayName: input.displayName,
+          approvedPublicDomain: input.approvedPublicDomain,
           timezone: input.timezone,
           payoutCycle: input.payoutCycle,
           payoutDay: input.payoutDay,

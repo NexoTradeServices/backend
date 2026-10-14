@@ -2,7 +2,7 @@
 //
 // Public, no session (Foundations / Brand identity, decision 4): the login
 // gate shows the wordmark logged out, so this cannot sit behind requireAuth
-// the way settingsRoutes does. Answers only { displayName, operatorPhone } --
+// the way settingsRoutes does. Answers only { displayName, operatorPhone, approvedPublicDomain } --
 // the support identity the Footer shows (Foundations / Brand identity, the
 // surfaces); nothing else on PlatformSettings is public.
 import type { Router } from "express";
@@ -30,7 +30,11 @@ export function identityRoutes(client: PrismaClient): Router {
         return;
       }
 
-      const identity = { displayName: settings.displayName, operatorPhone: settings.operatorPhone };
+      const identity = {
+        displayName: settings.displayName,
+        operatorPhone: settings.operatorPhone,
+        approvedPublicDomain: settings.approvedPublicDomain,
+      };
       setCachedIdentity(identity);
       res.json(identity);
     })().catch((error: unknown) => {
