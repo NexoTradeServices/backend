@@ -2,17 +2,17 @@
 // Notifications / Transactional messages (Refund made in Stripe, Ops).
 //
 // To the shared ops inbox when Stripe reports a refund on a payment we hold that the platform did
-// not make (someone used the Stripe dashboard). Nothing is booked: no credit note, no customer email.
+// not make (someone used the Stripe dashboard). Nothing is booked: no refund receipt, no customer email.
 import type { NotificationTemplate } from "../types.js";
 import { fill, fillHtml } from "./render.js";
 
-const TEXT = `A refund of {{amountText}} on invoice {{invoiceReference}} ({{jobReference}}) was made in the Stripe dashboard, not the platform. It has no credit note and the customer was not emailed. Square it by hand.
+const TEXT = `A refund of {{amountText}} on invoice {{invoiceReference}} ({{jobReference}}) was made in the Stripe dashboard, not the platform. It has no refund receipt and the customer was not emailed. Square it by hand.
 
 Open the job: {{jobUrl}}
 
 -- {{platformName}}`;
 
-const HTML = `<p>A refund of <strong>{{amountText}}</strong> on invoice {{invoiceReference}} ({{jobReference}}) was made in the Stripe dashboard, not the platform. It has no credit note and the customer was not emailed. Square it by hand.</p>
+const HTML = `<p>A refund of <strong>{{amountText}}</strong> on invoice {{invoiceReference}} ({{jobReference}}) was made in the Stripe dashboard, not the platform. It has no refund receipt and the customer was not emailed. Square it by hand.</p>
 <p><a href="{{jobUrl}}">Open {{jobReference}}</a></p>
 <p>-- {{platformName}}</p>`;
 

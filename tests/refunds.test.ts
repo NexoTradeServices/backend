@@ -319,10 +319,10 @@ describe("AC5 -- Sarah's email and the credit note", () => {
     expect(mail?.message.subject).toBe(`Refund issued - CN-1001, against invoice ${sarahs.invoiceReference}`);
     const text = mail?.message.text ?? "";
     expect(text).toContain("Hi Sarah,");
-    expect(text).toContain(`We've refunded $540 against invoice ${sarahs.invoiceReference} (${sarahs.jobReference}), which you paid $1,320 by card.`);
+    expect(text).toContain(`We've refunded $540 against invoice ${sarahs.invoiceReference} (${sarahs.jobReference}).`);
     expect(text).toContain("Why: Part of the job was not done");
-    expect(text).toContain("It goes back to your card. A card refund can take 5 to 10 business days to show on your statement.");
-    expect(text).toContain("The credit note is attached.");
+    expect(text).toContain("A card refund can take 5 to 10 business days to show on your statement.");
+    expect(text).toContain("The refund receipt is attached.");
     expect(mail?.attachments).toHaveLength(1);
     expect(mail?.attachments?.[0]).toMatchObject({ fileName: "CN-1001.pdf", contentType: "application/pdf" });
     const pdf = pdfText(mail?.attachments?.[0]?.content ?? new Uint8Array());
@@ -343,14 +343,14 @@ describe("AC5 -- Sarah's email and the credit note", () => {
     await refund(sarahs.jobReference, { amount: 54_000, reason: "x" }, mike);
     await drainOnce(db);
     const text = email.sent.find((m) => m.to === "sarah@idelta.com.au")?.message.text ?? "";
-    expect(text).toContain("by PayTo.");
+    expect(text).not.toContain("by PayTo");
     expect(text).toContain("It goes back to the account you paid from.");
     expect(text).not.toContain("business days");
   });
 });
 
 describe("AC6 -- the note's title and GST line", () => {
-  test("AC6: an invoice that carried GST gets an Adjustment note with Includes GST of one eleventh", async () => {
+  test("AC6: an invoice that carried GST gets an Adjustment note with Includes GST of one eleventh, as the invoice shows it", async () => {
     const margarets = await paidInvoice({ customerCode: "CUS-1053", amount: 66_000, gst: true });
     const mike = await signInCookie("mike@idelta.com.au");
     await refund(margarets.jobReference, { amount: 33_000, reason: "Half back" }, mike);
@@ -364,11 +364,12 @@ describe("AC6 -- the note's title and GST line", () => {
     expect(res.headers["content-type"]).toContain("application/pdf");
     const text = pdfText(new Uint8Array(res.body as Buffer));
     expect(text).toContain("Adjustment note");
-    expect(text).toContain("Includes GST of $30.00");
+    expect(text).toContain("Includes GST");
+    expect(text).toContain("$30.00");
     expect(text).toContain("$330.00");
   });
 
-  test("AC6: an invoice without GST gets a Credit note and no GST line", async () => {
+  test("AC6: an invoice without GST gets a Refund and no GST line", async () => {
     const sarahs = await paidInvoice();
     const mike = await signInCookie("mike@idelta.com.au");
     await refund(sarahs.jobReference, { amount: 54_000, reason: "x" }, mike);
@@ -378,7 +379,7 @@ describe("AC6 -- the note's title and GST line", () => {
       r.on("end", () => cb(null, Buffer.concat(chunks)));
     });
     const text = pdfText(new Uint8Array(res.body as Buffer));
-    expect(text).toContain("Credit note");
+    expect(text).toContain("Refund");
     expect(text).not.toContain("Adjustment note");
     expect(text).not.toContain("Includes GST");
   });

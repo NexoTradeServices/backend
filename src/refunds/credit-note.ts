@@ -4,7 +4,7 @@
 // identity -- legalEntityName, "ABN <businessAbn>" when set, businessAddress -- exactly as the
 // invoice is, never the display name alone. Titled "Adjustment note" with an "Includes GST of
 // $X" line (one eleventh of the amount, to the cent) when the invoice carried GST, else
-// "Credit note" with no GST line. Composed from the stored rows on the spot and never stored.
+// "Refund" with no GST line. Composed from the stored rows on the spot and never stored.
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import type { PrismaClient } from "../db/client.js";
 import { addressLine } from "../settings/address.js";
@@ -37,7 +37,7 @@ export function gstOf(amount: number): number {
 }
 
 export function creditNoteTitle(gstApplied: boolean): string {
-  return gstApplied ? "Adjustment note" : "Credit note";
+  return gstApplied ? "Adjustment note" : "Refund";
 }
 
 export function creditNotePdfName(reference: string): string {
@@ -94,12 +94,12 @@ export async function makeCreditNotePdf(input: CreditNoteInput): Promise<Uint8Ar
   for (const [label, value] of facts) {
     room(30);
     page.drawText(plain(label), { x: left, y, size: 9, font: regular, color: muted });
-    page.drawText(plain(value), { x: left + 130, y, size: 11, font: regular, color: ink });
+    page.drawText(plain(value), { x: left + 110, y, size: 11, font: regular, color: ink });
     y -= 17;
   }
   y -= 10;
 
-  text("Issued to", 9, regular, muted);
+  text("Billed to", 9, regular, muted);
   const billed = input.billedTo;
   if (billed.businessName !== undefined && billed.businessName !== "") {
     text(billed.businessName, 11, bold);
@@ -115,16 +115,34 @@ export async function makeCreditNotePdf(input: CreditNoteInput): Promise<Uint8Ar
   text(input.reason, 11, regular);
   y -= 16;
 
+  // The line and totals, laid out as on the invoice.
+  const colAmount = left + width;
+  const figure = (value: string, size: number, font: PDFFont, color = ink): void => {
+    const safe = plain(value);
+    page.drawText(safe, { x: colAmount - font.widthOfTextAtSize(safe, size), y, size, font, color });
+  };
+  room(80);
+  page.drawText("Description", { x: left, y, size: 9, font: bold, color: muted });
+  figure("Amount", 9, bold, muted);
+  y -= 6;
+  page.drawLine({ start: { x: left, y }, end: { x: left + width, y }, thickness: 0.5, color: muted });
+  y -= 15;
+  page.drawText(plain(`Refund of invoice ${input.invoiceReference}`), { x: left, y, size: 10, font: regular, color: ink });
+  figure(pdfMoney(input.amount), 10, regular);
+  y -= 18;
   page.drawLine({ start: { x: left, y: y + 6 }, end: { x: left + width, y: y + 6 }, thickness: 0.5, color: muted });
   y -= 10;
-  room(40);
-  const amountText = plain(pdfMoney(input.amount));
-  page.drawText("Amount refunded", { x: left, y, size: 11, font: bold, color: ink });
-  page.drawText(amountText, { x: left + width - bold.widthOfTextAtSize(amountText, 11), y, size: 11, font: bold, color: ink });
-  y -= 18;
+  const total = (label: string, cents: number, font: PDFFont): void => {
+    room(20);
+    page.drawText(label, { x: colAmount - 160, y, size: 10, font, color: ink });
+    figure(pdfMoney(cents), 10, font);
+    y -= 16;
+  };
   if (input.gstApplied) {
-    text(`Includes GST of ${pdfMoney(gstOf(input.amount))}`, 10, regular, muted);
+    total("Subtotal", input.amount - gstOf(input.amount), regular);
+    total("Includes GST", gstOf(input.amount), regular);
   }
+  total("Total refunded", input.amount, bold);
   y -= 14;
   text(`Questions about this refund? Call ${input.operatorPhone}`, 10, regular, muted);
 

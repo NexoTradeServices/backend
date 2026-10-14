@@ -180,15 +180,19 @@ export async function make(client: PrismaClient): Promise<string[]> {
 export async function topUp(client: PrismaClient): Promise<string[]> {
   const stripe = stripeClient();
   const lines: string[] = [];
-  for (const [description, remake] of [
-    [FIRST, firstJob],
-    [MARGARET, margaretsJob],
-  ] as const) {
-    const unused = await client.job.findMany({
-      where: { description, invoices: { some: { refunds: { none: {} } } } },
-      select: { id: true },
-    });
-    if (unused.length === 0) lines.push(await remake(client, stripe));
-  }
+  // Sarah's first job is for the many steps on one invoice (part refund, then the rest): it is
+  // remade only once every one of its invoices is refunded in full. Margaret's is for one fresh
+  // refund: it is remade as soon as none is left without a refund.
+  const firstInvoices = await client.invoice.findMany({
+    where: { job: { description: FIRST } },
+    select: { amount: true, refunds: { where: { status: { in: ["succeeded", "pending"] } }, select: { amount: true } } },
+  });
+  const hasRoom = firstInvoices.some((i) => i.refunds.reduce((sum, r) => sum + r.amount, 0) < i.amount);
+  if (!hasRoom) lines.push(await firstJob(client, stripe));
+  const unused = await client.job.findMany({
+    where: { description: MARGARET, invoices: { some: { refunds: { none: {} } } } },
+    select: { id: true },
+  });
+  if (unused.length === 0) lines.push(await margaretsJob(client, stripe));
   return lines;
 }

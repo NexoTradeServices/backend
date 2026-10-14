@@ -771,7 +771,7 @@ describe("Feature 6006 AC8 -- a refund the platform did not make", () => {
     const mail = email.sent.find((m) => m.message.subject === `Refund made in Stripe - ${sarahs.invoiceReference}`);
     expect(mail?.to).toBe("ops@idelta.com.au");
     expect(mail?.message.text).toContain(`A refund of $200 on invoice ${sarahs.invoiceReference} (${sarahs.jobReference}) was made in the Stripe dashboard`);
-    expect(mail?.message.text).toContain("it has no credit note".replace("it", "It"));
+    expect(mail?.message.text).toContain("It has no refund receipt");
   });
 
   test("AC8: the platform's own refund arriving before its row is saved is never reported -- Stripe is told to try again, and the row is then followed", async () => {
