@@ -33,6 +33,7 @@ import { devTextsRoutes } from './notifications/dev-texts-routes.js'
 import { getPrisma } from './db/client.js'
 import { testRunSignal } from './test-data/label.js'
 import { mountTestDataRoutes } from './test-data/routes.js'
+import { robotsHeader } from './robots-header.js'
 
 const app = express()
 
@@ -58,6 +59,9 @@ const pool = new pg.Pool({ connectionString: databaseUrl })
 const prisma = getPrisma()
 
 // Credentials on: the session cookie (feature 1003) rides this same path.
+// Feature 8002: first of all, so even a refused or failed request carries it.
+app.use(robotsHeader)
+
 app.use(cors({ origin: webOrigin, credentials: true }))
 
 // Feature 9002: the browser tests' test-run cookie labels every row this

@@ -357,6 +357,10 @@ model PlatformSettings {
   /// own migration (Feature 1014). Seeded with the interim wording; the
   /// real name lands here on decision day, typed on the settings screen.
   displayName               String      @default("Perth Trades & Services")
+  /// the one host name search engines may list (Foundations / Brand
+  /// identity; ADR 0005; Feature 8002). Blank = every site stays invisible;
+  /// launch day types the real domain here. Stored lower case, host only.
+  approvedPublicDomain      String?
   payoutCycle               PayoutCycle
   payoutDay                 PayoutDay?
   /// swappable inside the Notification module (ADR 0002)

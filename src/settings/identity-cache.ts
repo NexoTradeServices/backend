@@ -12,6 +12,8 @@ const TTL_MS = 60_000;
 export interface PublicIdentity {
   displayName: string;
   operatorPhone: string;
+  // Feature 8002: the one host search engines may list; null = none (fail-safe).
+  approvedPublicDomain: string | null;
 }
 
 let cached: { identity: PublicIdentity; expiresAt: number } | null = null;

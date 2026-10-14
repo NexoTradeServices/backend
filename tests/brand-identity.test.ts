@@ -6,8 +6,13 @@
 //      name is refused server-side with the field error
 // AC3  GET /api/identity needs no login and returns displayName; after a
 //      settings save it returns the new name on the very next call
-// 1018 AC11  GET /api/identity answers exactly displayName and operatorPhone,
-//      no session needed; a save of either shows on the next read
+// 1018 AC11  GET /api/identity answers displayName and operatorPhone, no
+//      session needed; a save of either shows on the next read
+//      (8002 widened the answer to the three fields, below)
+// 8002 AC1  the migration and the base seed leave approvedPublicDomain null
+// 8002 AC3  GET /api/identity answers displayName, operatorPhone and
+//      approvedPublicDomain logged out; a save shows on the very next read
+// 8002 AC8  every backend response carries X-Robots-Tag: noindex, nofollow
 // AC4  the password-reset email signs "-- <name>" in text and HTML, and the
 //      provider call carries the name as fromName; the address is unchanged
 // AC5  the password-reset template has no name of its own: a context
@@ -29,6 +34,7 @@ import { seedAuthFixtures, DEV_PASSWORD } from "../src/db/seed/auth.js";
 import { buildAuth, type Auth } from "../src/auth/config.js";
 import { attachSession } from "../src/auth/middleware.js";
 import { authRoutes } from "../src/auth/routes.js";
+import { robotsHeader } from "../src/robots-header.js";
 import { settingsRoutes } from "../src/settings/routes.js";
 import { identityRoutes } from "../src/settings/identity-routes.js";
 import { invalidateIdentityCache } from "../src/settings/identity-cache.js";
@@ -94,6 +100,7 @@ beforeAll(() => {
   db = testClient();
   auth = buildAuth({ client: db });
   app = express();
+  app.use(robotsHeader);
   app.all("/api/auth/*splat", toNodeHandler(auth));
   app.use(attachSession(auth, db));
   app.use("/api", authRoutes(db));
@@ -205,13 +212,21 @@ describe("AC3 -- the public identity endpoint", () => {
 });
 
 describe("1018 AC11 -- the identity answers the name and the support phone, nothing else", () => {
-  test("AC11: GET /api/identity answers exactly displayName and operatorPhone, with no session", async () => {
+  test("AC11 + 8002 AC3: GET /api/identity answers exactly displayName, operatorPhone and approvedPublicDomain, with no session", async () => {
     await seedBase(db);
     const settings = await db.platformSettings.findFirstOrThrow();
     const res = await request(app).get("/api/identity");
     expect(res.status).toBe(200);
-    expect(Object.keys(res.body as object).sort()).toEqual(["displayName", "operatorPhone"]);
-    expect(res.body).toEqual({ displayName: INTERIM_WORDING, operatorPhone: settings.operatorPhone });
+    expect(Object.keys(res.body as object).sort()).toEqual([
+      "approvedPublicDomain",
+      "displayName",
+      "operatorPhone",
+    ]);
+    expect(res.body).toEqual({
+      displayName: INTERIM_WORDING,
+      operatorPhone: settings.operatorPhone,
+      approvedPublicDomain: null,
+    });
   });
 
   test("AC11: after saving operatorPhone on Settings, the very next identity read shows it", async () => {
@@ -226,7 +241,73 @@ describe("1018 AC11 -- the identity answers the name and the support phone, noth
     expect(saved.status).toBe(200);
 
     const after = await request(app).get("/api/identity");
-    expect(after.body).toEqual({ displayName: INTERIM_WORDING, operatorPhone: "08 9000 1234" });
+    expect(after.body).toEqual({
+      displayName: INTERIM_WORDING,
+      operatorPhone: "08 9000 1234",
+      approvedPublicDomain: null,
+    });
+  });
+
+  test("8002 AC3: after saving approvedPublicDomain, the very next identity read shows it", async () => {
+    await seedCastForApp();
+    const cookie = await signInCookie("owner@idelta.com.au");
+    expect((await request(app).get("/api/identity")).body).toMatchObject({ approvedPublicDomain: null });
+
+    const saved = await request(app)
+      .put("/api/settings")
+      .set("Cookie", cookie)
+      .send(validBody({ approvedPublicDomain: "example.com.au" }));
+    expect(saved.status).toBe(200);
+    expect((await request(app).get("/api/identity")).body).toMatchObject({
+      approvedPublicDomain: "example.com.au",
+    });
+  });
+});
+
+describe("8002 AC1 -- blank until the owner types a domain", () => {
+  test("AC1: the base seed leaves approvedPublicDomain null", async () => {
+    await seedBase(db);
+    expect((await db.platformSettings.findFirstOrThrow()).approvedPublicDomain).toBeNull();
+  });
+
+  test("AC1: the migration adds a nullable column with no default", async () => {
+    const sql = await readFile(
+      new URL("../prisma/migrations/20261014100000_approved_public_domain/migration.sql", import.meta.url),
+      "utf8",
+    );
+    const statements = sql.split("\n").filter((line) => !line.startsWith("--")).join("\n");
+    expect(statements).toMatch(/ADD COLUMN "approvedPublicDomain" TEXT;/);
+    expect(statements).not.toMatch(/DEFAULT|NOT NULL/i);
+  });
+});
+
+describe("8002 AC8 -- the API is never indexable", () => {
+  const HEADER = "noindex, nofollow";
+
+  test("AC8: a 200, a 404 and GET /api/identity all carry X-Robots-Tag", async () => {
+    await seedBase(db);
+    const ok = await request(app).get("/api/identity");
+    expect(ok.status).toBe(200);
+    expect(ok.headers["x-robots-tag"]).toBe(HEADER);
+
+    const missing = await request(app).get("/api/no-such-route");
+    expect(missing.status).toBe(404);
+    expect(missing.headers["x-robots-tag"]).toBe(HEADER);
+  });
+
+  test("AC8: an error response (403 on Settings, logged out) carries it too", async () => {
+    await seedBase(db);
+    const res = await request(app).get("/api/settings");
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.headers["x-robots-tag"]).toBe(HEADER);
+  });
+
+  test("AC8: the real server mounts the header before every route", async () => {
+    const source = await readFile(new URL("../src/index.ts", import.meta.url), "utf8");
+    const header = source.indexOf("app.use(robotsHeader)");
+    expect(header).toBeGreaterThan(-1);
+    expect(header).toBeLessThan(source.indexOf("app.use('/api/auth'"));
+    expect(header).toBeLessThan(source.indexOf("app.get('/health'"));
   });
 });
 
