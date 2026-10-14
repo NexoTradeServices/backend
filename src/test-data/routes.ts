@@ -20,7 +20,9 @@
 //
 // The paid hook runs the ONE paid step (payments/paid.ts) with a fake card payment
 // (payment intent `pi_test_<invoice reference>`), so a browser test reaches Paid
-// without Stripe. Sent twice, it is the same payment twice: nothing more happens.
+// without Stripe. Sent twice, it is the same payment twice: nothing more happens. With
+// `{ "refuseRefund": true }` the intent is `pi_test_refuse_<invoice reference>`, which the pretend
+// refund provider (fake-stripe.ts) refuses -- so a browser test can see Stripe's "no" (Feature 6006).
 //
 // The due hook moves a test job's invoice's due date to `days` from now (negative:
 // overdue), so the Receivables browser test can put rows in a known order. Only an
@@ -119,9 +121,10 @@ export function testDataRoutes(client: PrismaClient): Router {
         res.status(404).json({ error: "not found" });
         return;
       }
+      const refuse = (req.body as { refuseRefund?: unknown } | undefined)?.refuseRefund === true;
       const outcome = await recordConfirmedPayment(client, {
         invoiceId: invoice.id,
-        paymentIntentId: `pi_test_${invoice.reference}`,
+        paymentIntentId: refuse ? `pi_test_refuse_${invoice.reference}` : `pi_test_${invoice.reference}`,
         amount: invoice.amount,
         method: "card",
         paidAt: new Date(),

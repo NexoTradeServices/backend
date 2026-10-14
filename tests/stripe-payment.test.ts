@@ -15,6 +15,11 @@
 //      void / zero-dollar left out, paging at 50
 // AC11 no STRIPE_WEBHOOK_SECRET: one warning at boot, the webhook refuses every call
 //
+// Feature 6006 (refunds), the last describe block: AC7 refund.updated follows Stripe's status
+// (succeeded changes only the status; failed sends Refund failed once and gives the money back to
+// what is left; repeats change nothing) and AC8 a refund the platform did not make books nothing
+// and sends Refund made in Stripe once, the platform's own never does, a bad signature changes nothing
+//
 // No test reaches Stripe: the payment reader is a fake behind the adapter's seam, and every
 // webhook call is signed with a secret this file sets.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
@@ -654,5 +659,157 @@ describe("AC8 -- Receivables", () => {
     // A cursor this read never made starts from the top.
     const odd = (await request(app).get("/api/receivables?after=nonsense").set("Cookie", mike)).body as ReceivablesResult;
     expect(odd.rows).toHaveLength(50);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Feature 6006 -- Stripe's news about refunds
+// ---------------------------------------------------------------------------
+
+function refundEvent(type: "refund.created" | "refund.updated", refund: Record<string, unknown>): string {
+  return JSON.stringify({
+    id: `evt_${type}_${String(Math.random()).slice(2)}`,
+    object: "event",
+    type,
+    created: PAID_AT,
+    data: { object: { object: "refund", amount: 54_000, currency: "aud", metadata: {}, ...refund } },
+  });
+}
+
+/** Sarah's invoice paid through the webhook, with one refund of $540 the platform made. */
+async function refundedSarah(status: "pending" | "succeeded" = "succeeded") {
+  const sarahs = await owedInvoice(db, { amount: 132_000 });
+  const pi = intentFor(sarahs, "pi_sarah_refund", "card", 132_000);
+  expect((await post(completed(pi))).status).toBe(200);
+  const payment = await db.payment.findFirstOrThrow({ where: { invoiceId: sarahs.invoiceId } });
+  const mike = await db.user.findUniqueOrThrow({ where: { email: "mike@idelta.com.au" } });
+  const refund = await db.refund.create({
+    data: {
+      reference: "CN-1001",
+      invoiceId: sarahs.invoiceId,
+      customerId: sarahs.customerId,
+      jobId: sarahs.jobId,
+      paymentId: payment.id,
+      amount: 54_000,
+      reason: "Part not done",
+      approvedByUserId: mike.id,
+      approvedAt: new Date(),
+      stripeRefundId: "re_sarah_1",
+      status,
+    },
+  });
+  return { sarahs, pi, payment, refund };
+}
+
+async function refundNotices(jobId: string, type: string) {
+  return db.notification.findMany({ where: { jobId, type } });
+}
+
+describe("Feature 6006 AC7 -- Stripe's later news on a refund we hold", () => {
+  test("AC7: pending -> succeeded changes only the status, and a repeat changes nothing", async () => {
+    const { sarahs, pi, refund } = await refundedSarah("pending");
+    const payload = refundEvent("refund.updated", { id: "re_sarah_1", payment_intent: pi, status: "succeeded" });
+    expect((await post(payload)).status).toBe(200);
+    expect((await post(payload)).status).toBe(200);
+    const after = await db.refund.findUniqueOrThrow({ where: { id: refund.id } });
+    expect(after).toMatchObject({ status: "succeeded", amount: 54_000, reference: "CN-1001" });
+    expect(await refundNotices(sarahs.jobId, "refund_failed")).toHaveLength(0);
+  });
+
+  test("AC7: -> failed sets it failed, sends Refund failed to the office once, and gives the amount back to what is left", async () => {
+    const { sarahs, pi, refund } = await refundedSarah("pending");
+    const payload = refundEvent("refund.updated", { id: "re_sarah_1", payment_intent: pi, status: "failed" });
+    expect((await post(payload)).status).toBe(200);
+    expect((await post(refundEvent("refund.updated", { id: "re_sarah_1", payment_intent: pi, status: "failed" }))).status).toBe(200);
+
+    expect((await db.refund.findUniqueOrThrow({ where: { id: refund.id } })).status).toBe("failed");
+    const notices = await refundNotices(sarahs.jobId, "refund_failed");
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({ recipientType: "ops", idempotencyKey: `refund_failed:refund:${refund.id}:email` });
+
+    await drainOnce(db);
+    const mail = email.sent.find((m) => m.message.subject === "Refund failed - CN-1001");
+    expect(mail?.to).toBe("ops@idelta.com.au");
+    expect(mail?.message.text).toContain(`The refund CN-1001 on invoice ${sarahs.invoiceReference}`);
+    expect(mail?.message.text).toContain("did not go through at Stripe");
+
+    // What is left is the whole $1,320 again.
+    const { leftByPayment, totalLeft } = await import("../src/refunds/service.js");
+    expect(totalLeft(await leftByPayment(db, sarahs.invoiceId))).toBe(132_000);
+  });
+
+  test("AC7: a failure turns a refunded payment back to succeeded", async () => {
+    const { pi, payment } = await refundedSarah("pending");
+    await db.payment.update({ where: { id: payment.id }, data: { status: "refunded" } });
+    expect((await post(refundEvent("refund.updated", { id: "re_sarah_1", payment_intent: pi, status: "failed" }))).status).toBe(200);
+    expect((await db.payment.findUniqueOrThrow({ where: { id: payment.id } })).status).toBe("succeeded");
+  });
+
+  test("AC7: a refund that is still pending changes nothing", async () => {
+    const { pi, refund } = await refundedSarah("pending");
+    expect((await post(refundEvent("refund.updated", { id: "re_sarah_1", payment_intent: pi, status: "pending" }))).status).toBe(200);
+    expect((await db.refund.findUniqueOrThrow({ where: { id: refund.id } })).status).toBe("pending");
+  });
+});
+
+describe("Feature 6006 AC8 -- a refund the platform did not make", () => {
+  test("AC8: made in the Stripe dashboard -- nothing booked, Refund made in Stripe goes to the office once, whatever the event type", async () => {
+    const sarahs = await owedInvoice(db, { amount: 132_000 });
+    const pi = intentFor(sarahs, "pi_sarah_dash", "card", 132_000);
+    await post(completed(pi));
+
+    expect((await post(refundEvent("refund.created", { id: "re_dash_1", payment_intent: pi, status: "succeeded", amount: 20_000 }))).status).toBe(200);
+    expect((await post(refundEvent("refund.updated", { id: "re_dash_1", payment_intent: pi, status: "succeeded", amount: 20_000 }))).status).toBe(200);
+
+    expect(await db.refund.count()).toBe(0);
+    expect((await db.payment.findFirstOrThrow({ where: { invoiceId: sarahs.invoiceId } })).status).toBe("succeeded");
+    const notices = await refundNotices(sarahs.jobId, "refund_made_in_stripe");
+    expect(notices).toHaveLength(1);
+    expect(await refundNotices(sarahs.jobId, "refund_issued")).toHaveLength(0);
+
+    await drainOnce(db);
+    const mail = email.sent.find((m) => m.message.subject === `Refund made in Stripe - ${sarahs.invoiceReference}`);
+    expect(mail?.to).toBe("ops@idelta.com.au");
+    expect(mail?.message.text).toContain(`A refund of $200 on invoice ${sarahs.invoiceReference} (${sarahs.jobReference}) was made in the Stripe dashboard`);
+    expect(mail?.message.text).toContain("it has no credit note".replace("it", "It"));
+  });
+
+  test("AC8: the platform's own refund arriving before its row is saved is never reported -- Stripe is told to try again, and the row is then followed", async () => {
+    const sarahs = await owedInvoice(db, { amount: 132_000 });
+    const pi = intentFor(sarahs, "pi_sarah_own", "card", 132_000);
+    await post(completed(pi));
+
+    const early = refundEvent("refund.created", { id: "re_own_1", payment_intent: pi, status: "succeeded", metadata: { refundKey: "refund-abc" } });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect((await post(early)).status).toBe(500);
+    expect(await refundNotices(sarahs.jobId, "refund_made_in_stripe")).toHaveLength(0);
+    expect(await db.refund.count()).toBe(0);
+
+    // The service saves its row; Stripe's retry now finds it and only follows its status.
+    const mike = await db.user.findUniqueOrThrow({ where: { email: "mike@idelta.com.au" } });
+    const payment = await db.payment.findFirstOrThrow({ where: { invoiceId: sarahs.invoiceId } });
+    await db.refund.create({
+      data: {
+        reference: "CN-1001", invoiceId: sarahs.invoiceId, customerId: sarahs.customerId, jobId: sarahs.jobId, paymentId: payment.id,
+        amount: 54_000, reason: "x", approvedByUserId: mike.id, approvedAt: new Date(), stripeRefundId: "re_own_1", status: "pending",
+      },
+    });
+    expect((await post(early)).status).toBe(200);
+    expect((await db.refund.findFirstOrThrow()).status).toBe("succeeded");
+    expect(await refundNotices(sarahs.jobId, "refund_made_in_stripe")).toHaveLength(0);
+  });
+
+  test("AC8: a refund on a payment we do not hold is answered 200 and does nothing; a bad signature changes nothing", async () => {
+    const sarahs = await owedInvoice(db);
+    const stray = refundEvent("refund.created", { id: "re_x", payment_intent: "pi_not_ours", status: "succeeded" });
+    expect((await post(stray)).status).toBe(200);
+    expect(await db.notification.count()).toBe(0);
+
+    const pi = intentFor(sarahs, "pi_sarah_sig", "card", 65_500);
+    await post(completed(pi));
+    const before = await db.notification.count();
+    const forged = refundEvent("refund.created", { id: "re_forged", payment_intent: pi, status: "succeeded" });
+    expect((await post(forged, "t=1,v1=deadbeef")).status).toBe(400);
+    expect(await db.notification.count()).toBe(before);
   });
 });

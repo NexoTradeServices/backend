@@ -21,6 +21,9 @@ import { invoiceSms } from "./invoice.sms.js";
 import { paymentReceiptEmail } from "./payment-receipt.email.js";
 import { paymentReceivedEmail } from "./payment-received.email.js";
 import { paymentClosedInvoiceEmail } from "./payment-closed-invoice.email.js";
+import { refundIssuedEmail } from "./refund-issued.email.js";
+import { refundFailedEmail } from "./refund-failed.email.js";
+import { refundMadeInStripeEmail } from "./refund-made-in-stripe.email.js";
 import { invoiceReminder1Email } from "./invoice-reminder-1.email.js";
 import { invoiceReminder2Email } from "./invoice-reminder-2.email.js";
 import { settlementDraftEmail } from "./settlement-draft.email.js";
@@ -53,6 +56,9 @@ const BUILT_IN: NotificationTemplate[] = [
   paymentReceiptEmail,
   paymentReceivedEmail,
   paymentClosedInvoiceEmail,
+  refundIssuedEmail,
+  refundFailedEmail,
+  refundMadeInStripeEmail,
   invoiceReminder1Email,
   invoiceReminder2Email,
   settlementDraftEmail,

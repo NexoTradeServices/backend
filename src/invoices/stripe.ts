@@ -186,3 +186,81 @@ export function warnIfWebhookSecretMissing(): void {
     console.warn("payments: STRIPE_WEBHOOK_SECRET is not set -- no payment will be marked paid until it is");
   }
 }
+
+// ---------------------------------------------------------------------------
+// Feature 6006 -- refunds. Behind its own fake-able seam, beside the others: the
+// refund service (refunds/service.ts) talks to the `RefundProvider` and nothing
+// else, so tests swap in a fake and never reach the network.
+// ---------------------------------------------------------------------------
+
+export interface RefundRequest {
+  paymentIntentId: string;
+  /** Cents. */
+  amount: number;
+  /** Stripe's idempotency key AND the refund's metadata `refundKey`: a retry never refunds twice, and the webhook can tell the platform's own refund from a dashboard one. */
+  idempotencyKey: string;
+  invoiceId: string;
+}
+
+export interface StripeRefund {
+  id: string;
+  /** Stripe's word, narrowed: a refund still on its way is pending. */
+  status: "pending" | "succeeded";
+}
+
+/** Stripe said no, or could not be reached. `reason` is the sentence the dialog shows. */
+export class RefundRefusedError extends Error {
+  constructor(readonly reason: string) {
+    super(reason);
+    this.name = "RefundRefusedError";
+  }
+}
+
+/** What the refund service needs from Stripe. */
+export interface RefundProvider {
+  createRefund(request: RefundRequest): Promise<StripeRefund>;
+}
+
+/** The metadata key the service sets on every refund it makes (see RefundRequest.idempotencyKey). */
+export const REFUND_KEY_METADATA = "refundKey";
+
+function refundProviderFor(secretKey: string): RefundProvider {
+  const stripe = new Stripe(secretKey, { timeout: REQUEST_TIMEOUT_MS, maxNetworkRetries: 0 });
+  return {
+    async createRefund(request) {
+      let refund: Stripe.Refund;
+      try {
+        refund = await stripe.refunds.create(
+          {
+            payment_intent: request.paymentIntentId,
+            amount: request.amount,
+            metadata: { [REFUND_KEY_METADATA]: request.idempotencyKey, invoiceId: request.invoiceId },
+          },
+          { idempotencyKey: request.idempotencyKey },
+        );
+      } catch (error: unknown) {
+        const message = error instanceof Error && error.message !== "" ? error.message : "Stripe could not be reached";
+        throw new RefundRefusedError(message);
+      }
+      if (refund.status === "failed" || refund.status === "canceled") {
+        throw new RefundRefusedError(refund.failure_reason ? `Stripe could not return the money (${refund.failure_reason})` : "Stripe could not return the money");
+      }
+      return { id: refund.id, status: refund.status === "succeeded" ? "succeeded" : "pending" };
+    },
+  };
+}
+
+let refundOverride: RefundProvider | null | undefined;
+
+/** Tests: use this provider (or `null` for "no key") instead of reading the environment. */
+export function setRefundProvider(provider: RefundProvider | null | undefined): void {
+  refundOverride = provider;
+}
+
+/** The real provider if the key is set; null when it is not. */
+export function refundProvider(): RefundProvider | null {
+  if (refundOverride !== undefined) return refundOverride;
+  const key = process.env["STRIPE_SECRET_KEY"]?.trim();
+  if (!key) return null;
+  return refundProviderFor(key);
+}
