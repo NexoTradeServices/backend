@@ -11,7 +11,7 @@
 import { sendNotification } from "../notifications/index.js";
 import type { NotificationContext } from "../notifications/index.js";
 import type { Prisma } from "../generated/prisma/client.js";
-import { formatDollars } from "../enquiries/money.js";
+import { billQuestionsPhone } from "./billing.js";
 import { formatDate } from "../time/index.js";
 
 type Db = Prisma.TransactionClient;
@@ -31,13 +31,12 @@ export async function askInvoiceMessages(db: Db, invoiceId: string, resendAtMs?:
     where: { id: invoiceId },
     include: {
       job: { include: { customer: true, serviceType: { select: { trade: true } } } },
-      assignment: { include: { contractor: { select: { name: true } } } },
     },
   });
   if (invoice.stripePaymentLinkUrl === null) {
     throw new Error(`invoice ${invoice.reference} has no pay link yet -- its messages cannot go`);
   }
-  const settings = await db.platformSettings.findFirstOrThrow({ select: { operatorPhone: true } });
+  const settings = await db.platformSettings.findFirstOrThrow({ select: { operatorPhone: true, accountsPhone: true } });
   const zone = invoice.job.timezone;
   const gstApplied = invoice.gstApplied && (invoice.gstAmount ?? 0) > 0;
 
@@ -47,14 +46,10 @@ export async function askInvoiceMessages(db: Db, invoiceId: string, resendAtMs?:
     jobReference: invoice.job.reference,
     trade: invoice.job.serviceType.trade.toLowerCase(),
     firstName: firstNameOf(invoice.job.customer.name),
-    contractorFirstName: firstNameOf(invoice.assignment.contractor.name),
-    workNotes: invoice.assignment.completionNotes ?? "",
-    totalText: formatDollars(invoice.amount),
     gstApplied,
-    ...(gstApplied ? { gstText: formatDollars(invoice.gstAmount ?? 0) } : {}),
     dueText: formatDate(zone, invoice.dueAt),
     payUrl: invoice.stripePaymentLinkUrl,
-    officePhone: settings.operatorPhone,
+    officePhone: billQuestionsPhone(settings),
   };
 
   for (const channel of ["email", "sms"] as const) {

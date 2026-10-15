@@ -1,38 +1,28 @@
-// The Refund issued email -- Feature 6006, refunds.
+// The Refund issued email -- Feature 6006, refunds; Feature 6015 takes the money and the reason out.
 // Notifications / Customer messages (Refund issued).
 //
 // To the CUSTOMER, once per refund, with the refund receipt attached as a PDF built at send time
-// from the stored refund (the module's second attachment, after the invoice). No button. A card
-// refund carries the "5 to 10 business days" line; any other method says it goes back to the
-// account she paid from. Money is the caller's text, the signature is the brand's platformName.
+// from the stored refund (the module's second attachment, after the invoice). No button. No
+// dollar figure, no reason and no card-days line: the receipt carries them. "Adjustment note"
+// only on B2 (a business, on a tax invoice). The signature is the brand's platformName.
 import { buildCreditNotePdf } from "../../refunds/credit-note.js";
 import type { NotificationContext, NotificationTemplate } from "../types.js";
 import { fill, fillHtml } from "./render.js";
 
-const TEXT_HEAD = `Hi {{firstName}},
+const TEXT = `Hi {{firstName}},
 
-We've refunded {{amountText}} against invoice {{invoiceReference}} ({{jobReference}}).
+{{refundWords}} your invoice {{invoiceReference}} for your {{trade}} job {{jobReference}}.
 
-Why: {{reason}}
+Your {{receiptWords}} {{refundReference}} is attached.
 
-`;
-const CARD_TEXT = `A card refund can take 5 to 10 business days to show on your statement.`;
-const OTHER_TEXT = `It goes back to the account you paid from.`;
-const TEXT_FOOT = `
-
-The refund receipt is attached.
-
-Questions? Call us on {{officePhone}}.
+Questions about this refund? Call us on {{officePhone}}.
 
 -- {{platformName}}`;
 
-const HTML_HEAD = `<p>Hi {{firstName}},</p>
-<p>We've refunded <strong>{{amountText}}</strong> against invoice {{invoiceReference}} ({{jobReference}}).</p>
-<p style="white-space:pre-wrap">Why: {{reason}}</p>
-<p>`;
-const HTML_FOOT = `</p>
-<p>The refund receipt is attached.</p>
-<p>Questions? Call us on {{officePhone}}.</p>
+const HTML = `<p>Hi {{firstName}},</p>
+<p>{{refundWords}} your invoice {{invoiceReference}} for your {{trade}} job {{jobReference}}.</p>
+<p>Your {{receiptWords}} {{refundReference}} is attached.</p>
+<p>Questions about this refund? Call us on {{officePhone}}.</p>
 <p>-- {{platformName}}</p>`;
 
 export const refundIssuedEmail: NotificationTemplate = {
@@ -40,11 +30,15 @@ export const refundIssuedEmail: NotificationTemplate = {
   channel: "email",
   category: "transactional",
   render(context: NotificationContext) {
-    const card = context["byCard"] === true;
+    const words = {
+      ...context,
+      refundWords: context["refundIsFull"] === true ? "We have refunded" : "We have refunded part of",
+      receiptWords: context["adjustmentNote"] === true ? "adjustment note" : "refund receipt",
+    };
     return {
-      subject: `Refund issued - ${String(context["refundReference"] ?? "")}, against invoice ${String(context["invoiceReference"] ?? "")}`,
-      text: fill(TEXT_HEAD + (card ? CARD_TEXT : OTHER_TEXT) + TEXT_FOOT, context),
-      html: fillHtml(HTML_HEAD + (card ? CARD_TEXT : OTHER_TEXT) + HTML_FOOT, context),
+      subject: `Refund ${String(context["refundReference"] ?? "")} - ${String(context["jobReference"] ?? "")}`,
+      text: fill(TEXT, words),
+      html: fillHtml(HTML, words),
     };
   },
   async attachment(context, db) {

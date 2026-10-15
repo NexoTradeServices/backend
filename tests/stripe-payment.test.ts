@@ -694,6 +694,7 @@ async function refundedSarah(status: "pending" | "succeeded" = "succeeded") {
       reason: "Part not done",
       approvedByUserId: mike.id,
       approvedAt: new Date(),
+      billedTo: { name: "Sarah Chen" },
       stripeRefundId: "re_sarah_1",
       status,
     },
@@ -791,7 +792,7 @@ describe("Feature 6006 AC8 -- a refund the platform did not make", () => {
     await db.refund.create({
       data: {
         reference: "CN-1001", invoiceId: sarahs.invoiceId, customerId: sarahs.customerId, jobId: sarahs.jobId, paymentId: payment.id,
-        amount: 54_000, reason: "x", approvedByUserId: mike.id, approvedAt: new Date(), stripeRefundId: "re_own_1", status: "pending",
+        amount: 54_000, reason: "x", approvedByUserId: mike.id, approvedAt: new Date(), billedTo: { name: "Sarah Chen" }, stripeRefundId: "re_own_1", status: "pending",
       },
     });
     expect((await post(early)).status).toBe(200);

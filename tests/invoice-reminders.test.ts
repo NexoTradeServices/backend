@@ -212,6 +212,18 @@ describe("AC5 -- the wording", () => {
   });
 });
 
+describe("6015 AC11 -- the accounts phone on the reminders", () => {
+  test("AC11: the reminder shows the accounts phone when set, the operator phone when blank", async () => {
+    await db.platformSettings.updateMany({ data: { accountsPhone: "08 9111 2222" } });
+    await owedInvoice(db, { dueAt: new Date("2026-10-06T04:00:00.000Z"), amount: 65_500 });
+    await runInvoiceReminders(db, { zone: ZONE, today: "2026-10-07" });
+    await drainOnce(db);
+    expect(email.sent).toHaveLength(1);
+    expect(email.sent[0]?.message.text).toContain("08 9111 2222");
+    expect(email.sent[0]?.message.text).not.toContain("08 0000 0000");
+  });
+});
+
 describe("AC6 -- the hour, and a failing step", () => {
   test("AC6: at 8:59am the sweep sends nothing; at 9:00am it runs", async () => {
     const sarahs = await owedInvoice(db, { dueAt: DUE_TODAY });

@@ -1,24 +1,26 @@
 // The invoice PDF -- Feature 6001, invoice at completion (ADR 0006, pdf-lib).
 //
-// Invoicing; Foundations / Brand identity (Three identities, one row): the
-// header is the LEGAL identity -- legalEntityName, "ABN <businessAbn>" when set,
+// Invoicing / Invoice layouts (A1 to B2) and Foundations / Brand identity (Three
+// identities, one row): the header is the LEGAL identity -- legalEntityName, "ABN <businessAbn>" when set,
 // businessAddress -- never the display name alone. Built from the FROZEN rows
 // only (the invoice, its lines, its billed-to copy), so the same invoice always
 // reads the same; it is built at send time and never stored. No bank account
 // appears anywhere: the customer pays online.
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import { PDFDocument, StandardFonts, type PDFFont } from "pdf-lib";
 import type { PrismaClient } from "../db/client.js";
 import type { Prisma } from "../generated/prisma/client.js";
-import { addressLine } from "../settings/address.js";
 import { plain, wrap } from "../agreements/pdf.js";
 import { formatDate } from "../time/index.js";
+import { billQuestionsPhone } from "./billing.js";
 import type { BilledTo } from "./issue.js";
+import { GST_NOT_APPLICABLE, INK, MUTED, Sheet } from "./sheet.js";
 
 export interface InvoicePdfInput {
   legalEntityName: string;
   businessAbn: string;
   businessAddress: unknown;
-  operatorPhone: string;
+  /** The number on the questions line: the accounts phone, or the operator phone while blank. */
+  accountsPhone: string;
   reference: string;
   jobReference: string;
   timezone: string;
@@ -29,6 +31,8 @@ export interface InvoicePdfInput {
   amount: number;
   gstApplied: boolean;
   gstAmount: number;
+  /** Paid in full: AMOUNT DUE reads $0.00. */
+  paid: boolean;
   payLinkUrl: string | null;
 }
 
@@ -49,126 +53,70 @@ export function invoicePdfName(reference: string): string {
 
 export async function makeInvoicePdf(input: InvoicePdfInput): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
-  const regular = await pdf.embedFont(StandardFonts.Helvetica);
-  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const ink = rgb(0.1, 0.1, 0.1);
-  const muted = rgb(0.4, 0.4, 0.4);
-  const left = 56;
-  const pageWidth = 595.28;
-  const width = pageWidth - left * 2;
-  const bottom = 64;
-  const top = 841.89 - 64;
+  const sheet = new Sheet(pdf, await pdf.embedFont(StandardFonts.Helvetica), await pdf.embedFont(StandardFonts.HelveticaBold));
+  const { regular, bold, left, right } = sheet;
 
-  let page: PDFPage = pdf.addPage([pageWidth, 841.89]); // A4
-  let y = top;
-
-  const room = (needed: number): void => {
-    if (y - needed >= bottom) return;
-    page = pdf.addPage([pageWidth, 841.89]);
-    y = top;
-  };
-
-  const text = (value: string, size: number, font: PDFFont, color = ink): void => {
-    for (const line of wrap(plain(value), font, size, width)) {
-      room(size + 5);
-      page.drawText(line, { x: left, y, size, font, color });
-      y -= size + 5;
-    }
-  };
-
-  // Right-aligned figure ending at `right`.
-  const figure = (value: string, right: number, size: number, font: PDFFont, color = ink): void => {
-    const safe = plain(value);
-    page.drawText(safe, { x: right - font.widthOfTextAtSize(safe, size), y, size, font, color });
-  };
-
-  // Header: the legal identity.
-  text(input.legalEntityName, 18, bold);
-  if (input.businessAbn.trim() !== "") text(`ABN ${input.businessAbn}`, 10, regular, muted);
-  const address = addressLine(input.businessAddress);
-  if (address !== "") text(address, 10, regular, muted);
-  y -= 14;
-  page.drawLine({ start: { x: left, y }, end: { x: left + width, y }, thickness: 0.75, color: muted });
-  y -= 28;
-
-  text(input.gstApplied ? "Tax invoice" : "Invoice", 16, bold);
-  y -= 8;
-
-  const facts: [string, string][] = [
-    ["Invoice number", input.reference],
-    ["Job", input.jobReference],
-    ["Issued", formatDate(input.timezone, input.issuedAt)],
+  // Header: the legal identity left, the title right; then Bill to with the facts beside it.
+  sheet.header(input, input.gstApplied ? "TAX INVOICE" : "INVOICE");
+  sheet.parties("BILL TO", input.billedTo, [
+    ["Invoice No", input.reference],
+    ["Date", formatDate(input.timezone, input.issuedAt)],
     ["Due", formatDate(input.timezone, input.dueAt)],
-  ];
-  for (const [label, value] of facts) {
-    room(30);
-    page.drawText(plain(label), { x: left, y, size: 9, font: regular, color: muted });
-    page.drawText(plain(value), { x: left + 110, y, size: 11, font: regular, color: ink });
-    y -= 17;
-  }
-  y -= 10;
-
-  // Billed to: business name then "Attn: <name>", or the name alone; then the address.
-  text("Billed to", 9, regular, muted);
-  const billed = input.billedTo;
-  if (billed.businessName !== undefined && billed.businessName !== "") {
-    text(billed.businessName, 11, bold);
-    text(`Attn: ${billed.name}`, 11, regular);
-  } else {
-    text(billed.name, 11, bold);
-  }
-  const billedAddress = addressLine(billed.address ?? null);
-  if (billedAddress !== "") text(billedAddress, 10, regular, muted);
-  y -= 16;
+    ["Job", input.jobReference],
+  ]);
+  sheet.y -= 4;
+  sheet.rule();
+  sheet.y -= 18;
 
   // The lines.
-  const colAmount = left + width;
-  const colPrice = colAmount - 90;
+  const colPrice = right - 90;
   const colQty = colPrice - 80;
-  room(40);
-  page.drawText("Description", { x: left, y, size: 9, font: bold, color: muted });
-  figure("Qty", colQty, 9, bold, muted);
-  figure("Unit price", colPrice, 9, bold, muted);
-  figure("Amount", colAmount, 9, bold, muted);
-  y -= 6;
-  page.drawLine({ start: { x: left, y }, end: { x: left + width, y }, thickness: 0.5, color: muted });
-  y -= 15;
+  sheet.room(40);
+  sheet.page.drawText("DESCRIPTION", { x: left, y: sheet.y, size: 9, font: bold, color: MUTED });
+  sheet.rightAt("QTY", colQty, 9, bold, MUTED);
+  sheet.rightAt("RATE", colPrice, 9, bold, MUTED);
+  sheet.rightAt("AMOUNT", right, 9, bold, MUTED);
+  sheet.y -= 6;
+  sheet.rule();
+  sheet.y -= 15;
   const descriptionWidth = colQty - left - 48;
   for (const line of input.lines) {
     const wrapped = wrap(plain(line.description), regular, 10, descriptionWidth);
-    room(wrapped.length * 14 + 6);
-    const rowTop = y;
+    sheet.room(wrapped.length * 14 + 6);
+    const rowTop = sheet.y;
     for (const piece of wrapped) {
-      page.drawText(piece, { x: left, y, size: 10, font: regular, color: ink });
-      y -= 14;
+      sheet.page.drawText(piece, { x: left, y: sheet.y, size: 10, font: regular, color: INK });
+      sheet.y -= 14;
     }
-    const keep = y;
-    y = rowTop;
-    figure(qtyText(line.qty), colQty, 10, regular);
-    figure(pdfMoney(line.unitPrice), colPrice, 10, regular);
-    figure(pdfMoney(line.lineTotal), colAmount, 10, regular);
-    y = keep - 4;
+    const keep = sheet.y;
+    sheet.y = rowTop;
+    sheet.rightAt(qtyText(line.qty), colQty, 10, regular);
+    sheet.rightAt(pdfMoney(line.unitPrice), colPrice, 10, regular);
+    sheet.rightAt(pdfMoney(line.lineTotal), right, 10, regular);
+    sheet.y = keep - 4;
   }
-  page.drawLine({ start: { x: left, y: y + 6 }, end: { x: left + width, y: y + 6 }, thickness: 0.5, color: muted });
-  y -= 10;
+  sheet.y += 6;
+  sheet.rule();
+  sheet.y -= 20;
 
-  // Totals: "Total" alone when GST is not applied; Subtotal / Includes GST / Total when it is.
+  // Totals. Not GST: TOTAL, AMOUNT DUE. GST: TOTAL (INCLUDES GST), GST INCLUDED, AMOUNT DUE.
   const total = (label: string, cents: number, font: PDFFont): void => {
-    room(20);
-    page.drawText(label, { x: colPrice - 70, y, size: 10, font, color: ink });
-    figure(pdfMoney(cents), colAmount, 10, font);
-    y -= 16;
+    sheet.room(20);
+    sheet.page.drawText(label, { x: right - 230, y: sheet.y, size: 10, font, color: INK });
+    sheet.rightAt(pdfMoney(cents), right, 10, font);
+    sheet.y -= 16;
   };
-  if (input.gstApplied) {
-    total("Subtotal", input.amount - input.gstAmount, regular);
-    total("Includes GST", input.gstAmount, regular);
-  }
-  total("Total", input.amount, bold);
-  y -= 14;
+  total(input.gstApplied ? "TOTAL (INCLUDES GST)" : "TOTAL", input.amount, regular);
+  if (input.gstApplied) total("GST INCLUDED", input.gstAmount, regular);
+  total("AMOUNT DUE", input.paid ? 0 : input.amount, bold);
+  sheet.y -= 10;
 
-  if (input.payLinkUrl !== null) text(`Pay online: ${input.payLinkUrl}`, 10, regular);
-  y -= 4;
-  text(`Questions about this bill? Call ${input.operatorPhone}`, 10, regular, muted);
+  if (!input.gstApplied) {
+    sheet.text(GST_NOT_APPLICABLE, 10, regular);
+    sheet.y -= 6;
+  }
+  if (input.payLinkUrl !== null) sheet.text(`Pay online: ${input.payLinkUrl}`, 10, regular);
+  sheet.text(`Questions about this bill? Call ${input.accountsPhone}`, 10, regular, MUTED);
 
   return pdf.save();
 }
@@ -196,7 +144,7 @@ export async function buildInvoicePdf(
     legalEntityName: settings.legalEntityName,
     businessAbn: settings.businessAbn ?? "",
     businessAddress: settings.businessAddress,
-    operatorPhone: settings.operatorPhone,
+    accountsPhone: billQuestionsPhone(settings),
     reference: invoice.reference,
     jobReference: invoice.job.reference,
     timezone: invoice.job.timezone,
@@ -212,6 +160,7 @@ export async function buildInvoicePdf(
     amount: invoice.amount,
     gstApplied: invoice.gstApplied,
     gstAmount: invoice.gstAmount ?? 0,
+    paid: invoice.status === "paid",
     payLinkUrl: invoice.stripePaymentLinkUrl,
   });
   return { fileName: invoicePdfName(invoice.reference), content };

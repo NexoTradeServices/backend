@@ -20,6 +20,8 @@ type Db = Prisma.TransactionClient;
 export interface BilledTo {
   name: string;
   businessName?: string;
+  /** The business's ABN, digits only; only ever set with a business name (Feature 6015). */
+  abn?: string;
   address?: Record<string, unknown>;
 }
 
@@ -45,12 +47,19 @@ function isAddress(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-/** The customer as the invoice will carry her for good: name, business name and billing address when she has them. */
-export function billedToOf(customer: { name: string; businessName: string | null; billingAddress: unknown }): BilledTo {
+/** The customer as the invoice will carry her for good: name, business name, ABN (business only) and billing address when she has them. */
+export function billedToOf(customer: {
+  name: string;
+  businessName: string | null;
+  abn?: string | null;
+  billingAddress: unknown;
+}): BilledTo {
   const businessName = customer.businessName?.trim();
+  const abn = customer.abn?.replace(/\s/g, "");
   return {
     name: customer.name,
     ...(businessName ? { businessName } : {}),
+    ...(businessName && abn ? { abn } : {}),
     ...(isAddress(customer.billingAddress) ? { address: customer.billingAddress } : {}),
   };
 }

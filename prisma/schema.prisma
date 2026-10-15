@@ -342,6 +342,9 @@ model PlatformSettings {
   maxContractorPartAmount   Int
   /// THE single contact number
   operatorPhone             String
+  /// The number on every "Questions about this bill / refund?" line (Feature 6015);
+  /// blank = the operator phone stands in.
+  accountsPhone             String?
   /// the BUSINESS inbox -- every notice the platform sends the business lands
   /// here (Notifications / the business inbox). Backfilled onto the existing
   /// row by this column's own migration (Feature 1006).
@@ -470,8 +473,12 @@ model Customer {
   /// Set when the customer is a business (Feature 1017): the name the invoice is
   /// addressed to, with `name` as the contact. Ops adds or fixes it on the confirming call.
   businessName           String?
-  /// Held for later (Feature 1017): nothing writes or shows it yet.
+  /// The business's ABN, 11 digits stored without spaces (Feature 6015). Only held while
+  /// `businessName` is set; clearing the business name clears it.
   abn                    String?
+  /// Whether her business is registered for GST (Feature 6015): empty = not asked. Kept for
+  /// the office; it changes nothing printed.
+  gstRegistered          Boolean?
   stripeCustomerId       String?
   defaultPaymentMethodId String?
   /// Phase 2. Prisma scalar lists cannot be optional; empty list = none held.
@@ -1072,6 +1079,9 @@ model Refund {
   /// AUDIT pair: which ops admin approved it, and when
   approvedByUserId String
   approvedAt       DateTime
+  /// the customer's details frozen when the refund is made (Feature 6015), like Invoice.billedTo:
+  /// { name, businessName?, abn?, address? }
+  billedTo         Json
   stripeRefundId   String
   status           RefundStatus @default(pending)
   createdAt        DateTime     @default(now())

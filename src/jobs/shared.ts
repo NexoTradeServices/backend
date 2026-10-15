@@ -24,7 +24,7 @@ export const WINDOW_LABELS: Record<PreferredWindow, string> = {
 const SHOWN_ASSIGNMENT_STATUSES: AssignmentStatus[] = ["assigned", "accepted", "in_progress", "completed"];
 
 export const jobInclude = {
-  customer: { select: { code: true, name: true, businessName: true, phone: true, email: true, billingAddress: true } },
+  customer: { select: { code: true, name: true, businessName: true, abn: true, gstRegistered: true, phone: true, email: true, billingAddress: true } },
   serviceType: { select: { trade: true, serviceLevelMultipliers: true } },
   assignments: {
     where: { status: { in: SHOWN_ASSIGNMENT_STATUSES } },

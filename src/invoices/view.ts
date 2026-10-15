@@ -41,7 +41,7 @@ export interface InvoiceView {
   refundableLeft: number;
   /** Feature 6006: every refund on the invoice, oldest first. */
   refunds: { reference: string; dateLabel: string; amount: number; status: RefundStatus }[];
-  billedTo: { name: string; businessName: string | null; address: BilledTo["address"] | null };
+  billedTo: { name: string; businessName: string | null; abn: string | null; address: BilledTo["address"] | null };
   issuedLabel: string;
   dueLabel: string;
   lines: InvoiceLineView[];
@@ -100,7 +100,7 @@ export async function invoiceViewOf(client: PrismaClient, jobId: string, zone: s
       amount: refund.amount,
       status: refund.status,
     })),
-    billedTo: { name: billed.name, businessName: billed.businessName ?? null, address: billed.address ?? null },
+    billedTo: { name: billed.name, businessName: billed.businessName ?? null, abn: billed.abn ?? null, address: billed.address ?? null },
     issuedLabel: formatDate(zone, invoice.sentAt ?? invoice.createdAt),
     dueLabel: formatDate(zone, invoice.dueAt),
     lines: invoice.lines.map((line) => ({

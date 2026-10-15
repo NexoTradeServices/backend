@@ -40,6 +40,7 @@ interface SettingsInput {
   returnVisitMinimumMinutes: number;
   maxContractorPartAmount: number;
   operatorPhone: string;
+  accountsPhone: string | null;
   operatorEmail: string;
   displayName: string;
   approvedPublicDomain: string | null;
@@ -138,6 +139,13 @@ function parseSettingsInput(body: unknown): ParseResult {
     return { ok: false, error: "operatorPhone must be a non-empty string", field: "operatorPhone" };
   }
 
+  // Feature 6015: optional; blank = the operator phone stands in on every bill question line.
+  const accountsPhoneRaw = b["accountsPhone"];
+  if (accountsPhoneRaw !== undefined && accountsPhoneRaw !== null && typeof accountsPhoneRaw !== "string") {
+    return { ok: false, error: "accountsPhone must be a string", field: "accountsPhone" };
+  }
+  const accountsPhone = typeof accountsPhoneRaw === "string" && accountsPhoneRaw.trim() !== "" ? accountsPhoneRaw.trim() : null;
+
   const operatorEmail = b["operatorEmail"];
   if (!isNonEmptyString(operatorEmail) || !EMAIL_PATTERN.test(operatorEmail)) {
     return { ok: false, error: "operatorEmail must be a valid email address", field: "operatorEmail" };
@@ -209,6 +217,7 @@ function parseSettingsInput(body: unknown): ParseResult {
       returnVisitMinimumMinutes: b["returnVisitMinimumMinutes"] as number,
       maxContractorPartAmount: b["maxContractorPartAmount"] as number,
       operatorPhone,
+      accountsPhone,
       operatorEmail,
       displayName,
       approvedPublicDomain,
@@ -277,6 +286,7 @@ export function settingsRoutes(client: PrismaClient): Router {
           returnVisitMinimumMinutes: input.returnVisitMinimumMinutes,
           maxContractorPartAmount: input.maxContractorPartAmount,
           operatorPhone: input.operatorPhone,
+          accountsPhone: input.accountsPhone,
           operatorEmail: input.operatorEmail,
           displayName: input.displayName,
           approvedPublicDomain: input.approvedPublicDomain,

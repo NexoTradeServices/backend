@@ -474,11 +474,13 @@ describe("AC5 / AC6 / AC7 -- GST, billed to, the PDF", () => {
     const invoice = await invoiceOf(made.jobId);
     expect(invoice).toMatchObject({ gstApplied: false, gstAmount: 0 });
     const text = pdfText((await buildInvoicePdf(db, invoice.id)).content);
-    expect(text).toContain("Invoice");
-    expect(text).not.toContain("Tax invoice");
-    expect(text).not.toContain("Includes GST");
+    expect(text).toContain("INVOICE");
+    expect(text).not.toContain("TAX INVOICE");
+    expect(text).not.toContain("INCLUDES GST");
     expect(text).not.toContain("Subtotal");
-    expect(text).toContain("Total");
+    expect(text).toContain("TOTAL");
+    expect(text).toContain("AMOUNT DUE");
+    expect(text).toContain("GST: Not applicable - this business is not registered for GST.");
     expect(text).toContain("$655.00");
   });
 
@@ -489,16 +491,51 @@ describe("AC5 / AC6 / AC7 -- GST, billed to, the PDF", () => {
     const invoice = await invoiceOf(made.jobId);
     expect(invoice).toMatchObject({ gstApplied: true, gstAmount: 5_955 });
     const before = pdfText((await buildInvoicePdf(db, invoice.id)).content);
-    expect(before).toContain("Tax invoice");
-    expect(before).toContain("Subtotal");
-    expect(before).toContain("$595.45");
-    expect(before).toContain("Includes GST");
+    expect(before).toContain("TAX INVOICE");
+    expect(before).toContain("TOTAL (INCLUDES GST)");
+    expect(before).toContain("GST INCLUDED");
+    expect(before).toContain("AMOUNT DUE");
+    expect(before).not.toContain("GST: Not applicable");
     expect(before).toContain("$59.55");
 
     await db.platformSettings.updateMany({ data: { gstRegistered: false } });
     const after = await db.invoice.findUniqueOrThrow({ where: { id: invoice.id } });
     expect(after).toMatchObject({ gstApplied: true, gstAmount: 5_955 });
-    expect(pdfText((await buildInvoicePdf(db, invoice.id)).content)).toContain("Tax invoice");
+    expect(pdfText((await buildInvoicePdf(db, invoice.id)).content)).toContain("TAX INVOICE");
+  });
+
+  test("6015 AC6: a paid invoice's PDF shows AMOUNT DUE $0.00", async () => {
+    const made = await acceptedJob();
+    await bobCompletes(made);
+    const invoice = await invoiceOf(made.jobId);
+    const owed = pdfText((await buildInvoicePdf(db, invoice.id)).content);
+    expect(owed).toContain("$655.00");
+    await db.invoice.update({ where: { id: invoice.id }, data: { status: "paid" } });
+    const paid = pdfText((await buildInvoicePdf(db, invoice.id)).content);
+    expect(paid).toContain("$0.00");
+  });
+
+  test("6015 AC3/AC5: Nina's ABN is frozen in billedTo with her business name and prints spaced; Sarah's has none; a later ABN changes nothing", async () => {
+    const address = { street: "12 Marine Terrace", suburb: "Fremantle", state: "WA", country: "Australia", postcode: "6160", lat: -32.05, lng: 115.74, placeId: null };
+    const before = await acceptedJob({ customer: { name: "Nina Rossi", email: "nina@idelta.com.au", businessName: "Rossi's Cafe", billingAddress: address } });
+    await bobCompletes(before, { withPart: false });
+    await db.customer.update({ where: { id: before.customerId }, data: { abn: "51824753556", gstRegistered: true } });
+    const ninaRow = await db.customer.findUniqueOrThrow({ where: { id: before.customerId } });
+    const after = await acceptedJob({ customerCode: ninaRow.code });
+    await bobCompletes(after, { withPart: false });
+
+    const first = await invoiceOf(before.jobId);
+    const second = await invoiceOf(after.jobId);
+    expect(first.billedTo).not.toHaveProperty("abn");
+    expect(second.billedTo).toMatchObject({ businessName: "Rossi's Cafe", abn: "51824753556" });
+    expect(pdfText((await buildInvoicePdf(db, first.id)).content)).not.toContain("ABN 51");
+    const text = pdfText((await buildInvoicePdf(db, second.id)).content);
+    expect(text).toContain("Attn: Nina Rossi");
+    expect(text).toContain("ABN 51 824 753 556");
+
+    const sarah = await acceptedJob();
+    await bobCompletes(sarah, { withPart: false });
+    expect((await invoiceOf(sarah.jobId)).billedTo).not.toHaveProperty("abn");
   });
 
   test("AC6: Nina's invoice is billed to Rossi's Cafe, Attn: Nina Rossi, with her address; Sarah's is billed to Sarah Chen; a later change changes nothing", async () => {
@@ -619,32 +656,38 @@ describe("AC9 -- the email and the text", () => {
     const mail = email.sent[0];
     const sarah = await db.customer.findUniqueOrThrow({ where: { id: made.customerId } });
     expect(mail?.to).toBe(sarah.email);
-    expect(mail?.message.subject).toMatch(/^Invoice INV-2042 for your plumbing job - \$655 due \d{1,2} \w{3} \d{4}$/);
+    expect(mail?.message.subject).toBe(`Invoice INV-2042 - ${made.reference}`);
     expect(mail?.message.text).toContain("Hi Sarah,");
-    expect(mail?.message.text).toContain("Bob has finished your plumbing job, " + made.reference);
-    expect(mail?.message.text).toContain("Replaced the cartridge.\nTested for leaks.");
-    expect(mail?.message.text).toContain("Total: $655");
-    expect(mail?.message.text).not.toContain("includes GST");
+    expect(mail?.message.text).toContain(`Your plumbing job ${made.reference} is finished.`);
+    expect(mail?.message.text).toContain("Your invoice INV-2042 is attached.");
+    expect(mail?.message.text).toMatch(/Due: \d{1,2} \w{3} \d{4}/);
+    // 6015: no money and no work notes in the email.
+    expect(mail?.message.text).not.toContain("$");
+    expect(mail?.message.html).not.toContain("$");
+    expect(mail?.message.text).not.toContain("Replaced the cartridge");
     expect(mail?.message.text).toContain("Pay now: https://pay.test/INV-2042");
-    expect(mail?.message.text).toContain("Your invoice INV-2042 is attached as a PDF.");
+    expect(mail?.message.text).toContain("Questions about this bill? Call us on");
     expect(mail?.message.html).toContain('href="https://pay.test/INV-2042"');
     expect(mail?.attachments).toHaveLength(1);
     expect(mail?.attachments?.[0]).toMatchObject({ fileName: "INV-2042.pdf", contentType: "application/pdf" });
     expect(pdfText(mail?.attachments?.[0]?.content ?? new Uint8Array())).toContain("INV-2042");
     expect(sms.sent[0]?.to).toBe(sarah.phone);
-    expect(sms.sent[0]?.message.text).toMatch(/^Perth Trades & Services: invoice INV-2042 for JOB-\d+ - \$655, due \d{1,2} \w{3} \d{4}\. Pay now: https:\/\/pay\.test\/INV-2042$/);
+    expect(sms.sent[0]?.message.text).toMatch(/^Perth Trades & Services: invoice INV-2042 for JOB-\d+, due \d{1,2} \w{3} \d{4}\. Pay now: https:\/\/pay\.test\/INV-2042$/);
+    expect(sms.sent[0]?.message.text).not.toContain("$");
     expect(sms.sent[0]?.attachments).toBeUndefined();
     // Never the site contact.
     expect([...email.sent, ...sms.sent].some((m) => m.to === "lena@idelta.com.au" || m.to === "0400 111 222")).toBe(false);
   });
 
-  test("AC9: a GST invoice says so in the email", async () => {
+  test("AC9: a GST invoice is a tax invoice in the subject and the body, still with no money", async () => {
     await turnGstOn();
     const made = await acceptedJob();
     await bobCompletes(made);
     await payLinkPass(db, { provider: fakeStripe() });
     await drainOnce(db);
-    expect(email.sent[0]?.message.text).toContain("Total: $655 (includes GST of $59.55)");
+    expect(email.sent[0]?.message.subject).toBe(`Tax invoice INV-2042 - ${made.reference}`);
+    expect(email.sent[0]?.message.text).toContain("Your tax invoice INV-2042 is attached.");
+    expect(email.sent[0]?.message.text).not.toContain("$");
   });
 
   test("AC9: the console adapter logs the attachment's name and size; Mailjet sends it as Attachments, base64", async () => {

@@ -17,6 +17,7 @@
 // others stay as they are.
 import Stripe from "stripe";
 import type { PrismaClient } from "../client.js";
+import type { Prisma } from "../../generated/prisma/client.js";
 import { nextReference } from "../reference.js";
 import { isWeekend, zonedDateTimeToUtc } from "../../time/index.js";
 import { issueInvoice } from "../../invoices/issue.js";
@@ -143,7 +144,7 @@ async function margaretsJob(client: PrismaClient, stripe: Stripe): Promise<strin
 
 async function listJob(client: PrismaClient, stripe: Stripe): Promise<string> {
   const made = await makeJob(client, stripe, "CUS-1050", LIST, SARAHS_SITE, { gst: false });
-  const invoice = await client.invoice.findUniqueOrThrow({ where: { id: made.invoiceId }, select: { customerId: true, jobId: true, payments: { select: { id: true } } } });
+  const invoice = await client.invoice.findUniqueOrThrow({ where: { id: made.invoiceId }, select: { customerId: true, jobId: true, billedTo: true, payments: { select: { id: true } } } });
   const mike = await client.user.findUniqueOrThrow({ where: { email: "mike@idelta.com.au" } });
   const rows: { amount: number; status: "succeeded" | "pending" | "failed"; reason: string; hoursAgo: number }[] = [
     { amount: 20_000, status: "succeeded", reason: "UAT 6006: part of the job was not done", hoursAgo: 3 },
@@ -163,6 +164,7 @@ async function listJob(client: PrismaClient, stripe: Stripe): Promise<string> {
         reason: row.reason,
         approvedByUserId: mike.id,
         approvedAt: new Date(Date.now() - row.hoursAgo * 60 * 60_000),
+        billedTo: invoice.billedTo as Prisma.InputJsonObject,
         stripeRefundId: `re_uat_6006_${reference}`,
         status: row.status,
       },
