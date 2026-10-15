@@ -8,6 +8,8 @@ import type { InvoiceStatus } from "../generated/prisma/enums.js";
 import { formatDate, formatShortDateTime } from "../time/index.js";
 import type { BilledTo } from "./issue.js";
 import { methodWords } from "../payments/messages.js";
+import { leftByPayment, totalLeft } from "../refunds/service.js";
+import type { RefundStatus } from "../generated/prisma/enums.js";
 
 export interface InvoiceLineView {
   kind: "labour" | "part" | "callout";
@@ -33,6 +35,12 @@ export interface InvoiceView {
   voided: { byName: string; atLabel: string; reason: string } | null;
   /** Feature 6002: "15 Oct 2026, card" once paid, from the succeeded Payment; null otherwise. */
   paidLabel: string | null;
+  /** Feature 6006: Refund is offered only when this is true (money received and not all given back). */
+  canRefund: boolean;
+  /** Feature 6006: cents received and not yet refunded; 0 when nothing is left. */
+  refundableLeft: number;
+  /** Feature 6006: every refund on the invoice, oldest first. */
+  refunds: { reference: string; dateLabel: string; amount: number; status: RefundStatus }[];
   billedTo: { name: string; businessName: string | null; address: BilledTo["address"] | null };
   issuedLabel: string;
   dueLabel: string;
@@ -56,9 +64,11 @@ export async function invoiceViewOf(client: PrismaClient, jobId: string, zone: s
       lines: { orderBy: { id: "asc" } },
       payments: { where: { status: "succeeded" }, orderBy: { paidAt: "asc" }, take: 1 },
       voidedBy: { select: { name: true } },
+      refunds: { orderBy: [{ approvedAt: "asc" }, { id: "asc" }] },
     },
   });
   if (invoice === null) return null;
+  const refundableLeft = totalLeft(await leftByPayment(client, invoice.id));
   const billed = invoice.billedTo as unknown as BilledTo;
   const paidWith = invoice.payments[0];
   const paidAt = invoice.paidAt ?? paidWith?.paidAt ?? null;
@@ -82,6 +92,14 @@ export async function invoiceViewOf(client: PrismaClient, jobId: string, zone: s
       invoice.status === "paid" && paidAt !== null
         ? `${formatDate(zone, paidAt)}, ${methodWords(paidWith?.method ?? null)}`
         : null,
+    canRefund: refundableLeft > 0,
+    refundableLeft,
+    refunds: invoice.refunds.map((refund) => ({
+      reference: refund.reference,
+      dateLabel: formatDate(zone, refund.approvedAt),
+      amount: refund.amount,
+      status: refund.status,
+    })),
     billedTo: { name: billed.name, businessName: billed.businessName ?? null, address: billed.address ?? null },
     issuedLabel: formatDate(zone, invoice.sentAt ?? invoice.createdAt),
     dueLabel: formatDate(zone, invoice.dueAt),

@@ -42,6 +42,9 @@ const TYPE_NAMES: Record<string, string> = {
   payment_receipt: "Payment receipt",
   payment_received: "Payment received",
   payment_closed_invoice: "Payment on a closed invoice",
+  refund_issued: "Refund issued",
+  refund_failed: "Refund failed",
+  refund_made_in_stripe: "Refund made in Stripe",
 };
 
 const STATUS_LABELS: Record<NotificationStatus, string> = {

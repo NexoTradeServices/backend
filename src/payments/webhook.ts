@@ -3,7 +3,8 @@
 // Payments (Stripe): ONE door for every kind of Stripe message, at
 // POST /webhooks/stripe. Mounted with a RAW body parser BEFORE the app's global
 // express.json() (index.ts): Stripe signs the exact bytes it sent, and a parsed and
-// re-serialised body no longer matches. Refunds (6006) join this same door.
+// re-serialised body no longer matches. Refunds (6006) join this same door:
+//     refund.created and refund.updated go to refunds/webhook.ts.
 //
 //   - the signature is checked with STRIPE_WEBHOOK_SECRET; no secret or a bad
 //     signature -> 400 and nothing changes;
@@ -22,6 +23,7 @@ import Stripe from "stripe";
 import { getPrisma, type PrismaClient } from "../db/client.js";
 import { paymentReader, webhookSecret } from "../invoices/stripe.js";
 import { recordConfirmedPayment, recordFailedPayment } from "./paid.js";
+import { handleRefundEvent, isRefundEvent } from "../refunds/webhook.js";
 
 interface SessionLike {
   id: string;
@@ -35,10 +37,14 @@ function intentIdOf(session: SessionLike): string | null {
   return typeof value === "string" ? value : value.id;
 }
 
-type Handled = "paid" | "failed" | "ignored";
+type Handled = "paid" | "failed" | "refund" | "ignored";
 
 /** What one verified event means. Exported for the tests. */
 export async function handleStripeEvent(client: PrismaClient, event: { type: string; created: number; data: { object: unknown } }): Promise<Handled> {
+  if (isRefundEvent(event.type)) {
+    // Feature 6006: Stripe's news about a refund, through the same signed door.
+    return (await handleRefundEvent(client, event)) === "ignored" ? "ignored" : "refund";
+  }
   const confirms =
     event.type === "checkout.session.async_payment_succeeded" ||
     (event.type === "checkout.session.completed" && (event.data.object as SessionLike).payment_status === "paid");

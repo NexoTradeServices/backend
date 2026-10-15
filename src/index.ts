@@ -8,6 +8,7 @@ import { startPayLinkLoop } from './invoices/pay-link.js'
 import { warnIfWebhookSecretMissing } from './invoices/stripe.js'
 import { stripeWebhook } from './payments/webhook.js'
 import { receivablesRoutes } from './payments/routes.js'
+import { refundRoutes } from './refunds/routes.js'
 import { buildAuth } from './auth/config.js'
 import { attachSession } from './auth/middleware.js'
 import { authRoutes } from './auth/routes.js'
@@ -115,6 +116,7 @@ app.use('/api/enquiries', enquiryRoutes(prisma))
 app.use('/api/jobs', jobRoutes(prisma))
 // Feature 6002: every invoice still owed.
 app.use('/api/receivables', receivablesRoutes(prisma))
+app.use('/api/refunds', refundRoutes(prisma))
 // Feature 6003: the ops Settlements screen -- pay the approved invoices, mark them paid, rebuild a draft.
 app.use('/api/settlements', settlementRoutes(prisma))
 

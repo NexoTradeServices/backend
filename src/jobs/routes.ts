@@ -12,6 +12,7 @@
 //   POST /api/jobs/:reference/invoice/resend  Feature 6001: the invoice email and text, again
 //   POST /api/jobs/:reference/invoice/check-payment  Feature 6002: ask Stripe whether she has paid
 //   POST /api/jobs/:reference/invoice/void  Feature 6008: void an unpaid invoice, with a reason
+//   POST /api/jobs/:reference/invoice/refund  Feature 6006: refund money received, an amount in cents and a reason
 //   POST /api/jobs/:reference/reschedule      Feature 4006: new time for the same contractor
 //   POST /api/jobs/:reference/take-off        Feature 4006: free the contractor, job back to New
 //   POST /api/jobs/:reference/cancel          Feature 4006: close the job with a reason (Mike only)
@@ -29,6 +30,7 @@ import { hasPayableLink } from "../invoices/view.js";
 import { askInvoiceMessages } from "../invoices/messages.js";
 import { checkPaymentWithStripe } from "../payments/check.js";
 import { VOID_REFUSALS, parseVoidReason, voidInvoice } from "../invoices/void.js";
+import { REFUND_AMOUNT_ERROR, makeRefund } from "../refunds/service.js";
 import { formatLabelled } from "../time/index.js";
 import { addNote, editNote, parseEditedNote, parseNewNote } from "./notes.js";
 import {
@@ -184,6 +186,53 @@ export function jobRoutes(client: PrismaClient): Router {
       const fresh = await loadJob(client, req.params.reference);
       res.json(await jobDetail(client, fresh ?? job, req.authUser?.id ?? ""));
     })().catch(failWith(res, "POST /api/jobs/:reference/invoice/void"));
+  });
+
+  // Feature 6006: Refund. Ops (the owner too). Amount in cents and a required reason; the
+  // refund service says no (400 on a field, 409 when nothing is left, 502 when Stripe refuses
+  // or cannot be reached -- and then nothing was saved). Answers the fresh job detail, plus the
+  // new CN reference for the page's Toast.
+  router.post("/:reference/invoice/refund", requireRole(Role.ops), (req: WithReference, res: Response) => {
+    void (async () => {
+      const job = await loadJob(client, req.params.reference);
+      if (!job) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      const invoice = await client.invoice.findFirst({ where: { jobId: job.id }, orderBy: { createdAt: "desc" } });
+      if (invoice === null) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      const body = (req.body ?? {}) as { amount?: unknown; reason?: unknown };
+      if (typeof body.amount !== "number" || !Number.isInteger(body.amount) || body.amount <= 0) {
+        res.status(400).json({ error: REFUND_AMOUNT_ERROR, field: "amount" });
+        return;
+      }
+      const outcome = await makeRefund(client, {
+        invoiceId: invoice.id,
+        amount: body.amount,
+        reason: typeof body.reason === "string" ? body.reason : "",
+        byUserId: req.authUser?.id ?? "",
+      });
+      if (!outcome.ok) {
+        const status = {
+          amount: 400,
+          reason: 400,
+          too_much: 400,
+          one_payment: 400,
+          nothing_left: 409,
+          stripe: 502,
+          not_set_up: 503,
+          not_found: 404,
+        }[outcome.kind];
+        const field = outcome.kind === "reason" ? "reason" : outcome.kind === "amount" || outcome.kind === "too_much" || outcome.kind === "one_payment" ? "amount" : undefined;
+        res.status(status).json({ error: outcome.message, ...(field ? { field } : {}), ...(outcome.left === undefined ? {} : { left: outcome.left }) });
+        return;
+      }
+      const fresh = await loadJob(client, req.params.reference);
+      res.json({ ...(await jobDetail(client, fresh ?? job, req.authUser?.id ?? "")), refundReference: outcome.reference });
+    })().catch(failWith(res, "POST /api/jobs/:reference/invoice/refund"));
   });
 
   router.put("/:reference/addresses", requireRole(Role.ops), (req: WithReference, res: Response) => {
