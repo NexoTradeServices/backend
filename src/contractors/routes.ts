@@ -22,6 +22,7 @@ import { currentAgreementLabel } from "../agreements/current.js";
 import { readyToDispatch, type ReadyInput } from "./ready.js";
 import { parseServiceAreaInput, saveServiceArea, serviceAreaDtoOf } from "./service-area.js";
 import { loadContractorDay } from "./day.js";
+import { isValidAbn } from "../invoices/abn.js";
 
 // ---------------------------------------------------------------------------
 // Shapes
@@ -93,18 +94,6 @@ type ParseResult = { ok: true; data: ContractorInput } | { ok: false } & FieldEr
 
 export const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-
-/** The ATO's own check-digit algorithm (decision 10). */
-const ABN_WEIGHTS = [10, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19];
-
-function isValidAbn(raw: string): boolean {
-  const digits = raw.replace(/\s/g, "");
-  if (!/^\d{11}$/.test(digits)) return false;
-  const values = digits.split("").map(Number);
-  values[0] = (values[0] ?? 0) - 1;
-  const sum = values.reduce((total, digit, index) => total + digit * (ABN_WEIGHTS[index] ?? 0), 0);
-  return sum % 89 === 0;
-}
 
 function isValidBsb(raw: string): boolean {
   return /^\d{6}$/.test(raw.replace(/[\s-]/g, ""));

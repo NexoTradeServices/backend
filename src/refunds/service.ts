@@ -22,6 +22,7 @@ import { nextReference } from "../db/reference.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import { currentLabel } from "../test-data/label.js";
 import { FAKE_REFUND_PROVIDER, isFakePaymentIntent } from "../test-data/fake-stripe.js";
+import { billedToOf } from "../invoices/issue.js";
 import { RefundRefusedError, refundProvider, type RefundProvider } from "../invoices/stripe.js";
 import { askRefundIssued } from "./messages.js";
 import { dollars } from "./money.js";
@@ -105,7 +106,7 @@ export async function makeRefund(
       if (locked.length === 0) return { ok: false, kind: "not_found", message: "not found" };
       const invoice = await tx.invoice.findUniqueOrThrow({
         where: { id: input.invoiceId },
-        select: { id: true, customerId: true, jobId: true, testData: true },
+        select: { id: true, customerId: true, jobId: true, testData: true, customer: true },
       });
 
       const payments = await leftByPayment(tx, invoice.id);
@@ -158,6 +159,8 @@ export async function makeRefund(
           reason: reason.reason,
           approvedByUserId: input.byUserId,
           approvedAt: now,
+          // The customer's details as they are NOW, frozen on the receipt (Feature 6015).
+          billedTo: billedToOf(invoice.customer) as unknown as Prisma.InputJsonObject,
           stripeRefundId: stripeRefund.id,
           status: stripeRefund.status,
         },

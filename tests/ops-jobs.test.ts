@@ -116,7 +116,7 @@ interface DetailBody {
   receivedLabel: string;
   description: string | null;
   answers: string[];
-  customer: { code: string; name: string; businessName: string | null; phone: string | null; email: string; billingAddress: unknown };
+  customer: { code: string; name: string; businessName: string | null; abn: string | null; gstRegistered: "yes" | "no" | null; phone: string | null; email: string; billingAddress: unknown };
   customerRating: {
     label: string;
     jobsInLastYear: number;
@@ -1171,6 +1171,46 @@ describe("1017 -- business customers on the job page", () => {
     expect((bad.body as { field?: string }).field).toBe("businessName");
     expect((await saveAddresses(bob, "JOB-1042", { businessName: "Bob's Plumbing" })).status).toBe(403);
     expect((await db.customer.findUniqueOrThrow({ where: { code: "CUS-1050" } })).businessName).toBeNull();
+  });
+
+  test("6015 AC1: Mike saves ABN (spaces stripped) and Registered for GST? yes; the read and the customer's other jobs carry both", async () => {
+    const mike = await signInCookie("mike@idelta.com.au");
+    const other = await makeJob({ customerCode: "CUS-1050" });
+    const res = await saveAddresses(mike, "JOB-1042", { businessName: "Rossi's Cafe", abn: "51 824 753 556", gstRegistered: "yes" });
+    expect(res.status).toBe(200);
+    const stored = await db.customer.findUniqueOrThrow({ where: { code: "CUS-1050" } });
+    expect(stored).toMatchObject({ abn: "51824753556", gstRegistered: true });
+    for (const reference of ["JOB-1042", other.reference]) {
+      expect((await detail(mike, reference)).customer).toMatchObject({ abn: "51824753556", gstRegistered: "yes" });
+    }
+    // "No" and "not asked" are kept apart; a save without the fields leaves them.
+    await saveAddresses(mike, "JOB-1042", { gstRegistered: "no" });
+    expect((await db.customer.findUniqueOrThrow({ where: { code: "CUS-1050" } })).gstRegistered).toBe(false);
+    await saveAddresses(mike, "JOB-1042", { billingAddress: FREMANTLE_SITE });
+    expect((await db.customer.findUniqueOrThrow({ where: { code: "CUS-1050" } })).abn).toBe("51824753556");
+    await saveAddresses(mike, "JOB-1042", { gstRegistered: null });
+    expect((await db.customer.findUniqueOrThrow({ where: { code: "CUS-1050" } })).gstRegistered).toBeNull();
+  });
+
+  test("6015 AC1: a wrong ABN is refused on the field and nothing is saved", async () => {
+    const mike = await signInCookie("mike@idelta.com.au");
+    const bad = await saveAddresses(mike, "JOB-1042", { businessName: "Rossi's Cafe", abn: "12 345 678 901", gstRegistered: "yes" });
+    expect(bad.status).toBe(400);
+    expect(bad.body).toMatchObject({ field: "abn", error: "An ABN is 11 digits with a valid check digit." });
+    const stored = await db.customer.findUniqueOrThrow({ where: { code: "CUS-1050" } });
+    expect(stored).toMatchObject({ businessName: null, abn: null, gstRegistered: null });
+  });
+
+  test("6015 AC2: clearing the business name clears the ABN and the GST answer; a home customer carries neither", async () => {
+    const mike = await signInCookie("mike@idelta.com.au");
+    await db.customer.update({ where: { code: "CUS-1050" }, data: { businessName: "Rossi's Cafe", abn: "51824753556", gstRegistered: true } });
+    expect((await saveAddresses(mike, "JOB-1042", { businessName: "" })).status).toBe(200);
+    expect(await db.customer.findUniqueOrThrow({ where: { code: "CUS-1050" } })).toMatchObject({ businessName: null, abn: null, gstRegistered: null });
+    expect((await detail(mike, "JOB-1042")).customer).toMatchObject({ abn: null, gstRegistered: null });
+
+    // An ABN sent with no business name is not kept.
+    expect((await saveAddresses(mike, "JOB-1042", { abn: "51824753556" })).status).toBe(200);
+    expect((await db.customer.findUniqueOrThrow({ where: { code: "CUS-1050" } })).abn).toBeNull();
   });
 
   test("1017 AC5: an evening job's page and row say evening 17:00-19:00", async () => {

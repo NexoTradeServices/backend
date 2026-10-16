@@ -9,6 +9,8 @@
 import { sendNotification } from "../notifications/index.js";
 import type { NotificationContext } from "../notifications/index.js";
 import type { Prisma } from "../generated/prisma/client.js";
+import { billQuestionsPhone, isBusinessBilledTo } from "../invoices/billing.js";
+import type { BilledTo } from "../invoices/issue.js";
 import { methodWords } from "../payments/messages.js";
 import { dollars } from "./money.js";
 
@@ -21,9 +23,17 @@ function firstNameOf(name: string): string {
 async function contextOf(db: Db, refundId: string): Promise<{ context: NotificationContext; customerId: string; jobId: string }> {
   const refund = await db.refund.findUniqueOrThrow({
     where: { id: refundId },
-    include: { invoice: { include: { job: { include: { customer: true } } } }, payment: true },
+    include: {
+      invoice: { include: { job: { include: { customer: true, serviceType: { select: { trade: true } } } } } },
+      payment: true,
+    },
   });
   const invoice = refund.invoice;
+  const refunded = await db.refund.aggregate({
+    where: { invoiceId: invoice.id, status: { not: "failed" } },
+    _sum: { amount: true },
+  });
+  const fullyRefunded = (refunded._sum.amount ?? 0) >= invoice.amount;
   const method = refund.payment?.method ?? null;
   const webOrigin = process.env["WEB_ORIGIN"];
   return {
@@ -36,11 +46,16 @@ async function contextOf(db: Db, refundId: string): Promise<{ context: Notificat
       customerName: invoice.job.customer.name,
       invoiceReference: invoice.reference,
       jobReference: invoice.job.reference,
+      trade: invoice.job.serviceType.trade.toLowerCase(),
       amountText: dollars(refund.amount),
       paidText: dollars(refund.payment?.amount ?? invoice.amount),
       methodText: methodWords(method),
       byCard: method === "card",
       reason: refund.reason,
+      // Feature 6015: the receipt is an adjustment note on B2 only; "refunded your invoice"
+      // when this refund brings the refunded total up to the invoice amount.
+      adjustmentNote: invoice.gstApplied && isBusinessBilledTo((refund.billedTo as unknown as BilledTo)),
+      refundIsFull: fullyRefunded,
       ...(webOrigin ? { jobUrl: `${webOrigin}/ops/jobs/${invoice.job.reference}` } : {}),
     },
   };
@@ -49,7 +64,7 @@ async function contextOf(db: Db, refundId: string): Promise<{ context: Notificat
 /** The customer's Refund issued email; the template attaches the credit note at send time. */
 export async function askRefundIssued(db: Db, refundId: string): Promise<void> {
   const { context, customerId, jobId } = await contextOf(db, refundId);
-  const settings = await db.platformSettings.findFirstOrThrow({ select: { operatorPhone: true } });
+  const settings = await db.platformSettings.findFirstOrThrow({ select: { operatorPhone: true, accountsPhone: true } });
   await sendNotification(
     {
       type: "refund_issued",
@@ -60,7 +75,7 @@ export async function askRefundIssued(db: Db, refundId: string): Promise<void> {
       relatedType: "refund",
       relatedId: refundId,
       jobId,
-      context: { ...context, officePhone: settings.operatorPhone },
+      context: { ...context, officePhone: billQuestionsPhone(settings) },
     },
     db,
   );

@@ -97,7 +97,7 @@ describe("AC1 -- the PDFs", () => {
         legalEntityName: "Idelta Pty Ltd",
         businessAbn: "12 345 678 901",
         businessAddress: null,
-        operatorPhone: "08 9000 0000",
+        accountsPhone: "08 9000 0000",
         reference: "INV-2041",
         jobReference: "JOB-1042",
         timezone: PERTH,
@@ -108,6 +108,7 @@ describe("AC1 -- the PDFs", () => {
         amount: 25000,
         gstApplied: false,
         gstAmount: 0,
+        paid: false,
         payLinkUrl: null,
       }),
     );

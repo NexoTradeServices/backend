@@ -316,13 +316,15 @@ describe("AC5 -- Sarah's email and the credit note", () => {
     await drainOnce(db);
     const mail = email.sent.find((m) => m.to === "sarah@idelta.com.au");
     expect(mail).toBeDefined();
-    expect(mail?.message.subject).toBe(`Refund issued - CN-1001, against invoice ${sarahs.invoiceReference}`);
+    expect(mail?.message.subject).toBe(`Refund CN-1001 - ${sarahs.jobReference}`);
     const text = mail?.message.text ?? "";
     expect(text).toContain("Hi Sarah,");
-    expect(text).toContain(`We've refunded $540 against invoice ${sarahs.invoiceReference} (${sarahs.jobReference}).`);
-    expect(text).toContain("Why: Part of the job was not done");
-    expect(text).toContain("A card refund can take 5 to 10 business days to show on your statement.");
-    expect(text).toContain("The refund receipt is attached.");
+    expect(text).toContain(`We have refunded part of your invoice ${sarahs.invoiceReference} for your plumbing job ${sarahs.jobReference}.`);
+    expect(text).toContain("Your refund receipt CN-1001 is attached.");
+    // 6015: no money, no reason, no card-days line.
+    expect(text).not.toContain("$");
+    expect(text).not.toContain("Part of the job was not done");
+    expect(text).not.toContain("business days");
     expect(mail?.attachments).toHaveLength(1);
     expect(mail?.attachments?.[0]).toMatchObject({ fileName: "CN-1001.pdf", contentType: "application/pdf" });
     const pdf = pdfText(mail?.attachments?.[0]?.content ?? new Uint8Array());
@@ -336,21 +338,21 @@ describe("AC5 -- Sarah's email and the credit note", () => {
     expect(pdf).toContain("$540.00");
   });
 
-  test("AC5: a method that is not a card says it goes back to the account she paid from, with no timing line", async () => {
+  test("AC5: whatever method she paid by, the email carries no timing line and no method", async () => {
     const sarahs = await paidInvoice();
     await db.payment.updateMany({ where: { invoiceId: sarahs.invoiceId }, data: { method: "payto" } });
     const mike = await signInCookie("mike@idelta.com.au");
     await refund(sarahs.jobReference, { amount: 54_000, reason: "x" }, mike);
     await drainOnce(db);
     const text = email.sent.find((m) => m.to === "sarah@idelta.com.au")?.message.text ?? "";
-    expect(text).not.toContain("by PayTo");
-    expect(text).toContain("It goes back to the account you paid from.");
+    expect(text).not.toContain("PayTo");
+    expect(text).not.toContain("account you paid from");
     expect(text).not.toContain("business days");
   });
 });
 
 describe("AC6 -- the note's title and GST line", () => {
-  test("AC6: an invoice that carried GST gets an Adjustment note with Includes GST of one eleventh, as the invoice shows it", async () => {
+  test("AC6: a home customer's refund on a GST invoice is still a Refund (B1), with GST included of one eleventh", async () => {
     const margarets = await paidInvoice({ customerCode: "CUS-1053", amount: 66_000, gst: true });
     const mike = await signInCookie("mike@idelta.com.au");
     await refund(margarets.jobReference, { amount: 33_000, reason: "Half back" }, mike);
@@ -363,8 +365,11 @@ describe("AC6 -- the note's title and GST line", () => {
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toContain("application/pdf");
     const text = pdfText(new Uint8Array(res.body as Buffer));
-    expect(text).toContain("Adjustment note");
-    expect(text).toContain("Includes GST");
+    expect(text).toContain("REFUND");
+    expect(text).not.toContain("ADJUSTMENT NOTE");
+    expect(text).toContain("TOTAL REFUNDED (INCLUDES GST)");
+    expect(text).toContain("GST INCLUDED");
+    expect(text).not.toContain("GST: Not applicable");
     expect(text).toContain("$30.00");
     expect(text).toContain("$330.00");
   });
@@ -379,9 +384,141 @@ describe("AC6 -- the note's title and GST line", () => {
       r.on("end", () => cb(null, Buffer.concat(chunks)));
     });
     const text = pdfText(new Uint8Array(res.body as Buffer));
-    expect(text).toContain("Refund");
-    expect(text).not.toContain("Adjustment note");
-    expect(text).not.toContain("Includes GST");
+    expect(text).toContain("REFUND");
+    expect(text).toContain("TOTAL REFUNDED");
+    expect(text).not.toContain("ADJUSTMENT NOTE");
+    expect(text).not.toContain("INCLUDES GST");
+    expect(text).toContain("GST: Not applicable - this business is not registered for GST.");
+  });
+});
+
+async function creditNoteText(reference: string, cookie: string): Promise<string> {
+  const res = await request(app).get(`/api/refunds/${reference}/credit-note`).set("Cookie", cookie).buffer(true).parse((r, cb) => {
+    const chunks: Buffer[] = [];
+    r.on("data", (c: Buffer) => chunks.push(c));
+    r.on("end", () => cb(null, Buffer.concat(chunks)));
+  });
+  expect(res.status).toBe(200);
+  return pdfText(new Uint8Array(res.body as Buffer));
+}
+
+const ABN = "51824753556";
+
+async function makeBusiness(customerId: string, withAbn: boolean) {
+  await db.customer.update({
+    where: { id: customerId },
+    data: { businessName: "Rossi's Cafe", gstRegistered: true, ...(withAbn ? { abn: ABN } : {}) },
+  });
+}
+
+describe("6015 AC7 -- the refund freezes the customer's details", () => {
+  test("AC7: the receipt carries what is on file when the refund is made, and later changes change nothing", async () => {
+    const invoice = await paidInvoice({ customerCode: "CUS-1053", amount: 66_000 });
+    await makeBusiness(invoice.customerId, true);
+    const mike = await signInCookie("mike@idelta.com.au");
+    await refund(invoice.jobReference, { amount: 10_000, reason: "first" }, mike);
+    const first = (await refundRows())[0];
+    expect(first.billedTo).toMatchObject({ businessName: "Rossi's Cafe", abn: ABN });
+
+    await db.customer.update({ where: { id: invoice.customerId }, data: { businessName: null, abn: null, gstRegistered: null } });
+    await refund(invoice.jobReference, { amount: 10_000, reason: "second" }, mike);
+    const rows = await refundRows();
+    expect(rows[0].billedTo).toMatchObject({ businessName: "Rossi's Cafe", abn: ABN });
+    expect(rows[1].billedTo).not.toHaveProperty("businessName");
+    expect(rows[1].billedTo).not.toHaveProperty("abn");
+  });
+
+  test("AC7: the migration back-fill copies each invoice's billedTo onto its refunds", async () => {
+    const invoice = await paidInvoice({ customerCode: "CUS-1053", amount: 66_000 });
+    const mike = await signInCookie("mike@idelta.com.au");
+    await refund(invoice.jobReference, { amount: 10_000, reason: "old" }, mike);
+    await db.invoice.update({ where: { id: invoice.invoiceId }, data: { billedTo: { name: "Margaret", businessName: "Old Co" } } });
+    // The statement the migration ran, on the one refund.
+    await db.$executeRawUnsafe(
+      `UPDATE "Refund" SET "billedTo" = "Invoice"."billedTo" FROM "Invoice" WHERE "Refund"."invoiceId" = "Invoice"."id"`,
+    );
+    expect((await refundRows())[0].billedTo).toMatchObject({ name: "Margaret", businessName: "Old Co" });
+  });
+});
+
+describe("6015 AC8 -- the four refund receipts", () => {
+  test("AC8: A1 and A2 (not GST) are titled REFUND with TOTAL REFUNDED and the GST note; A2 names the business, Attn and ABN", async () => {
+    const mike = await signInCookie("mike@idelta.com.au");
+    const home = await paidInvoice();
+    await refund(home.jobReference, { amount: 10_000, reason: "home" }, mike);
+    const a1 = await creditNoteText("CN-1001", mike);
+    expect(a1).toContain("REFUND TO");
+    expect(a1).not.toContain("Attn:");
+    expect(a1).toContain("Refund against invoice " + home.invoiceReference);
+    expect(a1).toContain("TOTAL REFUNDED");
+    expect(a1).toContain("GST: Not applicable - this business is not registered for GST.");
+
+    const biz = await paidInvoice({ customerCode: "CUS-1053", amount: 66_000 });
+    await makeBusiness(biz.customerId, true);
+    await refund(biz.jobReference, { amount: 10_000, reason: "biz" }, mike);
+    const a2 = await creditNoteText("CN-1002", mike);
+    expect(a2).toContain("REFUND");
+    expect(a2).not.toContain("ADJUSTMENT NOTE");
+    expect(a2).toContain("Rossi's Cafe");
+    expect(a2).toContain("Attn: Margaret");
+    expect(a2).toContain("ABN 51 824 753 556");
+    expect(a2).toContain("GST: Not applicable");
+  });
+
+  test("AC8: B2 (a business on a tax invoice) is an ADJUSTMENT NOTE against the tax invoice, with GST INCLUDED", async () => {
+    const mike = await signInCookie("mike@idelta.com.au");
+    const biz = await paidInvoice({ customerCode: "CUS-1053", amount: 66_000, gst: true });
+    await makeBusiness(biz.customerId, false);
+    await refund(biz.jobReference, { amount: 33_000, reason: "half" }, mike);
+    const b2 = await creditNoteText("CN-1001", mike);
+    expect(b2).toContain("ADJUSTMENT NOTE");
+    expect(b2).toContain("Refund against tax invoice " + biz.invoiceReference);
+    expect(b2).toContain("TOTAL REFUNDED (INCLUDES GST)");
+    expect(b2).toContain("GST INCLUDED");
+    expect(b2).toContain("$30.00");
+    expect(b2).not.toContain("GST: Not applicable");
+    expect(b2).not.toContain("ABN 51"); // none on file at the time: the line is absent
+  });
+});
+
+describe("6015 AC10 -- the Refund issued email", () => {
+  test("AC10: partial says 'part of', full says 'your invoice'; adjustment note only on B2; no money, no reason", async () => {
+    const mike = await signInCookie("mike@idelta.com.au");
+    const biz = await paidInvoice({ customerCode: "CUS-1053", amount: 66_000, gst: true });
+    await makeBusiness(biz.customerId, true);
+    await refund(biz.jobReference, { amount: 30_000, reason: "secret reason" }, mike);
+    await refund(biz.jobReference, { amount: 36_000, reason: "rest" }, mike);
+    await drainOnce(db);
+    const mails = email.sent.filter((m) => (m.message.subject ?? "").startsWith("Refund CN-"));
+    expect(mails).toHaveLength(2);
+    const [partial, full] = mails;
+    expect(partial.message.text).toContain(`We have refunded part of your invoice ${biz.invoiceReference} for your`);
+    expect(full.message.text).toContain(`We have refunded your invoice ${biz.invoiceReference} for your`);
+    expect(partial.message.text).toContain("Your adjustment note CN-1001 is attached.");
+    for (const mail of mails) {
+      expect(mail.message.subject).toMatch(/^Refund CN-100\d - JOB-/);
+      expect(mail.message.text).not.toContain("$");
+      expect(mail.message.html).not.toContain("$");
+      expect(mail.message.text).not.toContain("secret reason");
+      expect(mail.attachments).toHaveLength(1);
+    }
+  });
+});
+
+describe("6015 AC11 -- the accounts phone on the receipt and the email", () => {
+  test("AC11: the accounts phone shows when set; the operator phone stands in when blank", async () => {
+    const mike = await signInCookie("mike@idelta.com.au");
+    const settings = await db.platformSettings.findFirstOrThrow();
+    const home = await paidInvoice();
+    await refund(home.jobReference, { amount: 10_000, reason: "a" }, mike);
+    expect(await creditNoteText("CN-1001", mike)).toContain(`Call ${settings.operatorPhone}`);
+
+    await db.platformSettings.updateMany({ data: { accountsPhone: "08 9111 2222" } });
+    expect(await creditNoteText("CN-1001", mike)).toContain("Call 08 9111 2222");
+    await refund(home.jobReference, { amount: 10_000, reason: "b" }, mike);
+    await drainOnce(db);
+    const second = email.sent.filter((m) => (m.message.subject ?? "").startsWith("Refund CN-")).at(-1);
+    expect(second?.message.text).toContain("Call us on 08 9111 2222");
   });
 });
 

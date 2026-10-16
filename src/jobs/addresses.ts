@@ -16,6 +16,7 @@
 // so no job already out ever moves (4001-V8, review finding RVW1.1).
 import type { PrismaClient } from "../db/client.js";
 import { Prisma } from "../generated/prisma/client.js";
+import { ABN_ERROR, isValidAbn } from "../invoices/abn.js";
 import { asAddress, sameAddress, suburbOf, type Address } from "./shared.js";
 import {
   asSiteContact,
@@ -71,6 +72,10 @@ export interface AddressesInput {
   siteContact: SiteContactInput;
   /** Feature 1017: undefined = leave it as it is; null = clear it. Trimmed, empty clears. */
   businessName: string | null | undefined;
+  /** Feature 6015: undefined = leave it; null = clear it. Spaces stripped, 11 digits with a valid check digit. */
+  abn: string | null | undefined;
+  /** Feature 6015: undefined = leave it; null = not asked. */
+  gstRegistered: boolean | null | undefined;
 }
 
 export type AddressFailure = { ok: false; status: number; error: string; field?: string };
@@ -124,7 +129,34 @@ export function parseAddressesInput(body: unknown): { ok: true; data: AddressesI
     businessName = rawBusinessName.trim() === "" ? null : rawBusinessName.trim();
   }
 
-  return { ok: true, data: { billing, site, siteContact: siteContact.data, businessName } };
+  let abn: string | null | undefined;
+  const rawAbn = b["abn"];
+  if (rawAbn === null) {
+    abn = null;
+  } else if (rawAbn !== undefined) {
+    if (typeof rawAbn !== "string") return { ok: false, status: 400, error: ABN_ERROR, field: "abn" };
+    const digits = rawAbn.replace(/\s/g, "");
+    if (digits === "") {
+      abn = null;
+    } else if (!isValidAbn(digits)) {
+      return { ok: false, status: 400, error: ABN_ERROR, field: "abn" };
+    } else {
+      abn = digits;
+    }
+  }
+
+  let gstRegistered: boolean | null | undefined;
+  const rawGst = b["gstRegistered"];
+  if (rawGst === null) {
+    gstRegistered = null;
+  } else if (rawGst !== undefined) {
+    if (rawGst !== "yes" && rawGst !== "no") {
+      return { ok: false, status: 400, error: "gstRegistered must be yes, no or empty", field: "gstRegistered" };
+    }
+    gstRegistered = rawGst === "yes";
+  }
+
+  return { ok: true, data: { billing, site, siteContact: siteContact.data, businessName, abn, gstRegistered } };
 }
 
 export interface SaveOutcome {
@@ -198,8 +230,22 @@ export async function saveAddresses(
 
       // Feature 1017: the business name is the customer's own, like the billing
       // address -- fixable on any job, whatever its status.
-      if (input.businessName !== undefined) {
-        await tx.customer.update({ where: { id: job.customerId }, data: { businessName: input.businessName } });
+      // Feature 6015: her ABN and GST answer go with it, and clearing the name clears them.
+      const businessNameAfter = input.businessName === undefined ? job.customer.businessName : input.businessName;
+      if (input.businessName !== undefined || input.abn !== undefined || input.gstRegistered !== undefined) {
+        const isBusiness = businessNameAfter !== null && businessNameAfter.trim() !== "";
+        await tx.customer.update({
+          where: { id: job.customerId },
+          data: {
+            ...(input.businessName !== undefined ? { businessName: input.businessName } : {}),
+            ...(!isBusiness
+              ? { abn: null, gstRegistered: null }
+              : {
+                  ...(input.abn !== undefined ? { abn: input.abn } : {}),
+                  ...(input.gstRegistered !== undefined ? { gstRegistered: input.gstRegistered } : {}),
+                }),
+          },
+        });
       }
 
       // A change sends nothing (decision 5, AC8) -- no notification is asked here.

@@ -13,6 +13,7 @@
 import type { PrismaClient } from "../db/client.js";
 import { sendNotification } from "../notifications/index.js";
 import type { NotificationContext } from "../notifications/index.js";
+import { billQuestionsPhone } from "./billing.js";
 import { todayIn } from "../time/index.js";
 
 export const REMINDER_1 = "invoice_reminder_1";
@@ -70,7 +71,7 @@ export async function runInvoiceReminders(
     },
     select: { type: true, relatedId: true, createdAt: true },
   });
-  const settings = await client.platformSettings.findFirstOrThrow({ select: { operatorPhone: true } });
+  const settings = await client.platformSettings.findFirstOrThrow({ select: { operatorPhone: true, accountsPhone: true } });
 
   for (const invoice of invoices) {
     const mine = sent.filter((row) => row.relatedId === invoice.id);
@@ -96,7 +97,7 @@ export async function runInvoiceReminders(
       trade: invoice.job.serviceType.trade.toLowerCase(),
       firstName: firstNameOf(invoice.job.customer.name),
       payUrl: invoice.stripePaymentLinkUrl ?? "",
-      officePhone: settings.operatorPhone,
+      officePhone: billQuestionsPhone(settings),
       ...(type === REMINDER_2 ? { daysOverdueText: `${String(daysOverdue)} day${daysOverdue === 1 ? "" : "s"}` } : {}),
     };
     try {

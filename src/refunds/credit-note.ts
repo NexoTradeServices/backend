@@ -1,29 +1,31 @@
-// The credit note PDF -- Feature 6006, refunds (ADR 0006, pdf-lib).
+// The refund receipt PDF -- Feature 6006, refunds (ADR 0006, pdf-lib); redrawn in Feature 6015.
 //
-// Refunds; Foundations / Brand identity (Three identities, one row): headed with the LEGAL
-// identity -- legalEntityName, "ABN <businessAbn>" when set, businessAddress -- exactly as the
-// invoice is, never the display name alone. Titled "Adjustment note" with an "Includes GST of
-// $X" line (one eleventh of the amount, to the cent) when the invoice carried GST, else
-// "Refund" with no GST line. Composed from the stored rows on the spot and never stored.
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+// Refunds (Refund A1 to B2); Foundations / Brand identity (Three identities, one row): headed
+// with the LEGAL identity exactly as the invoice is, then REFUND TO from the details frozen on
+// the refund. Titled ADJUSTMENT NOTE only for a business on a tax invoice, else REFUND. Composed
+// from the stored rows on the spot and never stored.
+import { PDFDocument, StandardFonts, type PDFFont } from "pdf-lib";
 import type { PrismaClient } from "../db/client.js";
-import { addressLine } from "../settings/address.js";
-import { plain, wrap } from "../agreements/pdf.js";
+import { plain } from "../agreements/pdf.js";
 import { formatDate } from "../time/index.js";
 import type { BilledTo } from "../invoices/issue.js";
 import { pdfMoney } from "../invoices/pdf.js";
+import { billQuestionsPhone, isBusinessBilledTo } from "../invoices/billing.js";
+import { GST_NOT_APPLICABLE, INK, MUTED, Sheet } from "../invoices/sheet.js";
 
 export interface CreditNoteInput {
   legalEntityName: string;
   businessAbn: string;
   businessAddress: unknown;
-  operatorPhone: string;
+  /** The number on the questions line: the accounts phone, or the operator phone while blank. */
+  accountsPhone: string;
   timezone: string;
   reference: string;
   issuedAt: Date;
   invoiceReference: string;
   invoiceIssuedAt: Date;
   jobReference: string;
+  /** Frozen on the refund when it was made (`Refund.billedTo`). */
   billedTo: BilledTo;
   reason: string;
   /** Cents, GST-inclusive. */
@@ -36,8 +38,9 @@ export function gstOf(amount: number): number {
   return Math.round(amount / 11);
 }
 
-export function creditNoteTitle(gstApplied: boolean): string {
-  return gstApplied ? "Adjustment note" : "Refund";
+/** An adjustment note only for a business on a tax invoice (Refund B2); every other refund is a Refund. */
+export function creditNoteTitle(gstApplied: boolean, billedTo: Pick<BilledTo, "businessName">): string {
+  return gstApplied && isBusinessBilledTo(billedTo) ? "ADJUSTMENT NOTE" : "REFUND";
 }
 
 export function creditNotePdfName(reference: string): string {
@@ -46,105 +49,60 @@ export function creditNotePdfName(reference: string): string {
 
 export async function makeCreditNotePdf(input: CreditNoteInput): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
-  const regular = await pdf.embedFont(StandardFonts.Helvetica);
-  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const ink = rgb(0.1, 0.1, 0.1);
-  const muted = rgb(0.4, 0.4, 0.4);
-  const left = 56;
-  const pageWidth = 595.28;
-  const width = pageWidth - left * 2;
-  const bottom = 64;
-  const top = 841.89 - 64;
+  const sheet = new Sheet(pdf, await pdf.embedFont(StandardFonts.Helvetica), await pdf.embedFont(StandardFonts.HelveticaBold));
+  const { regular, bold, left, right } = sheet;
+  const title = creditNoteTitle(input.gstApplied, input.billedTo);
 
-  let page: PDFPage = pdf.addPage([pageWidth, 841.89]);
-  let y = top;
-
-  const room = (needed: number): void => {
-    if (y - needed >= bottom) return;
-    page = pdf.addPage([pageWidth, 841.89]);
-    y = top;
-  };
-  const text = (value: string, size: number, font: PDFFont, color = ink): void => {
-    for (const line of wrap(plain(value), font, size, width)) {
-      room(size + 5);
-      page.drawText(line, { x: left, y, size, font, color });
-      y -= size + 5;
-    }
-  };
-
-  // Header: the legal identity, as on the invoice.
-  text(input.legalEntityName, 18, bold);
-  if (input.businessAbn.trim() !== "") text(`ABN ${input.businessAbn}`, 10, regular, muted);
-  const address = addressLine(input.businessAddress);
-  if (address !== "") text(address, 10, regular, muted);
-  y -= 14;
-  page.drawLine({ start: { x: left, y }, end: { x: left + width, y }, thickness: 0.75, color: muted });
-  y -= 28;
-
-  text(creditNoteTitle(input.gstApplied), 16, bold);
-  y -= 8;
-
-  const facts: [string, string][] = [
-    [`${creditNoteTitle(input.gstApplied)} number`, input.reference],
+  sheet.header(input, title);
+  sheet.parties("REFUND TO", input.billedTo, [
+    ["Refund No", input.reference],
     ["Date", formatDate(input.timezone, input.issuedAt)],
-    ["Invoice", input.invoiceReference],
-    ["Invoice issued", formatDate(input.timezone, input.invoiceIssuedAt)],
+    ["Invoice No", input.invoiceReference],
+    ["Invoice date", formatDate(input.timezone, input.invoiceIssuedAt)],
     ["Job", input.jobReference],
-  ];
-  for (const [label, value] of facts) {
-    room(30);
-    page.drawText(plain(label), { x: left, y, size: 9, font: regular, color: muted });
-    page.drawText(plain(value), { x: left + 110, y, size: 11, font: regular, color: ink });
-    y -= 17;
-  }
-  y -= 10;
+  ]);
+  sheet.y -= 4;
+  sheet.rule();
+  sheet.y -= 18;
 
-  text("Billed to", 9, regular, muted);
-  const billed = input.billedTo;
-  if (billed.businessName !== undefined && billed.businessName !== "") {
-    text(billed.businessName, 11, bold);
-    text(`Attn: ${billed.name}`, 11, regular);
-  } else {
-    text(billed.name, 11, bold);
-  }
-  const billedAddress = addressLine(billed.address ?? null);
-  if (billedAddress !== "") text(billedAddress, 10, regular, muted);
-  y -= 16;
+  sheet.text("REASON", 9, bold, MUTED);
+  sheet.text(input.reason, 11, regular);
+  sheet.y -= 2;
+  sheet.rule();
+  sheet.y -= 18;
 
-  text("Reason", 9, regular, muted);
-  text(input.reason, 11, regular);
-  y -= 16;
+  sheet.room(80);
+  sheet.page.drawText("DESCRIPTION", { x: left, y: sheet.y, size: 9, font: bold, color: MUTED });
+  sheet.rightAt("AMOUNT", right, 9, bold, MUTED);
+  sheet.y -= 6;
+  sheet.rule();
+  sheet.y -= 15;
+  const against = title === "ADJUSTMENT NOTE" ? "tax invoice" : "invoice";
+  sheet.page.drawText(plain(`Refund against ${against} ${input.invoiceReference}`), { x: left, y: sheet.y, size: 10, font: regular, color: INK });
+  sheet.rightAt(pdfMoney(input.amount), right, 10, regular);
+  sheet.y -= 12;
+  sheet.rule();
+  sheet.y -= 20;
 
-  // The line and totals, laid out as on the invoice.
-  const colAmount = left + width;
-  const figure = (value: string, size: number, font: PDFFont, color = ink): void => {
-    const safe = plain(value);
-    page.drawText(safe, { x: colAmount - font.widthOfTextAtSize(safe, size), y, size, font, color });
-  };
-  room(80);
-  page.drawText("Description", { x: left, y, size: 9, font: bold, color: muted });
-  figure("Amount", 9, bold, muted);
-  y -= 6;
-  page.drawLine({ start: { x: left, y }, end: { x: left + width, y }, thickness: 0.5, color: muted });
-  y -= 15;
-  page.drawText(plain(`Refund of invoice ${input.invoiceReference}`), { x: left, y, size: 10, font: regular, color: ink });
-  figure(pdfMoney(input.amount), 10, regular);
-  y -= 18;
-  page.drawLine({ start: { x: left, y: y + 6 }, end: { x: left + width, y: y + 6 }, thickness: 0.5, color: muted });
-  y -= 10;
   const total = (label: string, cents: number, font: PDFFont): void => {
-    room(20);
-    page.drawText(label, { x: colAmount - 160, y, size: 10, font, color: ink });
-    figure(pdfMoney(cents), 10, font);
-    y -= 16;
+    sheet.room(20);
+    sheet.page.drawText(label, { x: right - 250, y: sheet.y, size: 10, font, color: INK });
+    sheet.rightAt(pdfMoney(cents), right, 10, font);
+    sheet.y -= 16;
   };
   if (input.gstApplied) {
-    total("Subtotal", input.amount - gstOf(input.amount), regular);
-    total("Includes GST", gstOf(input.amount), regular);
+    total("TOTAL REFUNDED (INCLUDES GST)", input.amount, bold);
+    total("GST INCLUDED", gstOf(input.amount), regular);
+  } else {
+    total("TOTAL REFUNDED", input.amount, bold);
   }
-  total("Total refunded", input.amount, bold);
-  y -= 14;
-  text(`Questions about this refund? Call ${input.operatorPhone}`, 10, regular, muted);
+  sheet.y -= 10;
+
+  if (!input.gstApplied) {
+    sheet.text(GST_NOT_APPLICABLE, 10, regular);
+    sheet.y -= 6;
+  }
+  sheet.text(`Questions about this refund? Call ${input.accountsPhone}`, 10, regular, MUTED);
 
   return pdf.save();
 }
@@ -164,14 +122,14 @@ export async function buildCreditNotePdf(
     legalEntityName: settings.legalEntityName,
     businessAbn: settings.businessAbn ?? "",
     businessAddress: settings.businessAddress,
-    operatorPhone: settings.operatorPhone,
+    accountsPhone: billQuestionsPhone(settings),
     timezone: invoice.job.timezone,
     reference: refund.reference,
     issuedAt: refund.approvedAt,
     invoiceReference: invoice.reference,
     invoiceIssuedAt: invoice.sentAt ?? invoice.createdAt,
     jobReference: invoice.job.reference,
-    billedTo: invoice.billedTo as unknown as BilledTo,
+    billedTo: refund.billedTo as unknown as BilledTo,
     reason: refund.reason,
     amount: refund.amount,
     gstApplied: invoice.gstApplied,

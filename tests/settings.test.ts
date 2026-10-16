@@ -471,3 +471,25 @@ describe("8002 AC2 -- the public web address", () => {
     expect(row.paymentTermsDays).toBe(7);
   });
 });
+
+describe("6015 AC11 -- the accounts phone", () => {
+  test("AC11: it is optional -- saved trimmed, read back, and cleared to null by a blank or a missing field", async () => {
+    await seedCast();
+    const owner = await signInCookie("owner@idelta.com.au");
+    expect((await db.platformSettings.findFirstOrThrow()).accountsPhone).toBeNull();
+
+    const saved = await request(app).put("/api/settings").set("Cookie", owner).send(validBody({ accountsPhone: "  08 9111 2222  " }));
+    expect(saved.status).toBe(200);
+    expect((await db.platformSettings.findFirstOrThrow()).accountsPhone).toBe("08 9111 2222");
+    const read = await request(app).get("/api/settings").set("Cookie", owner);
+    expect(read.body).toMatchObject({ accountsPhone: "08 9111 2222" });
+
+    const blank = await request(app).put("/api/settings").set("Cookie", owner).send(validBody({ accountsPhone: "   " }));
+    expect(blank.status).toBe(200);
+    expect((await db.platformSettings.findFirstOrThrow()).accountsPhone).toBeNull();
+
+    await request(app).put("/api/settings").set("Cookie", owner).send(validBody({ accountsPhone: "08 9111 2222" }));
+    await request(app).put("/api/settings").set("Cookie", owner).send(validBody());
+    expect((await db.platformSettings.findFirstOrThrow()).accountsPhone).toBeNull();
+  });
+});

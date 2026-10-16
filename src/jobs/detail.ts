@@ -111,6 +111,9 @@ export interface JobDetail {
     code: string;
     name: string;
     businessName: string | null;
+    /** Feature 6015: the business's ABN (digits only) and her GST answer; both null for a home customer. */
+    abn: string | null;
+    gstRegistered: "yes" | "no" | null;
     phone: string | null;
     email: string;
     billingAddress: Address | null;
@@ -281,6 +284,8 @@ export async function jobDetail(
       code: job.customer.code,
       name: job.customer.name,
       businessName: job.customer.businessName,
+      abn: job.customer.abn,
+      gstRegistered: job.customer.gstRegistered === null ? null : job.customer.gstRegistered ? "yes" : "no",
       phone: job.customer.phone,
       email: job.customer.email,
       billingAddress,
