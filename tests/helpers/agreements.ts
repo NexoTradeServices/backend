@@ -55,7 +55,12 @@ export function pdfText(bytes: Uint8Array): string {
     try {
       content = inflateSync(Buffer.from(content, "latin1")).toString("latin1");
     } catch {
-      // an uncompressed stream is read as it is
+      try {
+        // a compressed stream whose last byte is a carriage return lost it to the pattern above
+        content = inflateSync(Buffer.from(`${content}\r`, "latin1")).toString("latin1");
+      } catch {
+        // an uncompressed stream is read as it is
+      }
     }
     for (const shown of content.matchAll(/<([0-9A-Fa-f]+)>\s*Tj/g)) {
       out.push(Buffer.from(shown[1] ?? "", "hex").toString("latin1"));
