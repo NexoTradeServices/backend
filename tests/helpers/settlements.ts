@@ -36,6 +36,8 @@ export interface VisitOptions {
   /** when it was completed; defaults to the end of the visit */
   completedAt?: Date;
   testData?: string;
+  /** Feature 6004: a goodwill callback's pick (false = fixing earlier work, no charge). */
+  callbackChargeable?: boolean;
 }
 
 export interface Visit {
@@ -89,6 +91,7 @@ export async function completedVisit(db: PrismaClient, options: VisitOptions): P
       proposedSlot: start,
       confirmedSlot: start,
       acceptedAt: start,
+      ...(options.callbackChargeable === undefined ? {} : { callbackChargeable: options.callbackChargeable }),
     },
   });
   await db.assignmentTimeLog.create({ data: { ...label, assignmentId: assignment.id, startedAt: start, endedAt: end, note: null } });

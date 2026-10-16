@@ -95,32 +95,42 @@ export async function issueInvoice(tx: Db, input: IssueInput): Promise<IssuedInv
     contractorPartTotals: assignment.parts.filter((part) => part.suppliedBy === "contractor").map((part) => part.lineTotal),
   });
 
+  // Feature 6004: a goodwill callback (the contractor picked "fixing earlier work") keeps its normal
+  // lines as a record, every price at $0. His pay and parts reimbursement below stay as computed.
+  const goodwill = assignment.callbackChargeable === false;
+  const free = <T extends { unitPrice: number; lineTotal: number }>(line: T): T =>
+    goodwill ? { ...line, unitPrice: 0, lineTotal: 0 } : line;
+
   const trade = job.serviceType.trade;
   const labourLines: Prisma.InvoiceLineCreateWithoutInvoiceInput[] = [
-    {
+    free({
       kind: "labour",
       description: `Call-out + first hour - ${trade}, ${level}`,
       qty: 1,
       unitPrice: result.customer.tier1Rate,
       lineTotal: result.customer.tier1Rate,
-    },
+    }),
   ];
   if (result.customer.extraHours > 0) {
-    labourLines.push({
-      kind: "labour",
-      description: `Additional ${hoursText(result.customer.extraHours)} @ ${formatDollars(result.customer.tier2Rate)}/h`,
-      qty: result.customer.extraHours,
-      unitPrice: result.customer.tier2Rate,
-      lineTotal: result.customer.tier2Total,
-    });
+    labourLines.push(
+      free({
+        kind: "labour" as const,
+        description: `Additional ${hoursText(result.customer.extraHours)} @ ${formatDollars(result.customer.tier2Rate)}/h`,
+        qty: result.customer.extraHours,
+        unitPrice: result.customer.tier2Rate,
+        lineTotal: result.customer.tier2Total,
+      }),
+    );
   }
-  const partLines: Prisma.InvoiceLineCreateWithoutInvoiceInput[] = assignment.parts.map((part) => ({
-    kind: "part",
-    description: part.description ? `${part.name} - ${part.description}` : part.name,
-    qty: part.qty,
-    unitPrice: part.unitPrice,
-    lineTotal: part.lineTotal,
-  }));
+  const partLines: Prisma.InvoiceLineCreateWithoutInvoiceInput[] = assignment.parts.map((part) =>
+    free({
+      kind: "part" as const,
+      description: part.description ? `${part.name} - ${part.description}` : part.name,
+      qty: part.qty,
+      unitPrice: part.unitPrice,
+      lineTotal: part.lineTotal,
+    }),
+  );
 
   const labourAmount = labourLines.reduce((sum, line) => sum + line.lineTotal, 0);
   const materialsAmount = partLines.reduce((sum, line) => sum + line.lineTotal, 0);
@@ -139,7 +149,7 @@ export async function issueInvoice(tx: Db, input: IssueInput): Promise<IssuedInv
       materialsAmount,
       gstApplied,
       gstAmount: gstWithin(amount, Number(settings.gstRatePercent), gstApplied),
-      isZeroDollar: amount === 0,
+      isZeroDollar: goodwill || amount === 0,
       status: "sent",
       sentAt: input.now,
       dueAt,
@@ -157,11 +167,71 @@ export async function issueInvoice(tx: Db, input: IssueInput): Promise<IssuedInv
       contractorCalloutRate: assignment.specialty.contractorCalloutRate,
       contractorStandardRate: assignment.specialty.contractorStandardRate,
       serviceLevel: level,
-      customerTotal: result.customerTotal,
+      customerTotal: goodwill ? 0 : result.customerTotal,
       contractorPay: result.contractorPay,
       materialsReimbursement: result.materialsReimbursement,
       invoiceId: invoice.id,
     },
+  });
+  return invoice;
+}
+
+export interface CalloutInput {
+  assignmentId: string;
+  /** The day the visit was missed, already worded in the job's zone ("10 Oct 2026"). */
+  dateText: string;
+  now: Date;
+}
+
+/**
+ * Feature 6004, Mark no-show (charged): the call-out invoice for a visit nobody let the contractor
+ * work. One `callout` line at the live call-out fee; GST from the live switch; the normal due date;
+ * billed-to frozen. Its pay link and reminders follow the normal path. Runs inside Mark no-show's
+ * transaction and sends nothing.
+ */
+export async function issueCalloutInvoice(tx: Db, input: CalloutInput): Promise<IssuedInvoice> {
+  const assignment = await tx.assignment.findUniqueOrThrow({
+    where: { id: input.assignmentId },
+    include: { job: { include: { customer: true } } },
+  });
+  const job = assignment.job;
+  const settings = await tx.platformSettings.findFirstOrThrow();
+  const amount = settings.calloutFee;
+  const gstApplied = settings.gstRegistered;
+  const dueAt = new Date(input.now.getTime() + settings.paymentTermsDays * 24 * 60 * 60 * 1000);
+  const invoice = await tx.invoice.create({
+    data: {
+      reference: await nextReference("INV", tx),
+      jobId: job.id,
+      assignmentId: assignment.id,
+      customerId: job.customerId,
+      amount,
+      labourAmount: amount,
+      materialsAmount: 0,
+      gstApplied,
+      gstAmount: gstWithin(amount, Number(settings.gstRatePercent), gstApplied),
+      isZeroDollar: amount === 0,
+      status: "sent",
+      sentAt: input.now,
+      dueAt,
+      billedTo: billedToOf(job.customer) as unknown as Prisma.InputJsonObject,
+      lines: {
+        create: [
+          {
+            kind: "callout",
+            description: `Call-out fee - missed visit on ${input.dateText}`,
+            qty: 1,
+            unitPrice: amount,
+            lineTotal: amount,
+          },
+        ],
+      },
+    },
+    select: { id: true, reference: true },
+  });
+  await tx.assignment.update({
+    where: { id: assignment.id },
+    data: { customerTotal: amount, invoiceId: invoice.id },
   });
   return invoice;
 }

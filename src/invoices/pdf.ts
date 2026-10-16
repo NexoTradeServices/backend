@@ -34,6 +34,8 @@ export interface InvoicePdfInput {
   /** Paid in full: AMOUNT DUE reads $0.00. */
   paid: boolean;
   payLinkUrl: string | null;
+  /** Feature 6004: set on a callback's invoice (derived from the job's parent, never stored). */
+  callbackOn?: string | null;
 }
 
 const MONEY = new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" });
@@ -67,6 +69,12 @@ export async function makeInvoicePdf(input: InvoicePdfInput): Promise<Uint8Array
   sheet.y -= 4;
   sheet.rule();
   sheet.y -= 18;
+
+  // Feature 6004: a callback's invoice says so above its lines, whatever it is charged.
+  if (input.callbackOn != null && input.amount === 0) {
+    sheet.text(`Callback on ${input.callbackOn} - no charge`, 11, bold);
+    sheet.y -= 8;
+  }
 
   // The lines.
   const colPrice = right - 90;
@@ -125,7 +133,7 @@ export async function makeInvoicePdf(input: InvoicePdfInput): Promise<Uint8Array
 const invoiceForPdf = {
   include: {
     lines: { orderBy: { id: "asc" } },
-    job: { select: { reference: true, timezone: true } },
+    job: { select: { reference: true, timezone: true, parentJob: { select: { reference: true } } } },
   },
 } satisfies Prisma.InvoiceDefaultArgs;
 
@@ -162,6 +170,7 @@ export async function buildInvoicePdf(
     gstAmount: invoice.gstAmount ?? 0,
     paid: invoice.status === "paid",
     payLinkUrl: invoice.stripePaymentLinkUrl,
+    callbackOn: invoice.job.parentJob?.reference ?? null,
   });
   return { fileName: invoicePdfName(invoice.reference), content };
 }

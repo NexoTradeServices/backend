@@ -17,6 +17,11 @@
 //
 // Feature 6002, extending these fixtures:
 // 6002 AC9  Mike's Invoice card on a paid invoice: Paid, "15 Oct 2026, card", no Resend / Copy / Check payment
+// Feature 6004, extending these fixtures (a callback Bob completes):
+// 6004 AC7  "New fault - charged" invoices exactly like a normal job, from Tier 1
+// 6004 AC8  "Fixing earlier work - no charge": a $0 invoice, no pay link, no invoice message, one Callback - no charge
+//           email with the PDF; Bob's pay and parts reimbursement as for a charged visit
+//
 // 6002 AC10 Bob's read on a paid invoice: the total and paid, no link, no messages; never his own pay
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import express, { type Express } from "express";
@@ -50,6 +55,7 @@ import {
 import { buildInvoicePdf } from "../src/invoices/pdf.js";
 import { formatDate } from "../src/time/index.js";
 import { issueInvoice } from "../src/invoices/issue.js";
+import { runInvoiceReminders } from "../src/invoices/reminders.js";
 import { payLinkPass, startPayLinkLoop } from "../src/invoices/pay-link.js";
 import { recordConfirmedPayment } from "../src/payments/paid.js";
 import {
@@ -226,7 +232,7 @@ async function complete(cookie: string, reference: string, body: object): Promis
 /** Bob completes the job: 3.0h and a $45 part he bought, unless told otherwise. */
 async function bobCompletes(
   made: { jobId: string; assignmentId: string; reference: string },
-  options: { entries?: object[]; withPart?: boolean } = {},
+  options: { entries?: object[]; withPart?: boolean; callbackChargeable?: boolean } = {},
 ): Promise<void> {
   const bob = await signInCookie("bob@idelta.com.au");
   const parts =
@@ -237,6 +243,7 @@ async function bobCompletes(
     timeEntries: options.entries ?? threeHours(),
     completionNotes: "Replaced the cartridge.\nTested for leaks.",
     parts,
+    ...(options.callbackChargeable === undefined ? {} : { callbackChargeable: options.callbackChargeable }),
   });
   expect(res.status).toBe(200);
 }
@@ -1070,5 +1077,103 @@ describe("6002 -- the browser tests' due hook", () => {
     mountTestDataRoutes(production, db);
     vi.unstubAllEnvs();
     expect((await request(production).post(`/api/test-data/jobs/${made.reference}/due`).send({ days: 1 })).status).toBe(404);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Feature 6004 -- a callback Bob completes
+// ---------------------------------------------------------------------------
+
+/** A callback on a first job, accepted by Bob and ready to complete. */
+async function acceptedCallback() {
+  const original = await acceptedJob({ date: "2026-10-05" });
+  await db.job.update({ where: { id: original.jobId }, data: { status: "completed" } });
+  const made = await acceptedJob();
+  await db.job.update({ where: { id: made.jobId }, data: { parentJobId: original.jobId } });
+  return { ...made, original };
+}
+
+describe("6004 AC7 -- a chargeable callback invoices like a normal job", () => {
+  test("AC7: New fault - charged: the same lines and total as a normal job on the same hours, from Tier 1, with the pay link and the ordinary invoice message", async () => {
+    const normal = await acceptedJob();
+    await bobCompletes(normal);
+    const callback = await acceptedCallback();
+    await bobCompletes(callback, { callbackChargeable: true });
+
+    const a = await invoiceOf(normal.jobId);
+    const b = await invoiceOf(callback.jobId);
+    expect(b).toMatchObject({ amount: a.amount, isZeroDollar: false, labourAmount: a.labourAmount, materialsAmount: a.materialsAmount });
+    expect(b.lines.map((l) => [l.kind, l.description, l.unitPrice, l.lineTotal])).toEqual(a.lines.map((l) => [l.kind, l.description, l.unitPrice, l.lineTotal]));
+    expect(b.lines[0]?.unitPrice).toBe(25_000); // Tier 1: the call-out + first hour at Sarah's rate card
+    expect((await db.assignment.findUniqueOrThrow({ where: { id: callback.assignmentId } })).callbackChargeable).toBe(true);
+
+    expect(await payLinkPass(db, { provider: fakeStripe() })).toBe(2);
+    await drainOnce(db);
+    expect(await db.notification.count({ where: { jobId: callback.jobId, type: "invoice" } })).toBe(2);
+    expect(await db.notification.count({ where: { jobId: callback.jobId, type: "callback_no_charge" } })).toBe(0);
+  });
+});
+
+describe("6004 AC8 -- a goodwill callback", () => {
+  test("AC8: Fixing earlier work - no charge: normal lines at $0, a zero-dollar invoice, no pay link, and Bob's pay as for a charged visit", async () => {
+    const charged = await acceptedCallback();
+    await bobCompletes(charged, { callbackChargeable: true });
+    const goodwill = await acceptedCallback();
+    await bobCompletes(goodwill, { callbackChargeable: false });
+
+    const paid = await db.assignment.findUniqueOrThrow({ where: { id: charged.assignmentId } });
+    const free = await db.assignment.findUniqueOrThrow({ where: { id: goodwill.assignmentId } });
+    expect(free).toMatchObject({ callbackChargeable: false, customerTotal: 0, contractorPay: paid.contractorPay, materialsReimbursement: paid.materialsReimbursement });
+    expect(free.contractorPay).toBeGreaterThan(0);
+    expect(free.materialsReimbursement).toBe(4500);
+
+    const invoice = await invoiceOf(goodwill.jobId);
+    const normalLines = (await invoiceOf(charged.jobId)).lines;
+    expect(invoice).toMatchObject({ amount: 0, labourAmount: 0, materialsAmount: 0, isZeroDollar: true, gstAmount: 0 });
+    expect(invoice.lines.map((l) => [l.kind, l.description])).toEqual(normalLines.map((l) => [l.kind, l.description]));
+    expect(invoice.lines.every((l) => l.unitPrice === 0 && l.lineTotal === 0)).toBe(true);
+
+    expect(await payLinkPass(db, { provider: fakeStripe() })).toBe(1); // the charged one only
+    expect((await invoiceOf(goodwill.jobId)).stripePaymentLinkUrl).toBeNull();
+  });
+
+  test("AC8: the customer gets one Callback - no charge email with the PDF -- no invoice email, no text, no reminder", async () => {
+    const made = await acceptedCallback();
+    await bobCompletes(made, { callbackChargeable: false });
+    await payLinkPass(db, { provider: fakeStripe() });
+    email.reset();
+    sms.reset();
+    await drainOnce(db);
+    await drainOnce(db);
+
+    const mails = email.sent.filter((m) => m.to === "sarah@idelta.com.au" && (m.message.subject ?? "").includes("no charge"));
+    expect(mails).toHaveLength(1);
+    expect(email.sent.filter((m) => m.to === "sarah@idelta.com.au")).toHaveLength(1);
+    expect(sms.sent).toHaveLength(0);
+    const mail = mails[0];
+    expect(mail?.message.subject).toBe(`Callback ${made.reference} - no charge`);
+    expect(mail?.message.text).not.toContain("$");
+    expect(mail?.message.text).not.toContain("Pay now");
+    expect(mail?.attachments).toHaveLength(1);
+    const text = pdfText(mail?.attachments?.[0]?.content ?? new Uint8Array());
+    const originalReference = (await db.job.findUniqueOrThrow({ where: { id: made.original.jobId } })).reference;
+    expect(text).toContain(`Callback on ${originalReference} - no charge`);
+    expect(text).not.toContain("Pay online");
+    expect(await db.notification.count({ where: { jobId: made.jobId, type: "invoice" } })).toBe(0);
+    expect(await db.notification.count({ where: { jobId: made.jobId, type: "callback_no_charge" } })).toBe(1);
+
+    // No reminder is ever picked up for it.
+    const invoice = await invoiceOf(made.jobId);
+    expect(invoice.status).toBe("sent");
+    await db.invoice.update({ where: { id: invoice.id }, data: { dueAt: new Date(Date.now() - 20 * 86_400_000) } });
+    expect(await runInvoiceReminders(db, { zone: "Australia/Perth" })).toEqual({ first: 0, second: 0 });
+    expect(await db.notification.count({ where: { jobId: made.jobId, type: { startsWith: "invoice_reminder" } } })).toBe(0);
+  });
+
+  test("AC8: a charged invoice's PDF never says no charge, even on a callback", async () => {
+    const made = await acceptedCallback();
+    await bobCompletes(made, { callbackChargeable: true });
+    const { content } = await buildInvoicePdf(db, (await invoiceOf(made.jobId)).id);
+    expect(pdfText(content)).not.toContain("no charge");
   });
 });
