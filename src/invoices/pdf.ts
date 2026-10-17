@@ -27,7 +27,7 @@ export interface InvoicePdfInput {
   issuedAt: Date;
   dueAt: Date;
   billedTo: BilledTo;
-  lines: { description: string; qty: number; unitPrice: number; lineTotal: number }[];
+  lines: { kind?: string; description: string; qty: number; unitPrice: number; lineTotal: number }[];
   amount: number;
   gstApplied: boolean;
   gstAmount: number;
@@ -72,7 +72,7 @@ export async function makeInvoicePdf(input: InvoicePdfInput): Promise<Uint8Array
 
   // Feature 6004: a callback's invoice says so above its lines, whatever it is charged.
   if (input.callbackOn != null && input.amount === 0) {
-    sheet.text(`Callback on ${input.callbackOn} - no charge`, 11, bold);
+    sheet.text(`Follow-up visit for ${input.callbackOn} - no charge`, 11, bold);
     sheet.y -= 8;
   }
 
@@ -99,7 +99,8 @@ export async function makeInvoicePdf(input: InvoicePdfInput): Promise<Uint8Array
     const keep = sheet.y;
     sheet.y = rowTop;
     sheet.rightAt(qtyText(line.qty), colQty, 10, regular);
-    sheet.rightAt(pdfMoney(line.unitPrice), colPrice, 10, regular);
+    // A follow-up visit's labour line has no rate to show.
+    if (!(line.kind === "labour" && line.unitPrice === 0)) sheet.rightAt(pdfMoney(line.unitPrice), colPrice, 10, regular);
     sheet.rightAt(pdfMoney(line.lineTotal), right, 10, regular);
     sheet.y = keep - 4;
   }
@@ -160,6 +161,7 @@ export async function buildInvoicePdf(
     dueAt: invoice.dueAt,
     billedTo: invoice.billedTo as unknown as BilledTo,
     lines: invoice.lines.map((line) => ({
+      kind: line.kind,
       description: line.description,
       qty: Number(line.qty),
       unitPrice: line.unitPrice,

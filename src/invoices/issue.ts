@@ -95,32 +95,47 @@ export async function issueInvoice(tx: Db, input: IssueInput): Promise<IssuedInv
     contractorPartTotals: assignment.parts.filter((part) => part.suppliedBy === "contractor").map((part) => part.lineTotal),
   });
 
-  // Feature 6004: a goodwill callback (the contractor picked "fixing earlier work") keeps its normal
-  // lines as a record, every price at $0. His pay and parts reimbursement below stay as computed.
+  // Feature 6004: a goodwill callback (the contractor picked "fixing earlier work") is a follow-up
+  // visit, every price at $0. Fixing his own earlier work is at his own cost: when he completed the
+  // original or an earlier callback on it, he is paid nothing for this visit (time and parts are
+  // still recorded). Worked out from the completed assignments; nothing new is stored.
   const goodwill = assignment.callbackChargeable === false;
   const free = <T extends { unitPrice: number; lineTotal: number }>(line: T): T =>
     goodwill ? { ...line, unitPrice: 0, lineTotal: 0 } : line;
+  const ownEarlierWork =
+    goodwill &&
+    job.parentJobId !== null &&
+    (await tx.assignment.count({
+      where: {
+        contractorId: assignment.contractorId,
+        status: "completed",
+        jobId: { not: job.id },
+        job: { OR: [{ id: job.parentJobId }, { parentJobId: job.parentJobId }] },
+      },
+    })) > 0;
 
   const trade = job.serviceType.trade;
-  const labourLines: Prisma.InvoiceLineCreateWithoutInvoiceInput[] = [
-    free({
-      kind: "labour",
-      description: `Call-out + first hour - ${trade}, ${level}`,
-      qty: 1,
-      unitPrice: result.customer.tier1Rate,
-      lineTotal: result.customer.tier1Rate,
-    }),
-  ];
-  if (result.customer.extraHours > 0) {
-    labourLines.push(
-      free({
-        kind: "labour" as const,
-        description: `Additional ${hoursText(result.customer.extraHours)} @ ${formatDollars(result.customer.tier2Rate)}/h`,
-        qty: result.customer.extraHours,
-        unitPrice: result.customer.tier2Rate,
-        lineTotal: result.customer.tier2Total,
-      }),
-    );
+  const labourLines: Prisma.InvoiceLineCreateWithoutInvoiceInput[] = goodwill
+    ? // A goodwill callback is a follow-up visit: one labour line for the billed hours, no rate,
+      // no call-out and no "Additional" line.
+      [{ kind: "labour", description: `Follow-up visit - ${trade}`, qty: input.billedHours, unitPrice: 0, lineTotal: 0 }]
+    : [
+        {
+          kind: "labour",
+          description: `Call-out + first hour - ${trade}, ${level}`,
+          qty: 1,
+          unitPrice: result.customer.tier1Rate,
+          lineTotal: result.customer.tier1Rate,
+        },
+      ];
+  if (!goodwill && result.customer.extraHours > 0) {
+    labourLines.push({
+      kind: "labour" as const,
+      description: `Additional ${hoursText(result.customer.extraHours)} @ ${formatDollars(result.customer.tier2Rate)}/h`,
+      qty: result.customer.extraHours,
+      unitPrice: result.customer.tier2Rate,
+      lineTotal: result.customer.tier2Total,
+    });
   }
   const partLines: Prisma.InvoiceLineCreateWithoutInvoiceInput[] = assignment.parts.map((part) =>
     free({
@@ -168,8 +183,8 @@ export async function issueInvoice(tx: Db, input: IssueInput): Promise<IssuedInv
       contractorStandardRate: assignment.specialty.contractorStandardRate,
       serviceLevel: level,
       customerTotal: goodwill ? 0 : result.customerTotal,
-      contractorPay: result.contractorPay,
-      materialsReimbursement: result.materialsReimbursement,
+      contractorPay: ownEarlierWork ? 0 : result.contractorPay,
+      materialsReimbursement: ownEarlierWork ? 0 : result.materialsReimbursement,
       invoiceId: invoice.id,
     },
   });
@@ -178,8 +193,6 @@ export async function issueInvoice(tx: Db, input: IssueInput): Promise<IssuedInv
 
 export interface CalloutInput {
   assignmentId: string;
-  /** The day the visit was missed, already worded in the job's zone ("10 Oct 2026"). */
-  dateText: string;
   now: Date;
 }
 
@@ -219,7 +232,7 @@ export async function issueCalloutInvoice(tx: Db, input: CalloutInput): Promise<
         create: [
           {
             kind: "callout",
-            description: `Call-out fee - missed visit on ${input.dateText}`,
+            description: "Call-out fee - no access / customer unavailable",
             qty: 1,
             unitPrice: amount,
             lineTotal: amount,

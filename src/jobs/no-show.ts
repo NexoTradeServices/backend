@@ -11,7 +11,6 @@ import { CapabilityTokenType, revokeByJob } from "../capability-tokens/index.js"
 import { issueCalloutInvoice } from "../invoices/issue.js";
 import { kickPayLink } from "../invoices/pay-link.js";
 import { askMissedVisit } from "../invoices/missed-visit.js";
-import { formatDate } from "../time/index.js";
 import { cancelBooking } from "./booking.js";
 
 export type Failure = { ok: false; status: number; error: string; field?: string };
@@ -59,7 +58,7 @@ export async function markNoShow(
           error: `The job is ${job.status} -- a no-show is marked on a booked job.`,
         });
       }
-      const settings = await tx.platformSettings.findFirstOrThrow({ select: { calloutFee: true, timezone: true } });
+      const settings = await tx.platformSettings.findFirstOrThrow({ select: { calloutFee: true } });
       await tx.job.update({
         where: { id: job.id },
         data: { status: "cancelled", cancelReason: "customer_no_show", cancelledByUserId: userId, cancelledAt: now },
@@ -70,11 +69,7 @@ export async function markNoShow(
       // A call-out fee of $0 has nothing to invoice: it reads as waived.
       const invoice =
         charge && settings.calloutFee > 0
-          ? await issueCalloutInvoice(tx, {
-              assignmentId: booking.id,
-              dateText: formatDate(settings.timezone, now),
-              now,
-            })
+          ? await issueCalloutInvoice(tx, { assignmentId: booking.id, now })
           : null;
       return { jobReference: job.reference, jobId: job.id, invoiceId: invoice?.id ?? null };
     });
