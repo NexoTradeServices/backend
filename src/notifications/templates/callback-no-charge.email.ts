@@ -10,17 +10,17 @@ import { fill, fillHtml } from "./render.js";
 
 const TEXT = `Hi {{firstName}},
 
-Your {{trade}} callback {{jobReference}} is finished. It was to put right earlier work, so there is nothing to pay.
+Your {{trade}} callback {{jobReference}} is finished, at no charge.
 
-Your record {{invoiceReference}} is attached for your files.
+The invoice {{invoiceReference}} is attached for your files.
 
 Questions? Call us on {{officePhone}}.
 
 -- {{platformName}}`;
 
 const HTML = `<p>Hi {{firstName}},</p>
-<p>Your {{trade}} callback {{jobReference}} is finished. It was to put right earlier work, so there is nothing to pay.</p>
-<p>Your record {{invoiceReference}} is attached for your files.</p>
+<p>Your {{trade}} callback {{jobReference}} is finished, at no charge.</p>
+<p>The invoice {{invoiceReference}} is attached for your files.</p>
 <p>Questions? Call us on {{officePhone}}.</p>
 <p>-- {{platformName}}</p>`;
 

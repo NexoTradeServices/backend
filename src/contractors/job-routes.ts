@@ -281,6 +281,23 @@ export function contractorJobRoutes(client: PrismaClient, options: ContractorJob
     })().catch(failWith(res, "GET /api/contractor/jobs/:reference"));
   });
 
+  // Feature 6004: one earlier job's notes (the original or an earlier callback), read-only -- found
+  // only among the notes on his own callback, so only while HIS booking on it is open.
+  router.get("/:reference/earlier/:earlier", requireRole(Role.contractor), (req: Request<{ reference: string; earlier: string }>, res: Response) => {
+    void (async () => {
+      const assignment = await own(req, res);
+      if (assignment === null) return;
+      const open = assignment.status === "accepted" || assignment.status === "in_progress";
+      const notes = await earlierNotesOf(client, assignment.job, open);
+      const found = notes.find((note) => note.reference === req.params.earlier);
+      if (found === undefined) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      res.json(found);
+    })().catch(failWith(res, "GET /api/contractor/jobs/:reference/earlier/:earlier"));
+  });
+
   router.post("/:reference/on-site", requireRole(Role.contractor), (req: WithReference, res: Response) => {
     void (async () => {
       const assignment = await own(req, res);

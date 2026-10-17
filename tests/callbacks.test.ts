@@ -237,8 +237,30 @@ describe("AC5a -- the earlier notes, read-only", () => {
     await db.assignment.update({ where: { id: waiting.id }, data: { status: "cancelled" } });
     expect(await notes(bob, ref)).toEqual([]);
 
-    // A normal job has no earlier notes, and the old original route is gone.
+    // A normal job has no earlier notes.
     expect(await notes(bob, first.reference)).toEqual([]);
-    expect((await request(app).get(`/api/contractor/jobs/${ref}/original`).set("Cookie", bob)).status).toBe(404);
+  });
+
+  test("AC5a: the link behind a heading opens that one job read-only -- and only while his booking is open", async () => {
+    const mike = await signIn(app, "mike@idelta.com.au");
+    const bob = await signIn(app, "bob@idelta.com.au");
+    const dave = await signIn(app, "dave@idelta.com.au");
+    const first = await completedOriginal(db);
+    const ref = await raise(app, mike, first.reference);
+    const booked = await acceptCallback(db, ref);
+    const earlier = (cookie: string, on: string, job: string) =>
+      request(app).get(`/api/contractor/jobs/${on}/earlier/${job}`).set("Cookie", cookie);
+
+    const ok = await earlier(bob, ref, first.reference);
+    expect(ok.status).toBe(200);
+    expect(ok.body).toMatchObject({ kind: "original", reference: first.reference, workSummary: "Replaced the cartridge.\nTested for leaks." });
+    expect(JSON.stringify(ok.body)).not.toMatch(/Sarah|Bob|Dave|unitPrice|lineTotal|amount|timeEntries|billedHours/);
+    // Not an earlier job of this callback, not his booking, and an unknown reference.
+    expect((await earlier(bob, ref, ref)).status).toBe(404);
+    expect((await earlier(bob, ref, "JOB-9999")).status).toBe(404);
+    expect((await earlier(dave, ref, first.reference)).status).toBe(404);
+    // Once his booking is over, the page is gone too.
+    await db.assignment.update({ where: { id: booked.assignmentId }, data: { status: "completed" } });
+    expect((await earlier(bob, ref, first.reference)).status).toBe(404);
   });
 });
