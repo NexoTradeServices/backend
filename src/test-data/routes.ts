@@ -5,7 +5,8 @@
 // POST /api/test-data/settlements/run -- Feature 6003.
 // POST /api/test-data/daily/run -- Feature 6008.
 // POST /api/test-data/settlements/:reference/approve-link -- Feature 6003.
-// POST /api/test-data/jobs/:reference/correction-note -- Feature 6003.
+// POST /api/test-data/settlements/:reference/status -- Feature 6007.
+// POST /api/test-data/jobs/:reference/correction -- Feature 6007.
 // POST /api/test-data/customer-login -- Feature 1018.
 //
 // Lets the browser tests clear their own label from wherever they run (the dev
@@ -42,8 +43,11 @@
 //
 // The approve-link hook mints a fresh approve link for a settlement labelled as test data and
 // hands back its URL: the real link only ever exists inside a delivered email, which a browser
-// test cannot read. The correction-note hook writes the `correction` note Correct & reissue
-// (Feature 6007) will write, onto a labelled job, so the "Job corrected since" flag can be seen.
+// test cannot read. The status hook (Feature 6007) turns a labelled draft into an approved or a paid
+// invoice -- the contractor's tap, and Mike's mark-paid, in one step -- so a browser test reaches the
+// weeks Correct & reissue must never reopen. The correction hook writes a correction row of any size onto
+// a labelled job's contractor, so a browser test can reach "a deduction bigger than the week's pay for
+// work" (Still to deduct) whatever other work happens to be waiting.
 //
 // The customer-login hook makes a labelled customer User with the dev password and answers its
 // email and name. The seeded cast has no customer login (Sarah is a guest by design, 1003 AC9),
@@ -53,7 +57,6 @@ import type { Express, Router } from "express";
 import { Router as createRouter } from "express";
 import type { Request, Response } from "express";
 import type { PrismaClient } from "../db/client.js";
-import type { Prisma } from "../generated/prisma/client.js";
 import { currentLabel, isProduction, isValidLabel } from "./label.js";
 import { payLinkPass } from "../invoices/pay-link.js";
 import { recordConfirmedPayment } from "../payments/paid.js";
@@ -63,7 +66,7 @@ import { runWeekly } from "../settlements/sweep.js";
 import { runDailySteps } from "../daily/index.js";
 import { randomUUID } from "node:crypto";
 import { CapabilityTokenType, mintCapabilityLink } from "../capability-tokens/index.js";
-import { readNotes } from "../jobs/notes.js";
+import { gstOnTop, labourOf } from "../settlements/invoice-view.js";
 import { passwordHasher } from "../auth/dev-password.js";
 import { DEV_PASSWORD } from "../db/seed/auth.js";
 
@@ -212,22 +215,73 @@ export function testDataRoutes(client: PrismaClient): Router {
     });
   });
 
-  router.post("/jobs/:reference/correction-note", (req: Request<{ reference: string }>, res: Response) => {
+  router.post("/settlements/:reference/status", (req: Request<{ reference: string }>, res: Response) => {
     void (async () => {
-      const job = await client.job.findFirst({
+      const status = (req.body as { status?: unknown } | undefined)?.status;
+      if (status !== "approved" && status !== "paid") {
+        res.status(400).json({ error: "status must be approved or paid" });
+        return;
+      }
+      const settlement = await client.contractorSettlement.findFirst({
         where: { reference: req.params.reference, testData: { not: null } },
-        select: { id: true, operatorNotes: true },
+        include: { contractor: { select: { gstRegistered: true } } },
       });
       const operator = await client.user.findFirst({ where: { role: "ops" }, select: { id: true } });
-      if (job === null || operator === null) {
+      if (settlement === null || operator === null) {
         res.status(404).json({ error: "not found" });
         return;
       }
-      const note = { id: randomUUID(), at: new Date().toISOString(), operatorId: operator.id, type: "correction", note: "Missing half hour added." };
-      await client.job.update({ where: { id: job.id }, data: { operatorNotes: [...readNotes(job.operatorNotes), note] as unknown as Prisma.InputJsonArray } });
+      if (settlement.status !== "draft" && !(settlement.status === "approved" && status === "paid")) {
+        res.status(409).json({ error: "only a draft can be approved, and only an approved one paid" });
+        return;
+      }
+      const now = new Date();
+      const settings = await client.platformSettings.findFirstOrThrow({ select: { gstRatePercent: true } });
+      const registered = settlement.contractor.gstRegistered === true;
+      await client.contractorSettlement.update({
+        where: { id: settlement.id },
+        data: {
+          ...(settlement.status === "draft"
+            ? {
+                status: "approved" as const,
+                approvedAt: now,
+                contractorGstRegistered: settlement.contractor.gstRegistered ?? false,
+                gstAmount: gstOnTop(labourOf(settlement.breakdownByTrade) + settlement.adjustmentsAmount, registered, Number(settings.gstRatePercent)),
+              }
+            : {}),
+          ...(status === "paid" ? { status: "paid" as const, paidAt: now, paidByUserId: operator.id, paymentReference: settlement.reference } : {}),
+        },
+      });
+      res.json({ reference: settlement.reference, status });
+    })().catch((error: unknown) => {
+      console.error("POST /api/test-data/settlements/:reference/status failed", error);
+      res.status(500).json({ error: error instanceof Error ? error.message : "internal error" });
+    });
+  });
+
+  router.post("/jobs/:reference/correction", (req: Request<{ reference: string }>, res: Response) => {
+    void (async () => {
+      const body = (req.body ?? {}) as { amount?: unknown; reason?: unknown };
+      if (typeof body.amount !== "number" || !Number.isInteger(body.amount) || body.amount === 0 || typeof body.reason !== "string" || body.reason === "") {
+        res.status(400).json({ error: "amount must be a whole number of cents, not zero, and reason is required" });
+        return;
+      }
+      const job = await client.job.findFirst({
+        where: { reference: req.params.reference, testData: { not: null } },
+        select: { id: true, assignments: { where: { status: "completed" }, select: { contractorId: true }, take: 1 } },
+      });
+      const operator = await client.user.findFirst({ where: { role: "ops" }, select: { id: true } });
+      const contractorId = job?.assignments[0]?.contractorId;
+      if (job === null || operator === null || contractorId === undefined) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      await client.contractorPayAdjustment.create({
+        data: { contractorId, amount: body.amount, kind: "correction", reason: body.reason, jobId: job.id, createdByUserId: operator.id },
+      });
       res.json({ added: true });
     })().catch((error: unknown) => {
-      console.error("POST /api/test-data/jobs/:reference/correction-note failed", error);
+      console.error("POST /api/test-data/jobs/:reference/correction failed", error);
       res.status(500).json({ error: error instanceof Error ? error.message : "internal error" });
     });
   });

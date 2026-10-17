@@ -94,7 +94,7 @@ interface OpsList {
     paidBy: string | null;
     paidLabel: string | null;
   }[];
-  upcoming: { contractor: { code: string }; jobs: number; adjustments: number; amount: number; invoicedOn: string; paidOn: string }[];
+  upcoming: { contractor: { code: string }; jobs: number; work: number; adjustments: number; payout: number; invoicedOn: string; paidOn: string }[];
   nextCursor: string | null;
 }
 
@@ -362,9 +362,9 @@ describe("AC12 -- the drill-down and Not yet invoiced", () => {
     const res = (await list("upcoming")).body as OpsList;
     expect(res.counts.upcoming).toBe(2);
     expect(res.rows).toEqual([]);
-    expect(res.upcoming.map((row) => [row.contractor.code, row.jobs, row.adjustments, row.amount])).toEqual([
-      ["CON-014", 1, 0, 50_000 + 4500],
-      ["CON-021", 1, 1, 21_000 + 2500],
+    expect(res.upcoming.map((row) => [row.contractor.code, row.jobs, row.work, row.adjustments, row.payout])).toEqual([
+      ["CON-014", 1, 50_000, 0, 50_000 + 4500],
+      ["CON-021", 1, 21_000, 2500, 21_000 + 2500],
     ]);
     for (const row of res.upcoming) {
       expect(row.invoicedOn).toMatch(/^Mon \d{1,2} [A-Z][a-z]{2}$/);

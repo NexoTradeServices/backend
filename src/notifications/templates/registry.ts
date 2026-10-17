@@ -18,6 +18,8 @@ import { contractorDeclinedEmail } from "./contractor-declined.email.js";
 import { contractorAgreementUpdatedEmail } from "./contractor-agreement-updated.email.js";
 import { invoiceEmail } from "./invoice.email.js";
 import { invoiceSms } from "./invoice.sms.js";
+import { invoiceUpdatedEmail } from "./invoice-updated.email.js";
+import { invoiceUpdatedSms } from "./invoice-updated.sms.js";
 import { paymentReceiptEmail } from "./payment-receipt.email.js";
 import { paymentReceivedEmail } from "./payment-received.email.js";
 import { paymentClosedInvoiceEmail } from "./payment-closed-invoice.email.js";
@@ -56,6 +58,8 @@ const BUILT_IN: NotificationTemplate[] = [
   contractorAgreementUpdatedEmail,
   invoiceEmail,
   invoiceSms,
+  invoiceUpdatedEmail,
+  invoiceUpdatedSms,
   paymentReceiptEmail,
   paymentReceivedEmail,
   paymentClosedInvoiceEmail,

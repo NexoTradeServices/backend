@@ -133,10 +133,41 @@ export function contractorDashboardRoutes(client: PrismaClient): Router {
           slotLabel: slot ? formatSlotLabel(assignment.job.timezone, slot, now) : null,
           // Feature 5001: an accepted or in-progress card opens its job screen; an assigned one is answered from the link.
           opens: assignment.status !== "assigned",
+          awaitingPayment: false,
         };
       });
 
-      res.json({ ready, missing, jobs });
+      // Feature 6007: a completed job stays on his dashboard as "Completed - awaiting payment" until its
+      // invoice is paid -- the job's newest invoice is sent (not paid, not void, not $0).
+      const completed = await client.assignment.findMany({
+        where: { contractorId: contractor.id, status: "completed", job: { status: "completed" } },
+        include: {
+          job: { include: { customer: { select: { name: true } } } },
+          specialty: { select: { trade: true } },
+        },
+        orderBy: { completedAt: "desc" },
+      });
+      const awaiting: typeof jobs = [];
+      for (const assignment of completed) {
+        const newest = await client.invoice.findFirst({
+          where: { jobId: assignment.jobId },
+          orderBy: { createdAt: "desc" },
+          select: { status: true, isZeroDollar: true },
+        });
+        if (newest === null || newest.status !== "sent" || newest.isZeroDollar) continue;
+        awaiting.push({
+          reference: assignment.job.reference,
+          jobStatus: assignment.job.status,
+          customerName: assignment.job.customer.name,
+          trade: assignment.specialty.trade,
+          suburb: suburbOf(assignment.job.serviceLocation),
+          slotLabel: null,
+          opens: true,
+          awaitingPayment: true,
+        });
+      }
+
+      res.json({ ready, missing, jobs: [...jobs, ...awaiting] });
     })().catch((error: unknown) => {
       console.error("GET /api/contractor/dashboard failed", error);
       res.status(500).json({ error: "internal error" });

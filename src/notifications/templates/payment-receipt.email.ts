@@ -13,14 +13,14 @@ Thank you - we've received your payment of {{amountText}} for invoice {{invoiceR
 
 Nothing further is owed.
 
-Questions? Call us on {{officePhone}}.
+Questions about this bill? Call us on {{officePhone}}.
 
 -- {{platformName}}`;
 
 const HTML = `<p>Hi {{firstName}},</p>
 <p>Thank you - we've received your payment of <strong>{{amountText}}</strong> for invoice {{invoiceReference}} ({{jobReference}}), paid by {{methodText}} on {{paidDate}} at {{paidTime}}.</p>
 <p>Nothing further is owed.</p>
-<p>Questions? Call us on {{officePhone}}.</p>
+<p>Questions about this bill? Call us on {{officePhone}}.</p>
 <p>-- {{platformName}}</p>`;
 
 export const paymentReceiptEmail: NotificationTemplate = {

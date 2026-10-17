@@ -10,6 +10,7 @@ import { sendNotification } from "../notifications/index.js";
 import type { NotificationContext } from "../notifications/index.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import { formatDollars } from "../enquiries/money.js";
+import { billQuestionsPhone } from "../invoices/billing.js";
 import { formatDate, formatLabelled } from "../time/index.js";
 
 type Db = Prisma.TransactionClient;
@@ -57,7 +58,7 @@ async function contextOf(db: Db, paymentId: string): Promise<{ context: Notifica
 /** Sarah's receipt. */
 export async function askPaymentReceipt(db: Db, paymentId: string): Promise<void> {
   const { context, customerId, jobId } = await contextOf(db, paymentId);
-  const settings = await db.platformSettings.findFirstOrThrow({ select: { operatorPhone: true } });
+  const settings = await db.platformSettings.findFirstOrThrow({ select: { operatorPhone: true, accountsPhone: true } });
   await sendNotification(
     {
       type: "payment_receipt",
@@ -68,7 +69,7 @@ export async function askPaymentReceipt(db: Db, paymentId: string): Promise<void
       relatedType: "payment",
       relatedId: paymentId,
       jobId,
-      context: { ...context, officePhone: settings.operatorPhone },
+      context: { ...context, officePhone: billQuestionsPhone(settings) },
     },
     db,
   );

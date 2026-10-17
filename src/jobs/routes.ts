@@ -13,6 +13,9 @@
 //   POST /api/jobs/:reference/invoice/check-payment  Feature 6002: ask Stripe whether she has paid
 //   POST /api/jobs/:reference/invoice/void  Feature 6008: void an unpaid invoice, with a reason
 //   POST /api/jobs/:reference/invoice/refund  Feature 6006: refund money received, an amount in cents and a reason
+//   GET  /api/jobs/:reference/correct          Feature 6007: the Correct & reissue page's starting figures
+//   POST /api/jobs/:reference/correct/preview  Feature 6007: the What happens card, nothing saved
+//   POST /api/jobs/:reference/correct          Feature 6007: correct the visit and reissue or refund
 //   POST /api/jobs/:reference/reschedule      Feature 4006: new time for the same contractor
 //   POST /api/jobs/:reference/take-off        Feature 4006: free the contractor, job back to New
 //   POST /api/jobs/:reference/cancel          Feature 4006: close the job with a reason (Mike only)
@@ -33,6 +36,7 @@ import { askInvoiceMessages } from "../invoices/messages.js";
 import { checkPaymentWithStripe } from "../payments/check.js";
 import { VOID_REFUSALS, parseVoidReason, voidInvoice } from "../invoices/void.js";
 import { REFUND_AMOUNT_ERROR, makeRefund } from "../refunds/service.js";
+import { correctAndReissue, correctionForm, previewCorrection } from "../invoices/correct.js";
 import { formatLabelled } from "../time/index.js";
 import { addNote, editNote, parseEditedNote, parseNewNote } from "./notes.js";
 import {
@@ -190,6 +194,49 @@ export function jobRoutes(client: PrismaClient): Router {
       const fresh = await loadJob(client, req.params.reference);
       res.json(await jobDetail(client, fresh ?? job, req.authUser?.id ?? ""));
     })().catch(failWith(res, "POST /api/jobs/:reference/invoice/void"));
+  });
+
+  // Feature 6007: Correct & reissue. Ops (the owner too); a contractor is refused by the role guard.
+  router.get("/:reference/correct", requireRole(Role.ops), (req: WithReference, res: Response) => {
+    void (async () => {
+      const form = await correctionForm(client, req.params.reference);
+      if ("ok" in form) {
+        res.status(form.status).json({ error: form.error });
+        return;
+      }
+      res.json(form);
+    })().catch(failWith(res, "GET /api/jobs/:reference/correct"));
+  });
+
+  router.post("/:reference/correct/preview", requireRole(Role.ops), (req: WithReference, res: Response) => {
+    void (async () => {
+      const preview = await previewCorrection(client, req.params.reference, req.body);
+      if (!preview.ok) {
+        if ("errors" in preview) {
+          res.json({ errors: preview.errors });
+          return;
+        }
+        res.status(preview.status).json({ error: preview.error });
+        return;
+      }
+      res.json(preview);
+    })().catch(failWith(res, "POST /api/jobs/:reference/correct/preview"));
+  });
+
+  router.post("/:reference/correct", requireRole(Role.ops), (req: WithReference, res: Response) => {
+    void (async () => {
+      const outcome = await correctAndReissue(client, req.params.reference, req.body, req.authUser?.id ?? "");
+      if (!outcome.ok) {
+        if ("errors" in outcome) {
+          const first = outcome.errors[0];
+          res.status(400).json({ error: first?.error ?? "Check the form.", field: first?.field, errors: outcome.errors });
+          return;
+        }
+        res.status(outcome.status).json({ error: outcome.error, ...(outcome.field === undefined ? {} : { field: outcome.field }) });
+        return;
+      }
+      res.json(outcome);
+    })().catch(failWith(res, "POST /api/jobs/:reference/correct"));
   });
 
   // Feature 6006: Refund. Ops (the owner too). Amount in cents and a required reason; the

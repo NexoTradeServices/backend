@@ -9,6 +9,9 @@
 // AC3  Bob (GST registered): Wed $500 + $45 part, Thu $275, Sat $300 at T1.5 -> a Tax Invoice with
 //      Subtotal $1,075, GST $107.50, materials $45, Total $1,227.50; Dave (not registered) gets a
 //      plain Invoice with no Subtotal or GST
+// 6007 AC8  a minus correction takes up to the week's pay for work: $100.00 of work against -$175.00 gives
+//      $0.00 pay for work, parts paid in full, and $75.00 carried; oldest first; GST on the net; the next
+//      payout shows "Still to deduct: $75.00 (JOB-xxxx)" and the carry is taken at the next run
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { resetReferenceSequences, testClient, truncateAll } from "./helpers/database.js";
 import { MONDAY_12_OCT, MONDAY_19_OCT, completedVisit, noShowCallout } from "./helpers/settlements.js";
@@ -17,6 +20,7 @@ import { seedFixtures } from "../src/db/seed/fixtures.js";
 import { seedAuthFixtures } from "../src/db/seed/auth.js";
 import { markNoShow } from "../src/jobs/no-show.js";
 import { acceptJob1042, buildOpsApp } from "./helpers/ops-app.js";
+import { applyDeductions } from "../src/settlements/deduct.js";
 import { buildInvoiceView, loadSettlementForView } from "../src/settlements/invoice-view.js";
 import { runWeekly } from "../src/settlements/sweep.js";
 import { nextPayout } from "../src/settlements/service.js";
@@ -208,7 +212,15 @@ describe("AC2/AC3 -- the Monday sweep", () => {
     const [settlement] = await settlementsOf("CON-014");
     expect(settlement).toMatchObject({ adjustmentsAmount: 15_000, materialsAmount: 4500, totalAmount: 50_000 + 15_000 + 4500, gstAmount: 6500 });
     const view = await buildInvoiceView(db, (await loadSettlementForView(db, { id: settlement?.id ?? "" }))!);
-    expect(view.adjustments).toEqual([{ reason: "Missing hour on the job, corrected after approval", amount: 15_000, jobReference: visit.jobReference }]);
+    expect(view.adjustments).toEqual([
+      {
+        reason: "Missing hour on the job, corrected after approval",
+        label: "Pay adjustment - Missing hour on the job, corrected after approval",
+        kind: "adjustment",
+        amount: 15_000,
+        jobReference: visit.jobReference,
+      },
+    ]);
     expect(view.subtotal).toBe(65_000);
     expect(view.gst).toBe(6500);
     expect(view.total).toBe(65_000 + 6500 + 4500);
@@ -302,6 +314,9 @@ describe("AC11 -- the next payout", () => {
       amount: 50_000 + 27_500 + 4500 + 2500,
       jobs: 2,
       adjustments: 1,
+      adjustmentsNet: 2500,
+      work: 50_000 + 27_500,
+      stillToDeduct: null,
       plusGst: true,
       payDay: "Wed 21 Oct",
       invoicedOn: "Mon 19 Oct",
@@ -385,5 +400,136 @@ describe("6004 AC13 -- Mark no-show and goodwill callbacks reach the draft", () 
     const view = await buildInvoiceView(db, (await loadSettlementForView(db, { id: settlement?.id ?? "" }))!);
     expect(view.lines.filter((line) => line.working.kind === "no_show")).toHaveLength(2);
     expect(view.lines.filter((line) => line.working.kind !== "no_show")).toHaveLength(1);
+  });
+});
+
+describe("6007 AC8 -- a deduction takes up to the week's pay for work", () => {
+  const RUN_26_OCT = new Date("2026-10-25T22:30:00.000Z");
+
+  /** A visit whose pay for work is exactly `cents` (rates and hours are not the point here). */
+  async function workOf(cents: number, day: string, partCents?: number) {
+    const visit = await completedVisit(db, { contractorCode: "CON-014", day, hours: 1, ...(partCents === undefined ? {} : { partCents }) });
+    await db.assignment.update({ where: { id: visit.assignmentId }, data: { contractorPay: cents } });
+    return visit;
+  }
+
+  async function correction(contractorCode: string, jobId: string | null, amount: number, at: Date, reason = "Logged 5h, worked 2h."): Promise<void> {
+    const mike = await db.user.findUniqueOrThrow({ where: { email: "mike@idelta.com.au" } });
+    const contractor = await db.contractor.findUniqueOrThrow({ where: { code: contractorCode } });
+    await db.contractorPayAdjustment.create({
+      data: { contractorId: contractor.id, amount, kind: "correction", reason, jobId, createdByUserId: mike.id, createdAt: at },
+    });
+  }
+
+  test("the pure rule: oldest first, never below zero, the rest left over", () => {
+    const rows = [
+      { id: "b", amount: -9000, jobId: null, createdAt: new Date("2026-10-02") },
+      { id: "a", amount: -3000, jobId: null, createdAt: new Date("2026-10-01") },
+      { id: "c", amount: 2500, jobId: null, createdAt: new Date("2026-10-03") },
+    ];
+    const result = applyDeductions(5000, rows);
+    expect([...result.taken.entries()]).toEqual([
+      ["a", 3000],
+      ["b", 2000],
+    ]);
+    expect(result.left).toEqual([{ id: "b", jobId: null, amount: 7000 }]);
+    expect(result.stillToDeduct).toBe(7000);
+    expect(applyDeductions(0, rows).stillToDeduct).toBe(12_000);
+    expect(applyDeductions(20_000, rows).stillToDeduct).toBe(0);
+  });
+
+  test("AC8: $100.00 of work against -$175.00: $0.00 pay for work, parts paid in full, $75.00 carried; GST on the net", async () => {
+    const worked = await workOf(10_000, "2026-10-14", 4500);
+    await correction("CON-014", worked.jobId, -17_500, new Date("2026-10-15T00:00:00.000Z"));
+    await runWeekly(db, MONDAY_19_OCT);
+
+    const [settlement] = await settlementsOf("CON-014");
+    expect(settlement).toMatchObject({ adjustmentsAmount: -10_000, materialsAmount: 4500, totalAmount: 4500, gstAmount: 0 });
+    const rows = await db.contractorPayAdjustment.findMany({ orderBy: [{ amount: "desc" }] });
+    expect(rows).toHaveLength(2);
+    const taken = rows.find((row) => row.settlementId !== null);
+    const carried = rows.find((row) => row.settlementId === null);
+    expect(taken).toMatchObject({ amount: -10_000, kind: "correction", settlementId: settlement?.id });
+    expect(carried).toMatchObject({ amount: -7500, kind: "correction", carriedFromId: taken?.id, jobId: worked.jobId, reason: "Logged 5h, worked 2h." });
+
+    const view = await buildInvoiceView(db, (await loadSettlementForView(db, { id: settlement?.id ?? "" }))!);
+    expect(view.subtotal).toBe(0);
+    expect(view.materialsTotal).toBe(4500);
+    expect(view.total).toBe(4500);
+    expect(view.adjustments.map((line) => [line.label, line.amount])).toEqual([[`Correction - ${worked.jobReference}: Logged 5h, worked 2h.`, -10_000]]);
+
+    // The next payout shows what is still to deduct, and the next run takes it from new work.
+    const bob = await db.contractor.findUniqueOrThrow({ where: { code: "CON-014" } });
+    await workOf(10_000, "2026-10-21");
+    const next = await nextPayout(db, bob.id, new Date("2026-10-22T02:00:00.000Z"));
+    expect(next.stillToDeduct).toBeNull();
+    expect(next).toMatchObject({ work: 10_000, adjustmentsNet: -7500, amount: 2500 });
+    // Bob approves that week; the carried rest waits for the next run.
+    await db.contractorSettlement.updateMany({ data: { status: "approved", approvedAt: MONDAY_19_OCT, contractorGstRegistered: true } });
+    await runWeekly(db, RUN_26_OCT);
+    const second = (await settlementsOf("CON-014")).at(-1);
+    expect(second).toMatchObject({ adjustmentsAmount: -7500, totalAmount: 2500 });
+    expect(await db.contractorPayAdjustment.count({ where: { settlementId: null } })).toBe(0);
+  });
+
+  test("AC8: with no work at all to take from, the deduction waits - no draft is made for it", async () => {
+    const worked = await workOf(10_000, "2026-10-14");
+    await correction("CON-014", worked.jobId, -17_500, new Date());
+    await db.assignment.update({ where: { id: worked.assignmentId }, data: { settlementId: null, status: "cancelled", cancelledAt: null, contractorPay: null } });
+    const result = await runWeekly(db, MONDAY_19_OCT);
+    expect(result.made).toEqual([]);
+    const bob = await db.contractor.findUniqueOrThrow({ where: { code: "CON-014" } });
+    const next = await nextPayout(db, bob.id, MONDAY_19_OCT);
+    expect(next.stillToDeduct).toEqual({ amount: 17_500, jobReferences: [worked.jobReference] });
+    expect(next.amount).toBe(0);
+  });
+
+  test("AC8: minus corrections are taken oldest first", async () => {
+    await workOf(5000, "2026-10-14");
+    await correction("CON-014", null, -9000, new Date("2026-10-16T00:00:00.000Z"), "Newer");
+    await correction("CON-014", null, -3000, new Date("2026-10-15T00:00:00.000Z"), "Older");
+    await runWeekly(db, MONDAY_19_OCT);
+    const swept = await db.contractorPayAdjustment.findMany({ where: { settlementId: { not: null } }, orderBy: { createdAt: "asc" } });
+    expect(swept.map((row) => [row.reason, row.amount])).toEqual([
+      ["Older", -3000],
+      ["Newer", -2000],
+    ]);
+    const left = await db.contractorPayAdjustment.findFirstOrThrow({ where: { settlementId: null } });
+    expect(left).toMatchObject({ reason: "Newer", amount: -7000 });
+    // The carried rest keeps the place in the queue of the row it continues.
+    expect(left.createdAt.toISOString()).toBe("2026-10-16T00:00:00.000Z");
+  });
+
+  test("AC8: GST goes on the net pay for work - labour plus pluses minus what the deduction took", async () => {
+    await workOf(80_000, "2026-10-14");
+    await correction("CON-014", null, -20_000, new Date("2026-10-15T00:00:00.000Z"));
+    await runWeekly(db, MONDAY_19_OCT);
+    const [settlement] = await settlementsOf("CON-014");
+    expect(settlement).toMatchObject({ adjustmentsAmount: -20_000, totalAmount: 60_000, gstAmount: 6000 });
+  });
+
+  test("AC8: a plus correction rides along with the work and is never limited", async () => {
+    const worked = await workOf(10_000, "2026-10-14");
+    await correction("CON-014", worked.jobId, 15_000, new Date("2026-10-15T00:00:00.000Z"), "Worked 3h, logged 2h.");
+    await runWeekly(db, MONDAY_19_OCT);
+    const [settlement] = await settlementsOf("CON-014");
+    expect(settlement).toMatchObject({ adjustmentsAmount: 15_000, totalAmount: 25_000 });
+  });
+
+  test("AC8: Rebuild keeps a split consistent - the swept part and the carried rest still add to what is owed", async () => {
+    const worked = await workOf(10_000, "2026-10-14", 4500);
+    await correction("CON-014", worked.jobId, -17_500, new Date("2026-10-15T00:00:00.000Z"));
+    await runWeekly(db, MONDAY_19_OCT);
+    const draft = (await settlementsOf("CON-014"))[0];
+    if (draft === undefined) throw new Error("no draft was made");
+    // Mike presses Rebuild: nothing changed, so the same figures come back.
+    const { rebuild } = await import("../src/settlements/service.js");
+    const mike = await db.user.findUniqueOrThrow({ where: { email: "mike@idelta.com.au" } });
+    const result = await rebuild(db, draft.reference, mike.id, MONDAY_19_OCT);
+    expect(result.ok).toBe(true);
+    const fresh = (await settlementsOf("CON-014")).find((row) => row.status === "draft");
+    expect(fresh).toMatchObject({ adjustmentsAmount: -10_000, totalAmount: 4500 });
+    const owed = (await db.contractorPayAdjustment.findMany()).reduce((sum, row) => sum + row.amount, 0);
+    expect(owed).toBe(-17_500);
   });
 });

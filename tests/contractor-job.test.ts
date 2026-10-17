@@ -464,7 +464,9 @@ describe("AC8 -- after Complete", () => {
     expect(body.completionNotes).toBe("Done.");
 
     const dash = await request(app).get("/api/contractor/dashboard").set("Cookie", bob);
-    expect((dash.body as { jobs: { reference: string }[] }).jobs.map((j) => j.reference)).not.toContain("JOB-5001");
+    // It leaves his live work. (6007: a completed job with an unpaid invoice stays as "Completed - awaiting payment".)
+    const cards = (dash.body as { jobs: { reference: string; awaitingPayment: boolean }[] }).jobs;
+    expect(cards.filter((j) => !j.awaitingPayment).map((j) => j.reference)).not.toContain("JOB-5001");
   });
 });
 
