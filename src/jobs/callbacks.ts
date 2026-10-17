@@ -106,7 +106,8 @@ export async function callbackLinksOf(
   return { callbackOn: root?.reference ?? null, callbacks: callbacks.map((row) => row.reference) };
 }
 
-export interface OriginalView {
+export interface EarlierJobNotes {
+  kind: "original" | "callback";
   reference: string;
   description: string;
   /** The day its completed visit was finished, on the business clock. */
@@ -116,40 +117,45 @@ export interface OriginalView {
 }
 
 /**
- * What the contractor attending a callback may see of the original: its words, when it was
+ * What the contractor attending a callback may see of the work before it: the original, then each
+ * earlier callback on that original that was completed, oldest first. Its words, when it was
  * finished, what was done and the parts -- never prices, time on site, who did it or the customer.
- * Found only while HIS booking on the callback is accepted or in progress; otherwise null (a 404).
+ * Empty unless the job is a callback and HIS booking on it is open (accepted or in progress).
  */
-export async function originalFor(
+export async function earlierNotesOf(
   client: PrismaClient,
-  userId: string,
-  callbackReference: string,
-): Promise<OriginalView | null> {
-  const booking = await client.assignment.findFirst({
-    where: {
-      job: { reference: callbackReference, parentJobId: { not: null } },
-      contractor: { userId },
-      status: { in: ["accepted", "in_progress"] },
-    },
-    select: { job: { select: { parentJob: { select: { id: true, reference: true, description: true } } } } },
-  });
-  const original = booking?.job.parentJob;
-  if (original === undefined || original === null) return null;
+  job: { id: string; parentJobId: string | null; createdAt: Date },
+  bookingOpen: boolean,
+): Promise<EarlierJobNotes[]> {
+  if (job.parentJobId === null || !bookingOpen) return [];
   const settings = await client.platformSettings.findFirstOrThrow({ select: { timezone: true } });
-  const visit = await client.assignment.findFirst({
-    where: { jobId: original.id, status: "completed" },
-    orderBy: { completedAt: "desc" },
-    include: { parts: { orderBy: { id: "asc" } } },
+  const earlier = await client.job.findMany({
+    where: {
+      status: "completed",
+      OR: [{ id: job.parentJobId }, { parentJobId: job.parentJobId, id: { not: job.id }, createdAt: { lt: job.createdAt } }],
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { id: true, reference: true, description: true, parentJobId: true },
   });
-  return {
-    reference: original.reference,
-    description: original.description ?? "",
-    finished: visit?.completedAt == null ? "" : formatDate(settings.timezone, visit.completedAt),
-    workSummary: visit?.completionNotes ?? "",
-    parts: (visit?.parts ?? []).map((part) => ({
-      name: part.name,
-      description: part.description ?? "",
-      qty: Number(part.qty),
-    })),
-  };
+  const notes: EarlierJobNotes[] = [];
+  for (const row of earlier) {
+    const visit = await client.assignment.findFirst({
+      where: { jobId: row.id, status: "completed" },
+      orderBy: { completedAt: "desc" },
+      include: { parts: { orderBy: { id: "asc" } } },
+    });
+    notes.push({
+      kind: row.parentJobId === null ? "original" : "callback",
+      reference: row.reference,
+      description: row.description ?? "",
+      finished: visit?.completedAt == null ? "" : formatDate(settings.timezone, visit.completedAt),
+      workSummary: visit?.completionNotes ?? "",
+      parts: (visit?.parts ?? []).map((part) => ({
+        name: part.name,
+        description: part.description ?? "",
+        qty: Number(part.qty),
+      })),
+    });
+  }
+  return notes;
 }

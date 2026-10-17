@@ -487,14 +487,14 @@ describe("6004 -- the charged-or-not pick on a callback", () => {
 
   const done = { timeEntries: ENTRIES, completionNotes: "Done." };
 
-  test("AC5: the callback's view carries the original's reference and whether to link it; a normal job carries none", async () => {
+  test("AC5: the callback's view carries the original's reference and its notes while his booking is open; a normal job carries none", async () => {
     const made = await callbackJob();
     const bob = await signInCookie("bob@idelta.com.au");
-    expect(await view(bob, "JOB-5002")).toMatchObject({ callbackOn: "JOB-5001", callbackOnLinked: true, callbackChargeable: null });
+    expect(await view(bob, "JOB-5002")).toMatchObject({ callbackOn: "JOB-5001", callbackChargeable: null });
     await db.assignment.update({ where: { id: made.assignmentId }, data: { status: "in_progress" } });
-    expect((await view(bob, "JOB-5002")).callbackOnLinked).toBe(true);
+    expect((await view(bob, "JOB-5002")).earlierNotes.map((n) => n.reference)).toEqual(["JOB-5001"]);
     const normal = await view(bob, "JOB-5001");
-    expect(normal).toMatchObject({ callbackOn: null, callbackOnLinked: false, callbackChargeable: null });
+    expect(normal).toMatchObject({ callbackOn: null, earlierNotes: [], callbackChargeable: null });
   });
 
   test("AC6: Save keeps the pick (and null clears it); a missing key leaves it alone", async () => {
@@ -535,7 +535,7 @@ describe("6004 -- the charged-or-not pick on a callback", () => {
     expect((await request(app).put("/api/contractor/jobs/JOB-5002").set("Cookie", bob).send({ ...done, callbackChargeable: true })).status).toBe(200);
     expect((await request(app).post("/api/contractor/jobs/JOB-5002/complete").set("Cookie", bob).send(done)).status).toBe(200);
     const frozen = await view(bob, "JOB-5002");
-    expect(frozen).toMatchObject({ frozen: true, callbackChargeable: true, callbackOnLinked: false, callbackOn: "JOB-5001" });
+    expect(frozen).toMatchObject({ frozen: true, callbackChargeable: true, earlierNotes: [], callbackOn: "JOB-5001" });
     const again = await request(app).put("/api/contractor/jobs/JOB-5002").set("Cookie", bob).send({ ...done, callbackChargeable: false });
     expect(again.status).toBe(409);
     expect((await view(bob, "JOB-5002")).callbackChargeable).toBe(true);

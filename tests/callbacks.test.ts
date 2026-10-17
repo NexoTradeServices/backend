@@ -5,7 +5,7 @@
 // AC3  a callback raised from a callback links to the root original
 // AC4  refused 409 on a job that is not completed; a contractor gets 403
 // AC5  the job read carries Callback on / Callbacks (oldest first) and the two flags
-// AC5a the original, read-only, for the contractor attending the callback -- and only then
+// AC5a the earlier notes (original, then earlier finished callbacks), read-only, on the callback Bob attends -- and only then
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import type { Express } from "express";
 import request from "supertest";
@@ -152,9 +152,12 @@ describe("AC5 -- the links on Mike's page", () => {
   });
 });
 
-describe("AC5a -- the original, read-only", () => {
-  const original = (cookie: string, reference: string) =>
-    request(app).get(`/api/contractor/jobs/${reference}/original`).set("Cookie", cookie);
+describe("AC5a -- the earlier notes, read-only", () => {
+  const notes = async (cookie: string, reference: string) =>
+    // A job that is not his to read has no notes at all (the read answers 404).
+    ((await request(app).get(`/api/contractor/jobs/${reference}`).set("Cookie", cookie)).body as {
+      earlierNotes?: { kind: string; reference: string; description: string; finished: string; workSummary: string; parts: unknown[] }[];
+    }).earlierNotes ?? [];
 
   test("AC5a: Bob sees only problem, finished day, work summary and parts -- no prices, time, name or customer", async () => {
     const mike = await signIn(app, "mike@idelta.com.au");
@@ -163,17 +166,18 @@ describe("AC5a -- the original, read-only", () => {
     const ref = await raise(app, mike, first.reference);
     await acceptCallback(db, ref);
 
-    const res = await original(bob, ref);
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({
-      reference: first.reference,
-      description: "The mixer tap in the kitchen leaks.",
-      finished: expect.stringMatching(/^\d{1,2} [A-Z][a-z]{2} \d{4}$/) as string,
-      workSummary: "Replaced the cartridge.\nTested for leaks.",
-      parts: [{ name: "Caroma cartridge", description: "", qty: 1 }],
-    });
-    const text = JSON.stringify(res.body);
-    expect(text).not.toMatch(/Sarah|Bob|Dave|unitPrice|lineTotal|amount|timeEntries|billedHours/);
+    const got = await notes(bob, ref);
+    expect(got).toEqual([
+      {
+        kind: "original",
+        reference: first.reference,
+        description: "The mixer tap in the kitchen leaks.",
+        finished: expect.stringMatching(/^\d{1,2} [A-Z][a-z]{2} \d{4}$/) as string,
+        workSummary: "Replaced the cartridge.\nTested for leaks.",
+        parts: [{ name: "Caroma cartridge", description: "", qty: 1 }],
+      },
+    ]);
+    expect(JSON.stringify(got)).not.toMatch(/Sarah|Bob|Dave|unitPrice|lineTotal|amount|timeEntries|billedHours/);
   });
 
   test("AC5a: the same works when Dave did the original", async () => {
@@ -183,38 +187,58 @@ describe("AC5a -- the original, read-only", () => {
     const ref = await raise(app, mike, first.reference);
     await db.job.update({ where: { reference: ref }, data: { serviceTypeId: (await db.serviceType.findUniqueOrThrow({ where: { trade: "Plumbing" } })).id } });
     await acceptCallback(db, ref);
-    const res = await original(bob, ref);
-    expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ reference: first.reference });
-    expect(JSON.stringify(res.body)).not.toContain("Dave");
+    const got = await notes(bob, ref);
+    expect(got.map((n) => n.reference)).toEqual([first.reference]);
+    expect(JSON.stringify(got)).not.toContain("Dave");
   });
 
-  test("AC5a: not found before he accepts, after he completes, after he is taken off, for a stranger, and on a normal job", async () => {
+  test("AC5a: a second callback also shows the earlier finished callback, after the original; an unfinished or later one is left out", async () => {
     const mike = await signIn(app, "mike@idelta.com.au");
     const bob = await signIn(app, "bob@idelta.com.au");
-    const dave = await signIn(app, "dave@idelta.com.au");
+    const first = await completedOriginal(db);
+    const one = await raise(app, mike, first.reference, "First drip.");
+    const oneJob = await acceptCallback(db, one);
+    await db.assignment.update({
+      where: { id: oneJob.assignmentId },
+      data: { status: "completed", completedAt: new Date(), completionNotes: "Tightened the fitting." },
+    });
+    await db.job.update({ where: { id: oneJob.jobId }, data: { status: "completed" } });
+    const two = await raise(app, mike, first.reference, "Second drip.");
+    await acceptCallback(db, two);
+    const three = await raise(app, mike, first.reference, "Third drip.");
+
+    const got = await notes(bob, two);
+    expect(got.map((n) => [n.kind, n.reference, n.workSummary])).toEqual([
+      ["original", first.reference, "Replaced the cartridge.\nTested for leaks."],
+      ["callback", one, "Tightened the fitting."],
+    ]);
+    // The unfinished later callback is not listed for the earlier one.
+    expect(got.map((n) => n.reference)).not.toContain(three);
+  });
+
+  test("AC5a: empty before he accepts, after he completes, after he is taken off, for a stranger, and on a normal job", async () => {
+    const mike = await signIn(app, "mike@idelta.com.au");
+    const bob = await signIn(app, "bob@idelta.com.au");
     const first = await completedOriginal(db);
     const ref = await raise(app, mike, first.reference);
 
-    // Before he accepts: dispatched only.
     const job = await db.job.findUniqueOrThrow({ where: { reference: ref } });
     const bobRow = await db.contractor.findUniqueOrThrow({ where: { code: "CON-014" }, include: { specialties: true } });
     const waiting = await db.assignment.create({
       data: { jobId: job.id, contractorId: bobRow.id, specialtyId: bobRow.specialties[0]?.id ?? "", status: "assigned", proposedSlot: new Date("2026-10-07T00:00:00.000Z") },
     });
-    expect((await original(bob, ref)).status).toBe(404);
+    expect(await notes(bob, ref)).toEqual([]);
 
     await db.assignment.update({ where: { id: waiting.id }, data: { status: "accepted" } });
-    expect((await original(bob, ref)).status).toBe(200);
-    expect((await original(dave, ref)).status).toBe(404);
+    expect((await notes(bob, ref)).map((n) => n.reference)).toEqual([first.reference]);
 
-    await db.assignment.update({ where: { id: waiting.id }, data: { status: "cancelled" } });
-    expect((await original(bob, ref)).status).toBe(404);
     await db.assignment.update({ where: { id: waiting.id }, data: { status: "completed" } });
-    expect((await original(bob, ref)).status).toBe(404);
+    expect(await notes(bob, ref)).toEqual([]);
+    await db.assignment.update({ where: { id: waiting.id }, data: { status: "cancelled" } });
+    expect(await notes(bob, ref)).toEqual([]);
 
-    // A normal job has no original; an unknown reference is not found either.
-    expect((await original(bob, first.reference)).status).toBe(404);
-    expect((await original(bob, "JOB-9999")).status).toBe(404);
+    // A normal job has no earlier notes, and the old original route is gone.
+    expect(await notes(bob, first.reference)).toEqual([]);
+    expect((await request(app).get(`/api/contractor/jobs/${ref}/original`).set("Cookie", bob)).status).toBe(404);
   });
 });

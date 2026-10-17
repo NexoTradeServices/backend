@@ -21,7 +21,7 @@ import { suburbOf } from "../jobs/shared.js";
 import { billedHours } from "../jobs/billed-hours.js";
 import { issueInvoice } from "../invoices/issue.js";
 import { askCallbackNoCharge } from "../invoices/messages.js";
-import { originalFor } from "../jobs/callbacks.js";
+import { earlierNotesOf, type EarlierJobNotes } from "../jobs/callbacks.js";
 import { kickPayLink } from "../invoices/pay-link.js";
 import { assignmentInclude, jobFactsOf, type JobFacts } from "../respond/service.js";
 import {
@@ -115,8 +115,8 @@ export interface ContractorJobView extends JobFacts {
   timezone: string;
   /** Feature 6004: the root original's reference when this job is a callback, else null. */
   callbackOn: string | null;
-  /** Feature 6004: shown plainly (no link) once his booking on the callback is over. */
-  callbackOnLinked: boolean;
+  /** Feature 6004: the original's notes, then each earlier finished callback's, oldest first; empty once his booking is over. */
+  earlierNotes: EarlierJobNotes[];
   /** Feature 6004: his pick on a callback, true (charged), false (no charge) or null (not picked yet). */
   callbackChargeable: boolean | null;
 }
@@ -197,7 +197,7 @@ async function viewOf(client: PrismaClient, assignment: OwnAssignment, now: Date
   return {
     ...facts,
     callbackOn: root?.reference ?? null,
-    callbackOnLinked: root !== null && (assignment.status === "accepted" || assignment.status === "in_progress"),
+    earlierNotes: await earlierNotesOf(client, job, assignment.status === "accepted" || assignment.status === "in_progress"),
     callbackChargeable: assignment.callbackChargeable,
     reference: job.reference,
     jobStatus: job.status,
@@ -279,22 +279,6 @@ export function contractorJobRoutes(client: PrismaClient, options: ContractorJob
       if (assignment === null) return;
       res.json(await viewOf(client, assignment, new Date()));
     })().catch(failWith(res, "GET /api/contractor/jobs/:reference"));
-  });
-
-  // Feature 6004: the original a callback is about, read-only -- only while HIS booking is open.
-  router.get("/:reference/original", requireRole(Role.contractor), (req: WithReference, res: Response) => {
-    void (async () => {
-      if (!req.authUser) {
-        res.status(401).json({ error: "not authenticated" });
-        return;
-      }
-      const original = await originalFor(client, req.authUser.id, req.params.reference);
-      if (original === null) {
-        res.status(404).json({ error: "not found" });
-        return;
-      }
-      res.json(original);
-    })().catch(failWith(res, "GET /api/contractor/jobs/:reference/original"));
   });
 
   router.post("/:reference/on-site", requireRole(Role.contractor), (req: WithReference, res: Response) => {
