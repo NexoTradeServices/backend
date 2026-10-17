@@ -467,3 +467,77 @@ describe("AC8 -- after Complete", () => {
     expect((dash.body as { jobs: { reference: string }[] }).jobs.map((j) => j.reference)).not.toContain("JOB-5001");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Feature 6004 -- "This callback is"
+// ---------------------------------------------------------------------------
+// 6004 AC5 Bob's callback screen shows "Callback on" (a link while his booking is open, plain text after)
+// 6004 AC6 callbackChargeable saves on a callback, is refused on a normal job, Complete is refused without it,
+//          and it is frozen after Complete
+
+describe("6004 -- the charged-or-not pick on a callback", () => {
+  async function callbackJob(): Promise<{ jobId: string; assignmentId: string }> {
+    const original = await acceptedJob("JOB-5001");
+    await db.job.update({ where: { id: original.jobId }, data: { status: "completed" } });
+    await db.assignment.update({ where: { id: original.assignmentId }, data: { status: "completed", completedAt: new Date() } });
+    const made = await acceptedJob("JOB-5002");
+    await db.job.update({ where: { id: made.jobId }, data: { parentJobId: original.jobId } });
+    return made;
+  }
+
+  const done = { timeEntries: ENTRIES, completionNotes: "Done." };
+
+  test("AC5: the callback's view carries the original's reference and its notes while his booking is open; a normal job carries none", async () => {
+    const made = await callbackJob();
+    const bob = await signInCookie("bob@idelta.com.au");
+    expect(await view(bob, "JOB-5002")).toMatchObject({ callbackOn: "JOB-5001", callbackChargeable: null });
+    await db.assignment.update({ where: { id: made.assignmentId }, data: { status: "in_progress" } });
+    expect((await view(bob, "JOB-5002")).earlierNotes.map((n) => n.reference)).toEqual(["JOB-5001"]);
+    const normal = await view(bob, "JOB-5001");
+    expect(normal).toMatchObject({ callbackOn: null, earlierNotes: [], callbackChargeable: null });
+  });
+
+  test("AC6: Save keeps the pick (and null clears it); a missing key leaves it alone", async () => {
+    await callbackJob();
+    const bob = await signInCookie("bob@idelta.com.au");
+    const save = (body: object) => request(app).put("/api/contractor/jobs/JOB-5002").set("Cookie", bob).send({ ...done, ...body });
+    expect((await save({ callbackChargeable: false })).status).toBe(200);
+    expect((await view(bob, "JOB-5002")).callbackChargeable).toBe(false);
+    expect((await save({})).status).toBe(200);
+    expect((await view(bob, "JOB-5002")).callbackChargeable).toBe(false);
+    expect((await save({ callbackChargeable: null })).status).toBe(200);
+    expect((await view(bob, "JOB-5002")).callbackChargeable).toBeNull();
+    const text = await save({ callbackChargeable: "yes" });
+    expect(text.status).toBe(400);
+    expect(text.body).toMatchObject({ field: "callbackChargeable" });
+  });
+
+  test("AC6: a normal job refuses a value, on Save and on Complete", async () => {
+    await acceptedJob("JOB-5001");
+    const bob = await signInCookie("bob@idelta.com.au");
+    for (const [method, path] of [["put", "/api/contractor/jobs/JOB-5001"], ["post", "/api/contractor/jobs/JOB-5001/complete"]] as const) {
+      const res = await request(app)[method](path).set("Cookie", bob).send({ ...done, callbackChargeable: true });
+      expect(res.status).toBe(400);
+      expect(res.body).toMatchObject({ field: "callbackChargeable" });
+    }
+    expect((await view(bob, "JOB-5001")).frozen).toBe(false);
+  });
+
+  test("AC6: Complete without a pick is refused, nothing freezes; with one it completes and the pick is frozen", async () => {
+    const made = await callbackJob();
+    const bob = await signInCookie("bob@idelta.com.au");
+    const refused = await request(app).post("/api/contractor/jobs/JOB-5002/complete").set("Cookie", bob).send(done);
+    expect(refused.status).toBe(400);
+    expect(refused.body).toMatchObject({ error: "Pick whether this callback is charged.", field: "callbackChargeable" });
+    expect((await db.assignment.findUniqueOrThrow({ where: { id: made.assignmentId } })).status).toBe("accepted");
+
+    // A pick saved earlier is enough for Complete.
+    expect((await request(app).put("/api/contractor/jobs/JOB-5002").set("Cookie", bob).send({ ...done, callbackChargeable: true })).status).toBe(200);
+    expect((await request(app).post("/api/contractor/jobs/JOB-5002/complete").set("Cookie", bob).send(done)).status).toBe(200);
+    const frozen = await view(bob, "JOB-5002");
+    expect(frozen).toMatchObject({ frozen: true, callbackChargeable: true, earlierNotes: [], callbackOn: "JOB-5001" });
+    const again = await request(app).put("/api/contractor/jobs/JOB-5002").set("Cookie", bob).send({ ...done, callbackChargeable: false });
+    expect(again.status).toBe(409);
+    expect((await view(bob, "JOB-5002")).callbackChargeable).toBe(true);
+  });
+});

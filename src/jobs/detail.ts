@@ -12,6 +12,7 @@ import { jobMessages, type MessageView } from "./messages.js";
 import { asSiteContact, isClosed, type SiteContactView } from "./site-contact.js";
 import { billedHours } from "./billed-hours.js";
 import { customerRatingOf, type CustomerRating } from "./customer-rating.js";
+import { callbackLinksOf } from "./callbacks.js";
 import { CANCELLED_KIND_LABELS, cancelledKindOf } from "./booking.js";
 import { entryViewOf, returnVisitMinimum, savedEntries, type EntryView } from "./visit.js";
 import { isServiceLevelMultipliers, priceLine } from "./dispatch-level.js";
@@ -141,6 +142,14 @@ export interface JobDetail {
   priceLine: string | null;
   /** Feature 4006: which of Reschedule, Reassign and Cancel job the page offers. */
   actions: JobActions;
+  /** Feature 6004: the root original's reference when this job is a callback, else null. */
+  callbackOn: string | null;
+  /** Feature 6004: this job's callbacks, oldest first. */
+  callbacks: string[];
+  /** Feature 6004: Raise callback is offered on a completed job. */
+  canRaiseCallback: boolean;
+  /** Feature 6004: Mark no-show is offered on a booked (scheduled or in-progress) job. */
+  canMarkNoShow: boolean;
   /** Feature 4006: set once the job is cancelled. */
   cancelled: CancelledFacts | null;
   /** AC1/AC2: the job page's own Dispatch button. */
@@ -266,6 +275,7 @@ export async function jobDetail(
   const settings = await client.platformSettings.findFirst({ select: { timezone: true } });
   const earlierBookings = await earlierBookingsOf(client, job, now);
   const messages = await jobMessages(client, job.id, settings?.timezone ?? job.timezone);
+  const callbackLinks = await callbackLinksOf(client, job);
 
   return {
     reference: job.reference,
@@ -305,6 +315,10 @@ export async function jobDetail(
       takeOff: job.status === "assigned" || job.status === "scheduled",
       cancel: job.status === "new" || job.status === "assigned" || job.status === "scheduled",
     },
+    callbackOn: callbackLinks.callbackOn,
+    callbacks: callbackLinks.callbacks,
+    canRaiseCallback: job.status === "completed",
+    canMarkNoShow: job.status === "scheduled" || job.status === "in_progress",
     cancelled: await cancelledFactsOf(client, job),
     serviceLevel: job.serviceLevel,
     priceLine: price,

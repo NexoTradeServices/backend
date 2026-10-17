@@ -20,6 +20,8 @@ import { formatSlotLabel } from "../time/index.js";
 import { suburbOf } from "../jobs/shared.js";
 import { billedHours } from "../jobs/billed-hours.js";
 import { issueInvoice } from "../invoices/issue.js";
+import { askCallbackNoCharge } from "../invoices/messages.js";
+import { earlierNotesOf, type EarlierJobNotes } from "../jobs/callbacks.js";
 import { kickPayLink } from "../invoices/pay-link.js";
 import { assignmentInclude, jobFactsOf, type JobFacts } from "../respond/service.js";
 import {
@@ -111,6 +113,12 @@ export interface ContractorJobView extends JobFacts {
   /** "On site" is offered only while the visit is accepted. */
   canOnSite: boolean;
   timezone: string;
+  /** Feature 6004: the root original's reference when this job is a callback, else null. */
+  callbackOn: string | null;
+  /** Feature 6004: the original's notes, then each earlier finished callback's, oldest first; empty once his booking is over. */
+  earlierNotes: EarlierJobNotes[];
+  /** Feature 6004: his pick on a callback, true (charged), false (no charge) or null (not picked yet). */
+  callbackChargeable: boolean | null;
 }
 
 function failWith(res: Response, route: string) {
@@ -183,8 +191,14 @@ async function viewOf(client: PrismaClient, assignment: OwnAssignment, now: Date
       ? null
       : await paymentOf(client, invoice);
 
+  const root =
+    job.parentJobId === null ? null : await client.job.findUnique({ where: { id: job.parentJobId }, select: { reference: true } });
+
   return {
     ...facts,
+    callbackOn: root?.reference ?? null,
+    earlierNotes: await earlierNotesOf(client, job, assignment.status === "accepted" || assignment.status === "in_progress"),
+    callbackChargeable: assignment.callbackChargeable,
     reference: job.reference,
     jobStatus: job.status,
     assignmentStatus: assignment.status,
@@ -267,6 +281,23 @@ export function contractorJobRoutes(client: PrismaClient, options: ContractorJob
     })().catch(failWith(res, "GET /api/contractor/jobs/:reference"));
   });
 
+  // Feature 6004: one earlier job's notes (the original or an earlier callback), read-only -- found
+  // only among the notes on his own callback, so only while HIS booking on it is open.
+  router.get("/:reference/earlier/:earlier", requireRole(Role.contractor), (req: Request<{ reference: string; earlier: string }>, res: Response) => {
+    void (async () => {
+      const assignment = await own(req, res);
+      if (assignment === null) return;
+      const open = assignment.status === "accepted" || assignment.status === "in_progress";
+      const notes = await earlierNotesOf(client, assignment.job, open);
+      const found = notes.find((note) => note.reference === req.params.earlier);
+      if (found === undefined) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      res.json(found);
+    })().catch(failWith(res, "GET /api/contractor/jobs/:reference/earlier/:earlier"));
+  });
+
   router.post("/:reference/on-site", requireRole(Role.contractor), (req: WithReference, res: Response) => {
     void (async () => {
       const assignment = await own(req, res);
@@ -303,7 +334,24 @@ export function contractorJobRoutes(client: PrismaClient, options: ContractorJob
       return;
     }
     const { entries, notes, parts } = parsed.input;
+    // Feature 6004: "This callback is" belongs to a callback only; a normal job refuses a value.
+    const isCallback = assignment.job.parentJobId !== null;
+    const bodyRaw = req.body !== null && typeof req.body === "object" ? (req.body as Record<string, unknown>) : {};
+    const sent = bodyRaw["callbackChargeable"];
+    if (sent !== undefined && sent !== null && typeof sent !== "boolean") {
+      send(res, { ok: false, status: 400, error: "callbackChargeable must be true, false or null", field: "callbackChargeable" });
+      return;
+    }
+    if (!isCallback && typeof sent === "boolean") {
+      send(res, { ok: false, status: 400, error: "Only a callback has this choice.", field: "callbackChargeable" });
+      return;
+    }
+    const chargeable: boolean | null = !isCallback ? null : sent === undefined ? assignment.callbackChargeable : sent;
     if (complete) {
+      if (isCallback && chargeable === null) {
+        send(res, { ok: false, status: 400, error: "Pick whether this callback is charged.", field: "callbackChargeable" });
+        return;
+      }
       if (entries.length === 0) {
         send(res, { ok: false, status: 400, error: "Add at least one visit.", field: "timeEntries" });
         return;
@@ -322,7 +370,10 @@ export function contractorJobRoutes(client: PrismaClient, options: ContractorJob
         await writeEntries(tx, locked.id, entries);
         await writeParts(tx, locked.id, parts);
         if (!complete) {
-          await tx.assignment.update({ where: { id: locked.id }, data: { completionNotes: notes } });
+          await tx.assignment.update({
+            where: { id: locked.id },
+            data: { completionNotes: notes, ...(isCallback ? { callbackChargeable: chargeable } : {}) },
+          });
           return;
         }
         // Freeze the visit AND issue its invoice in this one transaction (Feature 6001): a
@@ -332,7 +383,13 @@ export function contractorJobRoutes(client: PrismaClient, options: ContractorJob
         const hours = billedHours(entries, minimum);
         await tx.assignment.update({
           where: { id: locked.id },
-          data: { completionNotes: notes, billedHours: hours, completedAt, status: "completed" },
+          data: {
+            completionNotes: notes,
+            billedHours: hours,
+            completedAt,
+            status: "completed",
+            ...(isCallback ? { callbackChargeable: chargeable } : {}),
+          },
         });
         await tx.job.update({ where: { id: locked.jobId }, data: { status: "completed" } });
         const invoice = await issueInvoice(tx, {
@@ -341,7 +398,9 @@ export function contractorJobRoutes(client: PrismaClient, options: ContractorJob
           billedHours: hours,
           now: completedAt,
         });
-        issuedInvoiceId = invoice.id;
+        // Goodwill: no pay link will ever exist, so the customer is told here instead (6004).
+        if (chargeable === false) await askCallbackNoCharge(tx, invoice.id);
+        else issuedInvoiceId = invoice.id;
       });
     } catch (error: unknown) {
       if (error instanceof Refused) {

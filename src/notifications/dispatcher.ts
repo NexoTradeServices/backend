@@ -317,7 +317,8 @@ export async function deliver(client: TransactionalDb, row: ClaimedRow): Promise
   let attachments: EmailAttachment[] = [];
   if (row.channel === "email" && template.attachment !== undefined) {
     try {
-      attachments = [await template.attachment(renderContext, client)];
+      const built = await template.attachment(renderContext, client);
+      attachments = built === null ? [] : [built];
     } catch (error: unknown) {
       await failAttempt(client, row, `attachment failed: ${messageOf(error)}`);
       return;

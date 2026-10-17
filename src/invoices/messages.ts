@@ -69,3 +69,37 @@ export async function askInvoiceMessages(db: Db, invoiceId: string, resendAtMs?:
     );
   }
 }
+
+/**
+ * Feature 6004: the Callback - no charge email, for a goodwill callback's $0 invoice. Asked in the
+ * transaction that issues the invoice (so a rolled-back Complete sends nothing). Email only, the
+ * invoice PDF attached by the template; no pay link, no text.
+ */
+export async function askCallbackNoCharge(db: Db, invoiceId: string): Promise<void> {
+  const invoice = await db.invoice.findUniqueOrThrow({
+    where: { id: invoiceId },
+    include: { job: { include: { customer: true, serviceType: { select: { trade: true } } } } },
+  });
+  const settings = await db.platformSettings.findFirstOrThrow({ select: { operatorPhone: true, accountsPhone: true } });
+  await sendNotification(
+    {
+      type: "callback_no_charge",
+      channel: "email",
+      recipientType: "customer",
+      recipientId: invoice.customerId,
+      idempotencyKey: `callback_no_charge:invoice:${invoice.id}:email`,
+      relatedType: "invoice",
+      relatedId: invoice.id,
+      jobId: invoice.jobId,
+      context: {
+        invoiceId: invoice.id,
+        invoiceReference: invoice.reference,
+        jobReference: invoice.job.reference,
+        trade: invoice.job.serviceType.trade.toLowerCase(),
+        firstName: firstNameOf(invoice.job.customer.name),
+        officePhone: billQuestionsPhone(settings),
+      },
+    },
+    db,
+  );
+}

@@ -13,6 +13,7 @@
 // link, its id and the two message rows commit together or not at all; Stripe's
 // idempotency key (stripe.ts) covers a lost answer.
 import { getPrisma, type PrismaClient } from "../db/client.js";
+import { askMissedVisit } from "./missed-visit.js";
 import { askInvoiceMessages } from "./messages.js";
 import { stripeProvider, warnIfStripeMissing, type PayLinkProvider } from "./stripe.js";
 
@@ -56,7 +57,7 @@ async function claimAndLinkOne(
 
       const invoice = await tx.invoice.findUniqueOrThrow({
         where: { id: row.id },
-        include: { job: { select: { reference: true } } },
+        include: { job: { select: { reference: true, status: true, cancelReason: true } } },
       });
       // A throw here (Stripe down) rolls the transaction back: nothing stored, nothing sent.
       const link = await provider.createPayLink({
@@ -69,7 +70,13 @@ async function claimAndLinkOne(
         where: { id: invoice.id },
         data: { stripePaymentLinkUrl: link.url, stripePaymentLinkId: link.id },
       });
-      await askInvoiceMessages(tx, invoice.id);
+      // Feature 6004: a call-out invoice raised by Mark no-show says "Missed visit" (one email and
+      // text, the invoice attached), not the ordinary invoice message. Resend later sends the latter.
+      if (invoice.job.status === "cancelled" && invoice.job.cancelReason === "customer_no_show") {
+        await askMissedVisit(tx, invoice.jobId, invoice.id);
+      } else {
+        await askInvoiceMessages(tx, invoice.id);
+      }
       return invoice.id;
     },
     { timeout: TRANSACTION_TIMEOUT_MS },

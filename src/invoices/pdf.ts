@@ -27,13 +27,15 @@ export interface InvoicePdfInput {
   issuedAt: Date;
   dueAt: Date;
   billedTo: BilledTo;
-  lines: { description: string; qty: number; unitPrice: number; lineTotal: number }[];
+  lines: { kind?: string; description: string; qty: number; unitPrice: number; lineTotal: number }[];
   amount: number;
   gstApplied: boolean;
   gstAmount: number;
   /** Paid in full: AMOUNT DUE reads $0.00. */
   paid: boolean;
   payLinkUrl: string | null;
+  /** Feature 6004: set on a callback's invoice (derived from the job's parent, never stored). */
+  callbackOn?: string | null;
 }
 
 const MONEY = new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" });
@@ -68,6 +70,12 @@ export async function makeInvoicePdf(input: InvoicePdfInput): Promise<Uint8Array
   sheet.rule();
   sheet.y -= 18;
 
+  // Feature 6004: a callback's invoice says so above its lines, whatever it is charged.
+  if (input.callbackOn != null && input.amount === 0) {
+    sheet.text(`Follow-up visit for ${input.callbackOn} - no charge`, 11, bold);
+    sheet.y -= 8;
+  }
+
   // The lines.
   const colPrice = right - 90;
   const colQty = colPrice - 80;
@@ -91,7 +99,8 @@ export async function makeInvoicePdf(input: InvoicePdfInput): Promise<Uint8Array
     const keep = sheet.y;
     sheet.y = rowTop;
     sheet.rightAt(qtyText(line.qty), colQty, 10, regular);
-    sheet.rightAt(pdfMoney(line.unitPrice), colPrice, 10, regular);
+    // A follow-up visit's labour line has no rate to show.
+    if (!(line.kind === "labour" && line.unitPrice === 0)) sheet.rightAt(pdfMoney(line.unitPrice), colPrice, 10, regular);
     sheet.rightAt(pdfMoney(line.lineTotal), right, 10, regular);
     sheet.y = keep - 4;
   }
@@ -125,7 +134,7 @@ export async function makeInvoicePdf(input: InvoicePdfInput): Promise<Uint8Array
 const invoiceForPdf = {
   include: {
     lines: { orderBy: { id: "asc" } },
-    job: { select: { reference: true, timezone: true } },
+    job: { select: { reference: true, timezone: true, parentJob: { select: { reference: true } } } },
   },
 } satisfies Prisma.InvoiceDefaultArgs;
 
@@ -152,6 +161,7 @@ export async function buildInvoicePdf(
     dueAt: invoice.dueAt,
     billedTo: invoice.billedTo as unknown as BilledTo,
     lines: invoice.lines.map((line) => ({
+      kind: line.kind,
       description: line.description,
       qty: Number(line.qty),
       unitPrice: line.unitPrice,
@@ -162,6 +172,7 @@ export async function buildInvoicePdf(
     gstAmount: invoice.gstAmount ?? 0,
     paid: invoice.status === "paid",
     payLinkUrl: invoice.stripePaymentLinkUrl,
+    callbackOn: invoice.job.parentJob?.reference ?? null,
   });
   return { fileName: invoicePdfName(invoice.reference), content };
 }

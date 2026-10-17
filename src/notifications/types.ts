@@ -72,9 +72,10 @@ export interface NotificationTemplate {
   /**
    * Email only: an attachment built at send time, from the same render context
    * (the tax invoice, the credit note -- rendered from frozen data). A build that
-   * fails fails that attempt like any send error.
+   * fails fails that attempt like any send error. Null: this message carries no file (Feature 6004,
+   * the waived Missed visit email has no invoice).
    */
-  attachment?(context: NotificationContext, db: NotificationDb): Promise<EmailAttachment>;
+  attachment?(context: NotificationContext, db: NotificationDb): Promise<EmailAttachment | null>;
 }
 
 /** What a provider is handed: an address, a rendered message, and who it is from. */

@@ -4,6 +4,8 @@
 //      completedAt, no-show call-outs by cancelledAt) up to the Sunday just ended, plus unswept
 //      pay adjustments, into ONE draft; nothing -> no draft, no email; a second pass changes
 //      nothing; a run missed while down happens on the next pass
+// 6004 AC13  a no-show marked through the endpoint's step (charged or waived alike) lands on the next draft as its own
+//      call-out line, and a goodwill callback's hours as a normal visit
 // AC3  Bob (GST registered): Wed $500 + $45 part, Thu $275, Sat $300 at T1.5 -> a Tax Invoice with
 //      Subtotal $1,075, GST $107.50, materials $45, Total $1,227.50; Dave (not registered) gets a
 //      plain Invoice with no Subtotal or GST
@@ -13,6 +15,8 @@ import { MONDAY_12_OCT, MONDAY_19_OCT, completedVisit, noShowCallout } from "./h
 import { seedBase } from "../src/db/seed/base.js";
 import { seedFixtures } from "../src/db/seed/fixtures.js";
 import { seedAuthFixtures } from "../src/db/seed/auth.js";
+import { markNoShow } from "../src/jobs/no-show.js";
+import { acceptJob1042, buildOpsApp } from "./helpers/ops-app.js";
 import { buildInvoiceView, loadSettlementForView } from "../src/settlements/invoice-view.js";
 import { runWeekly } from "../src/settlements/sweep.js";
 import { nextPayout } from "../src/settlements/service.js";
@@ -326,5 +330,60 @@ describe("the earlier week", () => {
     expect(result.periodEnd).toBe("2026-10-11");
     const [settlement] = await settlementsOf("CON-014");
     expect(settlement?.breakdownByTrade).toEqual([{ trade: "Plumbing", count: 1, amount: 20_000 }]);
+  });
+});
+
+describe("6004 AC13 -- Mark no-show and goodwill callbacks reach the draft", () => {
+  test("AC13: a no-show (charged or waived) is paid the call-out as its own line; a goodwill callback's hours are a normal visit", async () => {
+    const app = buildOpsApp(db);
+    const mike = await db.user.findUniqueOrThrow({ where: { email: "mike@idelta.com.au" } });
+    const cancelledAt = new Date("2026-10-14T02:00:00.000Z");
+    const noShows: string[] = [];
+    for (const charge of [true, false]) {
+      if (charge === false) {
+        // a second booked job for Bob: the fixture JOB-1042 is used up
+        const first = await db.job.findUniqueOrThrow({ where: { reference: "JOB-1042" } });
+        const copy = await db.job.create({
+          data: {
+            reference: "JOB-1099",
+            customerId: first.customerId,
+            serviceTypeId: first.serviceTypeId,
+            customerCalloutRate: first.customerCalloutRate,
+            customerStandardRate: first.customerStandardRate,
+            postcode: first.postcode,
+            serviceLocation: first.serviceLocation as object,
+            timezone: first.timezone,
+            source: first.source,
+            preferredWindow: first.preferredWindow,
+            preferredDate: first.preferredDate,
+            status: "scheduled",
+          },
+        });
+        const bob = await db.contractor.findUniqueOrThrow({ where: { code: "CON-014" }, include: { specialties: true } });
+        await db.assignment.create({
+          data: { jobId: copy.id, contractorId: bob.id, specialtyId: bob.specialties[0]?.id ?? "", status: "accepted", proposedSlot: cancelledAt, confirmedSlot: cancelledAt, acceptedAt: cancelledAt },
+        });
+      } else {
+        await acceptJob1042(db, app);
+      }
+      const reference = charge ? "JOB-1042" : "JOB-1099";
+      const result = await markNoShow(db, reference, mike.id, charge, cancelledAt);
+      expect(result.ok).toBe(true);
+      noShows.push(reference);
+    }
+    const goodwill = await completedVisit(db, { contractorCode: "CON-014", day: "2026-10-15", hours: 1.5, callbackChargeable: false });
+    expect(goodwill.pay).toBe(27_500);
+
+    await runWeekly(db, MONDAY_19_OCT);
+    const [settlement] = await settlementsOf("CON-014");
+    expect(settlement?.totalAmount).toBe(15_000 + 15_000 + 27_500);
+    for (const reference of noShows) {
+      const job = await db.job.findUniqueOrThrow({ where: { reference } });
+      const assignment = await db.assignment.findFirstOrThrow({ where: { jobId: job.id } });
+      expect(assignment.settlementId).toBe(settlement?.id);
+    }
+    const view = await buildInvoiceView(db, (await loadSettlementForView(db, { id: settlement?.id ?? "" }))!);
+    expect(view.lines.filter((line) => line.working.kind === "no_show")).toHaveLength(2);
+    expect(view.lines.filter((line) => line.working.kind !== "no_show")).toHaveLength(1);
   });
 });

@@ -38,6 +38,9 @@ import { jobCancelledEmail } from "./job-cancelled.email.js";
 import { jobCancelledSms } from "./job-cancelled.sms.js";
 import { jobUpdateEmail } from "./job-update.email.js";
 import { jobUpdateSms } from "./job-update.sms.js";
+import { callbackNoChargeEmail } from "./callback-no-charge.email.js";
+import { missedVisitEmail } from "./missed-visit.email.js";
+import { missedVisitSms } from "./missed-visit.sms.js";
 
 /** Every template this build ships. Features append; nothing else registers. */
 const BUILT_IN: NotificationTemplate[] = [
@@ -73,6 +76,9 @@ const BUILT_IN: NotificationTemplate[] = [
   jobCancelledSms,
   jobUpdateEmail,
   jobUpdateSms,
+  callbackNoChargeEmail,
+  missedVisitEmail,
+  missedVisitSms,
 ];
 
 function key(type: string, channel: NotificationChannel): string {

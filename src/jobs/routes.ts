@@ -16,6 +16,8 @@
 //   POST /api/jobs/:reference/reschedule      Feature 4006: new time for the same contractor
 //   POST /api/jobs/:reference/take-off        Feature 4006: free the contractor, job back to New
 //   POST /api/jobs/:reference/cancel          Feature 4006: close the job with a reason (Mike only)
+//   POST /api/jobs/:reference/callback        Feature 6004: raise a callback from a completed job (Mike only)
+//   POST /api/jobs/:reference/no-show         Feature 6004: close a booked job as a customer no-show (Mike only)
 import type { Router } from "express";
 import { Router as createRouter } from "express";
 import type { Request, Response } from "express";
@@ -46,6 +48,8 @@ import {
   sendRescheduleNotifications,
 } from "./dispatch.js";
 import { cancelJob, parseCancelInput, takeOffJob } from "./changes.js";
+import { parseCallbackInput, raiseCallback } from "./callbacks.js";
+import { markNoShow, parseNoShowInput } from "./no-show.js";
 
 type WithReference = Request<{ reference: string }>;
 
@@ -535,6 +539,52 @@ export function jobRoutes(client: PrismaClient): Router {
       }
       res.json({ job: await jobDetail(client, fresh, req.authUser.id), toast: `${result.jobReference} cancelled.` });
     })().catch(failWith(res, "POST /api/jobs/:reference/cancel"));
+  });
+
+  // Feature 6004: a callback is a new job linked to this completed one; Mike lands on it.
+  router.post("/:reference/callback", requireRole(Role.ops), (req: WithReference, res: Response) => {
+    void (async () => {
+      const parsed = parseCallbackInput(req.body);
+      if (!parsed.ok) {
+        res.status(parsed.status).json({ error: parsed.error, field: parsed.field });
+        return;
+      }
+      const result = await raiseCallback(client, req.params.reference, parsed.description);
+      if (!result.ok) {
+        res.status(result.status).json({ error: result.error, field: result.field });
+        return;
+      }
+      res.status(201).json({ jobReference: result.jobReference, toast: `Raised callback ${result.jobReference}.` });
+    })().catch(failWith(res, "POST /api/jobs/:reference/callback"));
+  });
+
+  // Feature 6004: the contractor attended and could not work. Ops only (which admits the owner).
+  router.post("/:reference/no-show", requireRole(Role.ops), (req: WithReference, res: Response) => {
+    void (async () => {
+      if (!req.authUser) {
+        res.status(401).json({ error: "not signed in" });
+        return;
+      }
+      const parsed = parseNoShowInput(req.body);
+      if (!parsed.ok) {
+        res.status(parsed.status).json({ error: parsed.error, field: parsed.field });
+        return;
+      }
+      const result = await markNoShow(client, req.params.reference, req.authUser.id, parsed.charge);
+      if (!result.ok) {
+        res.status(result.status).json({ error: result.error, field: result.field });
+        return;
+      }
+      const fresh = await loadJob(client, result.jobReference);
+      if (!fresh) {
+        res.status(500).json({ error: "internal error" });
+        return;
+      }
+      res.json({
+        job: await jobDetail(client, fresh, req.authUser.id),
+        toast: `Marked ${result.jobReference} as a no-show.`,
+      });
+    })().catch(failWith(res, "POST /api/jobs/:reference/no-show"));
   });
 
   // The Phase 2 stub (Dispatch Logic -- Phase 2): nothing calls it, no badge renders.
