@@ -117,7 +117,7 @@ describe("AC10 -- charged", () => {
     expect(invoice.lines).toHaveLength(1);
     expect(invoice.lines[0]).toMatchObject({ kind: "callout", unitPrice: settings.calloutFee, lineTotal: settings.calloutFee });
     expect(Number(invoice.lines[0]?.qty)).toBe(1);
-    expect(invoice.lines[0]?.description).toMatch(/^Call-out fee - missed visit on \d{1,2} [A-Z][a-z]{2} \d{4}$/);
+    expect(invoice.lines[0]?.description).toBe("Call-out fee - no access / customer unavailable");
     expect(body.job.invoice.lines.map((l) => l.description)).toEqual([invoice.lines[0]?.description]);
   });
 

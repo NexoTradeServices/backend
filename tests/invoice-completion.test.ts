@@ -1085,9 +1085,17 @@ describe("6002 -- the browser tests' due hook", () => {
 // ---------------------------------------------------------------------------
 
 /** A callback on a first job, accepted by Bob and ready to complete. */
-async function acceptedCallback() {
+/** `by`: who completed the original -- Bob (his own work), Dave (someone else's) or nobody. */
+async function acceptedCallback(by: "bob" | "dave" | "nobody" = "nobody") {
   const original = await acceptedJob({ date: "2026-10-05" });
   await db.job.update({ where: { id: original.jobId }, data: { status: "completed" } });
+  if (by !== "nobody") {
+    const dave = await db.contractor.findUniqueOrThrow({ where: { code: "CON-021" } });
+    await db.assignment.update({
+      where: { id: original.assignmentId },
+      data: { status: "completed", completedAt: new Date(), ...(by === "dave" ? { contractorId: dave.id } : {}) },
+    });
+  }
   const made = await acceptedJob();
   await db.job.update({ where: { id: made.jobId }, data: { parentJobId: original.jobId } });
   return { ...made, original };
@@ -1115,26 +1123,58 @@ describe("6004 AC7 -- a chargeable callback invoices like a normal job", () => {
 });
 
 describe("6004 AC8 -- a goodwill callback", () => {
-  test("AC8: Fixing earlier work - no charge: normal lines at $0, a zero-dollar invoice, no pay link, and Bob's pay as for a charged visit", async () => {
+  test("AC8: Fixing earlier work - no charge: one Follow-up visit line and the parts at $0, a zero-dollar invoice, no pay link", async () => {
     const charged = await acceptedCallback();
     await bobCompletes(charged, { callbackChargeable: true });
-    const goodwill = await acceptedCallback();
+    const goodwill = await acceptedCallback("dave");
     await bobCompletes(goodwill, { callbackChargeable: false });
 
     const paid = await db.assignment.findUniqueOrThrow({ where: { id: charged.assignmentId } });
     const free = await db.assignment.findUniqueOrThrow({ where: { id: goodwill.assignmentId } });
+    // Someone else did the original: Bob is paid as for a charged visit.
     expect(free).toMatchObject({ callbackChargeable: false, customerTotal: 0, contractorPay: paid.contractorPay, materialsReimbursement: paid.materialsReimbursement });
     expect(free.contractorPay).toBeGreaterThan(0);
     expect(free.materialsReimbursement).toBe(4500);
 
     const invoice = await invoiceOf(goodwill.jobId);
-    const normalLines = (await invoiceOf(charged.jobId)).lines;
     expect(invoice).toMatchObject({ amount: 0, labourAmount: 0, materialsAmount: 0, isZeroDollar: true, gstAmount: 0 });
-    expect(invoice.lines.map((l) => [l.kind, l.description])).toEqual(normalLines.map((l) => [l.kind, l.description]));
+    expect(invoice.lines.map((l) => [l.kind, l.description, Number(l.qty)])).toEqual([
+      ["labour", "Follow-up visit - Plumbing", 3],
+      ["part", "Tap cartridge - Ceramic", 1],
+    ]);
     expect(invoice.lines.every((l) => l.unitPrice === 0 && l.lineTotal === 0)).toBe(true);
 
     expect(await payLinkPass(db, { provider: fakeStripe() })).toBe(1); // the charged one only
     expect((await invoiceOf(goodwill.jobId)).stripePaymentLinkUrl).toBeNull();
+  });
+
+  test("AC8: fixing his own earlier work pays Bob nothing -- his time and parts stay on the invoice; a charged callback on his own work pays as normal", async () => {
+    const own = await acceptedCallback("bob");
+    await bobCompletes(own, { callbackChargeable: false });
+    expect(await db.assignment.findUniqueOrThrow({ where: { id: own.assignmentId } })).toMatchObject({
+      callbackChargeable: false,
+      contractorPay: 0,
+      materialsReimbursement: 0,
+    });
+    expect((await invoiceOf(own.jobId)).lines.map((l) => l.description)).toEqual(["Follow-up visit - Plumbing", "Tap cartridge - Ceramic"]);
+
+    const chargedOnOwn = await acceptedCallback("bob");
+    await bobCompletes(chargedOnOwn, { callbackChargeable: true });
+    const paid = await db.assignment.findUniqueOrThrow({ where: { id: chargedOnOwn.assignmentId } });
+    expect(paid.contractorPay).toBeGreaterThan(0);
+    expect(paid.materialsReimbursement).toBe(4500);
+  });
+
+  test("AC8: an earlier callback Bob completed on the same original also counts as his own work", async () => {
+    const first = await acceptedCallback("dave");
+    // An earlier completed callback on that original, by Bob.
+    const earlier = await acceptedJob({ date: "2026-10-06" });
+    await db.job.update({ where: { id: earlier.jobId }, data: { status: "completed", parentJobId: first.original.jobId } });
+    await db.assignment.update({ where: { id: earlier.assignmentId }, data: { status: "completed", completedAt: new Date() } });
+    await db.job.update({ where: { id: first.jobId }, data: { parentJobId: first.original.jobId } });
+
+    await bobCompletes(first, { callbackChargeable: false });
+    expect(await db.assignment.findUniqueOrThrow({ where: { id: first.assignmentId } })).toMatchObject({ contractorPay: 0, materialsReimbursement: 0 });
   });
 
   test("AC8: the customer gets one Callback - no charge email with the PDF -- no invoice email, no text, no reminder", async () => {
@@ -1157,7 +1197,8 @@ describe("6004 AC8 -- a goodwill callback", () => {
     expect(mail?.attachments).toHaveLength(1);
     const text = pdfText(mail?.attachments?.[0]?.content ?? new Uint8Array());
     const originalReference = (await db.job.findUniqueOrThrow({ where: { id: made.original.jobId } })).reference;
-    expect(text).toContain(`Callback on ${originalReference} - no charge`);
+    expect(text).toContain(`Follow-up visit for ${originalReference} - no charge`);
+    expect(text).toContain("Follow-up visit - Plumbing");
     expect(text).not.toContain("Pay online");
     expect(await db.notification.count({ where: { jobId: made.jobId, type: "invoice" } })).toBe(0);
     expect(await db.notification.count({ where: { jobId: made.jobId, type: "callback_no_charge" } })).toBe(1);
