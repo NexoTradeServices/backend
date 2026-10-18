@@ -65,7 +65,7 @@ export interface PayLine {
 
 export interface AdjustmentLine {
   reason: string;
-  /** Feature 6007: the line as it prints -- "Pay adjustment - [reason]" or "Correction - JOB-1042: [reason]" */
+  /** Feature 6007: the line as it prints -- "Pay adjustment - [reason]" or "Correction - JOB-1042" (a correction never prints Mike's reason) */
   label: string;
   kind: "adjustment" | "correction";
   /** signed cents */
@@ -75,7 +75,7 @@ export interface AdjustmentLine {
 
 /** The label a pay-adjustment row prints under (Contractor Settlement, Pay adjustments and corrections). */
 export function adjustmentLabel(kind: "adjustment" | "correction", reason: string, jobReference: string | null): string {
-  return kind === "correction" ? `Correction - ${jobReference ?? "job"}: ${reason}` : `Pay adjustment - ${reason}`;
+  return kind === "correction" ? `Correction - ${jobReference ?? "job"}` : `Pay adjustment - ${reason}`;
 }
 
 export interface MaterialsLine {
