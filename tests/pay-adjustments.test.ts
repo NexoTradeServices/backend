@@ -141,7 +141,7 @@ describe("AC10 -- a browser test's request never meets a draft that is not its o
     const mikeUser = await db.user.findUniqueOrThrow({ where: { email: "mike@idelta.com.au" } });
     const landed = await runWithLabel("e2e", async () => (await landingOf(db, bobId, new Date())).landing);
     expect(landed).toBe("next_run");
-    const result = await runWithLabel("e2e", () => addPayAdjustment(db, GOOD(), mikeUser.id, new Date()));
+    const result = await runWithLabel("e2e", () => addPayAdjustment(db, { ...GOOD(), jobReference: GOOD().job }, mikeUser.id, new Date()));
     expect(result).toMatchObject({ ok: true, landing: "next_run", draft: null });
     expect((await db.contractorSettlement.findUniqueOrThrow({ where: { id: draft.id } })).status).toBe("draft");
     expect(await db.contractorSettlement.count()).toBe(1);
