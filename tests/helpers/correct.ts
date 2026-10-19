@@ -1,6 +1,6 @@
 // Test helpers -- Feature 6007, correct & reissue and pay adjustments.
 //
-// One app (ops job routes, ops settlements routes, the contractor's settlement and dashboard routes)
+// One app (ops job routes, ops settlements routes, the contractor's settlement, dashboard and job routes)
 // behind the real session middleware, plus the worlds the suites start from: Sarah's completed,
 // invoiced job (5h, Bob), the same paid through Stripe, and Bob's week on each settlement state.
 // No test reaches Stripe: the pay-link and refund seams are fakes.
@@ -15,6 +15,7 @@ import { jobRoutes } from "../../src/jobs/routes.js";
 import { settlementRoutes } from "../../src/settlements/routes.js";
 import { contractorSettlementRoutes } from "../../src/settlements/contractor-routes.js";
 import { contractorDashboardRoutes } from "../../src/contractors/dashboard-routes.js";
+import { contractorJobRoutes } from "../../src/contractors/job-routes.js";
 import { RefundRefusedError, type PayLinkProvider, type RefundProvider, type RefundRequest } from "../../src/invoices/stripe.js";
 import { DEV_PASSWORD } from "../../src/db/seed/auth.js";
 import type { PrismaClient } from "../../src/db/client.js";
@@ -32,6 +33,7 @@ export function correctApp(db: PrismaClient): Express {
   app.use("/api/jobs", jobRoutes(db));
   app.use("/api/settlements", settlementRoutes(db));
   app.use("/api/contractor/settlements", contractorSettlementRoutes(db));
+  app.use("/api/contractor/jobs", contractorJobRoutes(db));
   app.use("/api/contractor", contractorDashboardRoutes(db));
   return app;
 }

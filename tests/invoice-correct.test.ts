@@ -239,6 +239,20 @@ describe("AC2 -- Sarah's Updated invoice message", () => {
     expect(types).not.toContain("invoice");
   });
 
+  test("AC2: once the Updated invoice has gone out, Bob's job screen says the invoice was sent, not 'sending'", async () => {
+    const job = await sarahsJob(db);
+    const res = await correct(job.jobReference, { timeEntries: [entry(DAY, "08:00", "10:00")], reason: "Logged 5h, worked 2h." });
+    const { newInvoiceReference } = res.body as { newInvoiceReference: string };
+    const fresh = await db.invoice.findFirstOrThrow({ where: { reference: newInvoiceReference } });
+    await untilLinked(db, fresh.id);
+    const bob = await signIn(app, "bob@idelta.com.au");
+    const before = await request(app).get(`/api/contractor/jobs/${job.jobReference}`).set("Cookie", bob);
+    expect((before.body as { payment: { messages: string } }).payment.messages).toBe("sending");
+    await drainOnce(db);
+    const after = await request(app).get(`/api/contractor/jobs/${job.jobReference}`).set("Cookie", bob);
+    expect((after.body as { payment: { messages: string; amount: number } }).payment).toMatchObject({ messages: "sent", amount: 43_000 });
+  });
+
   test("AC2: the old invoice sends no more reminders once voided", async () => {
     const job = await sarahsJob(db);
     await db.invoice.update({ where: { id: job.invoiceId }, data: { dueAt: new Date(Date.now() - 10 * 86_400_000) } });

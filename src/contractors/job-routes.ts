@@ -146,13 +146,13 @@ async function loadOwn(client: PrismaClient, userId: string, reference: string) 
 
 type OwnAssignment = NonNullable<Awaited<ReturnType<typeof loadOwn>>>;
 
-/** Where the invoice's email and text stand, for Bob's confirmation line. */
+/** Where the invoice's email and text stand, for Bob's confirmation line (a reissued invoice's are the Updated invoice kind -- Feature 6007). */
 async function paymentOf(
   client: PrismaClient,
   invoice: { id: string; amount: number; stripePaymentLinkUrl: string | null },
 ): Promise<UnpaidPaymentView> {
   const rows = await client.notification.findMany({
-    where: { relatedType: "invoice", relatedId: invoice.id, type: "invoice" },
+    where: { relatedType: "invoice", relatedId: invoice.id, type: { in: ["invoice", "invoice_updated"] } },
     select: { channel: true, status: true },
   });
   const wentOut = (channel: "email" | "sms"): boolean =>
