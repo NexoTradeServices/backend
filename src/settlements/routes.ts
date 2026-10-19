@@ -5,6 +5,9 @@
 //   GET  /api/settlements/:ref                                                 one invoice, line by line
 //   POST /api/settlements/:ref/mark-paid
 //   POST /api/settlements/:ref/rebuild
+//   GET  /api/settlements/adjustments/landing?contractorId=  Feature 6007: where a new pay adjustment would land
+//   GET  /api/settlements/adjustments/contractors            Feature 6007: who a pay adjustment can be for (the dialog's Dropdown)
+//   POST /api/settlements/adjustments                        Feature 6007: add a pay adjustment (Mike)
 //
 // Each refusal is a 409 with the reason in `error`.
 import type { Router } from "express";
@@ -15,9 +18,10 @@ import { requireRole } from "../auth/middleware.js";
 import { Role } from "../generated/prisma/enums.js";
 import { dayLabel, payDayFor, ymdOf } from "./calendar.js";
 import { buildInvoiceView, loadSettlementForView } from "./invoice-view.js";
+import { addPayAdjustment, askRebuiltDraft, landingOf } from "./adjustments.js";
 import { OPS_VIEWS, listForOps, payoutCsv, type OpsView } from "./lists.js";
 import { askDraftEmail, askPayoutSentEmail } from "./messages.js";
-import { amountOf, correctedSince, markPaid, rebuild } from "./service.js";
+import { amountOf, markPaid, rebuild } from "./service.js";
 
 type WithRef = Request<{ ref: string }>;
 
@@ -52,6 +56,49 @@ export function settlementRoutes(client: PrismaClient): Router {
     })().catch(failWith(res, "GET /api/settlements/ready.csv"));
   });
 
+  // Declared before "/:ref" so "adjustments" is never read as a reference.
+  router.get("/adjustments/contractors", requireRole(Role.ops), (_req: Request, res: Response) => {
+    void (async () => {
+      const contractors = await client.contractor.findMany({ select: { id: true, code: true, name: true }, orderBy: { name: "asc" } });
+      res.json({ contractors: contractors.map((contractor) => ({ ...contractor, firstName: contractor.name.split(" ")[0] ?? contractor.name })) });
+    })().catch(failWith(res, "GET /api/settlements/adjustments/contractors"));
+  });
+
+  router.get("/adjustments/landing", requireRole(Role.ops), (req: Request, res: Response) => {
+    void (async () => {
+      const id = req.query["contractorId"];
+      const contractor = typeof id === "string" && id !== "" ? await client.contractor.findUnique({ where: { id }, select: { id: true } }) : null;
+      if (contractor === null) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      res.json(await landingOf(client, contractor.id, new Date()));
+    })().catch(failWith(res, "GET /api/settlements/adjustments/landing"));
+  });
+
+  router.post("/adjustments", requireRole(Role.ops), (req: Request, res: Response) => {
+    void (async () => {
+      if (!req.authUser) {
+        res.status(401).json({ error: "not authenticated" });
+        return;
+      }
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const now = new Date();
+      const result = await addPayAdjustment(
+        client,
+        { contractorId: body["contractorId"], amount: body["amount"], reason: body["reason"], jobReference: body["job"] },
+        req.authUser.id,
+        now,
+      );
+      if (!result.ok) {
+        res.status(result.status).json({ error: result.error, ...(result.field === undefined ? {} : { field: result.field }) });
+        return;
+      }
+      await askRebuiltDraft(client, result.draft, now);
+      res.status(201).json({ contractorFirstName: result.contractorFirstName, landing: result.landing });
+    })().catch(failWith(res, "POST /api/settlements/adjustments"));
+  });
+
   router.get("/:ref", requireRole(Role.ops), (req: WithRef, res: Response) => {
     void (async () => {
       const settlement = await loadSettlementForView(client, { reference: req.params.ref });
@@ -65,16 +112,11 @@ export function settlementRoutes(client: PrismaClient): Router {
         settlement.paidByUserId === null ? null : client.user.findUnique({ where: { id: settlement.paidByUserId }, select: { name: true } }),
         settlement.supersededByUserId === null ? null : client.user.findUnique({ where: { id: settlement.supersededByUserId }, select: { name: true } }),
       ]);
-      const notes = settlement.assignments.length === 0 ? [] : (await client.job.findMany({
-        where: { assignments: { some: { settlementId: settlement.id } } },
-        select: { operatorNotes: true },
-      })).map((job) => job.operatorNotes);
       res.json({
         invoice,
         contractor: { code: settlement.contractor.code, name: settlement.contractor.name },
         amount: amountOf(settlement, settlement.contractor.gstRegistered, Number(settings.gstRatePercent)),
         payDay: dayLabel(payDayFor(settings, new Date())),
-        correctedSince: settlement.status === "draft" && correctedSince(settlement.createdAt, notes),
         approvedAt: settlement.approvedAt?.toISOString() ?? null,
         paidAt: settlement.paidAt?.toISOString() ?? null,
         paidBy: paidBy?.name ?? null,

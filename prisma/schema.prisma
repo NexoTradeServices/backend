@@ -134,6 +134,13 @@ enum InvoiceStatus {
   void
 }
 
+/// Feature 6007: what a pay-adjustment row is. An adjustment is Mike's hand-added plus; a
+/// correction is written only by Correct & reissue, plus or minus.
+enum PayAdjustmentKind {
+  adjustment
+  correction
+}
+
 enum InvoiceLineKind {
   labour
   part
@@ -996,6 +1003,8 @@ model Invoice {
   /// AUDIT pair: who voided it, and when
   voidedByUserId       String?
   voidedAt             DateTime?
+  /// Feature 6007: set on an invoice a Correct & reissue made -- the voided one it replaces
+  replacesInvoiceId    String?
   createdAt            DateTime      @default(now())
   sentAt               DateTime?
   paidAt               DateTime?
@@ -1004,6 +1013,9 @@ model Invoice {
   assignment Assignment @relation("InvoiceAssignment", fields: [assignmentId], references: [id])
   customer   Customer   @relation(fields: [customerId], references: [id])
   voidedBy   User?      @relation("InvoiceVoidedBy", fields: [voidedByUserId], references: [id])
+  /// Feature 6007: the voided invoice this one replaces (a Correct & reissue made it)
+  replaces   Invoice?   @relation("InvoiceReplaces", fields: [replacesInvoiceId], references: [id])
+  replacedBy Invoice[]  @relation("InvoiceReplaces")
 
   lines           InvoiceLine[]
   payments        Payment[]
@@ -1155,10 +1167,16 @@ model ContractorSettlement {
 /// sweep and its place in the next-payout figure; Feature 6013 adds the form that writes it.
 /// A check constraint keeps amount above zero (migration SQL; Prisma has no syntax for it).
 model ContractorPayAdjustment {
-  id              String   @id @default(uuid(7))
+  id              String            @id @default(uuid(7))
   contractorId    String
-  /// cents, above zero, always
+  /// cents. An adjustment is above zero; a correction is plus or minus, never zero
+  /// (a check constraint in the migration SQL keeps both true)
   amount          Int
+  /// Feature 6007: adjustment (Mike, by hand) | correction (Correct & reissue)
+  kind            PayAdjustmentKind @default(adjustment)
+  /// Feature 6007: the minus correction this row is the unswept rest of, when a run could
+  /// take only part of it
+  carriedFromId   String?
   /// required -- shown as the line on the draft
   reason          String
   jobId           String?
@@ -1166,12 +1184,14 @@ model ContractorPayAdjustment {
   settlementId    String?
   /// AUDIT: who added it, and when
   createdByUserId String
-  createdAt       DateTime @default(now())
+  createdAt       DateTime          @default(now())
 
-  contractor Contractor            @relation(fields: [contractorId], references: [id])
-  job        Job?                  @relation(fields: [jobId], references: [id])
-  settlement ContractorSettlement? @relation(fields: [settlementId], references: [id])
-  createdBy  User                  @relation("PayAdjustmentCreatedBy", fields: [createdByUserId], references: [id])
+  contractor  Contractor                @relation(fields: [contractorId], references: [id])
+  job         Job?                      @relation(fields: [jobId], references: [id])
+  settlement  ContractorSettlement?     @relation(fields: [settlementId], references: [id])
+  createdBy   User                      @relation("PayAdjustmentCreatedBy", fields: [createdByUserId], references: [id])
+  carriedFrom ContractorPayAdjustment?  @relation("PayAdjustmentCarried", fields: [carriedFromId], references: [id])
+  carriedOn   ContractorPayAdjustment[] @relation("PayAdjustmentCarried")
 
   /// Test-data label (design: Data Model, Test data). Empty on every real record.
   testData String?

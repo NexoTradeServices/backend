@@ -20,17 +20,22 @@ function firstNameOf(name: string): string {
   return name.split(" ")[0] ?? name;
 }
 
-export function invoiceKey(invoiceId: string, channel: "email" | "sms", resendAtMs?: number): string {
+export function invoiceKey(invoiceId: string, channel: "email" | "sms", resendAtMs?: number, type = "invoice"): string {
   const discriminator = resendAtMs === undefined ? "" : `:resend-${String(resendAtMs)}`;
-  return `invoice:invoice:${invoiceId}${discriminator}:${channel}`;
+  return `${type}:invoice:${invoiceId}${discriminator}:${channel}`;
 }
 
-/** Ask for the invoice email and SMS. `resendAtMs` is set only by Resend. */
+/**
+ * Ask for the invoice email and SMS. `resendAtMs` is set only by Resend. An invoice a Correct &
+ * reissue made (it has `replacesInvoiceId`) sends the Updated invoice message instead -- and so does
+ * a Resend of it, word for word the same.
+ */
 export async function askInvoiceMessages(db: Db, invoiceId: string, resendAtMs?: number): Promise<void> {
   const invoice = await db.invoice.findUniqueOrThrow({
     where: { id: invoiceId },
     include: {
       job: { include: { customer: true, serviceType: { select: { trade: true } } } },
+      replaces: { select: { reference: true } },
     },
   });
   if (invoice.stripePaymentLinkUrl === null) {
@@ -50,16 +55,18 @@ export async function askInvoiceMessages(db: Db, invoiceId: string, resendAtMs?:
     dueText: formatDate(zone, invoice.dueAt),
     payUrl: invoice.stripePaymentLinkUrl,
     officePhone: billQuestionsPhone(settings),
+    ...(invoice.replaces === null ? {} : { replacesReference: invoice.replaces.reference }),
   };
+  const type = invoice.replaces === null ? "invoice" : "invoice_updated";
 
   for (const channel of ["email", "sms"] as const) {
     await sendNotification(
       {
-        type: "invoice",
+        type,
         channel,
         recipientType: "customer",
         recipientId: invoice.customerId,
-        idempotencyKey: invoiceKey(invoice.id, channel, resendAtMs),
+        idempotencyKey: invoiceKey(invoice.id, channel, resendAtMs, type),
         relatedType: "invoice",
         relatedId: invoice.id,
         jobId: invoice.jobId,

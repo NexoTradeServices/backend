@@ -4,7 +4,6 @@
 //   inspectApprove / approveByToken   the contractor's one tap, on a capability link (no login)
 //   markPaid                          Mike pays by hand, then marks it: the money-out audit pair
 //   rebuild                           Mike replaces an unapproved draft after correcting a job
-//   correctedSince                    the flag beside a draft whose job was corrected after it
 //   nextPayout                        what is still waiting to be invoiced, and when it is paid
 //
 // Each write is ONE transaction that locks the row it changes, so a double tap is the same tap.
@@ -12,9 +11,9 @@
 import type { PrismaClient } from "../db/client.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import { burnBySettlement, CapabilityTokenType, consumeCapabilityToken, findCapabilityToken } from "../capability-tokens/index.js";
-import { readNotes } from "../jobs/notes.js";
 import { addDays, cycleDays, dayLabel, friendlyDate, nextRunMonday, payDayAfter, payDayFor, periodLabel, ymdOf } from "./calendar.js";
 import { buildInvoiceView, gstOnTop, labourOf, loadSettlementForView, type InvoiceView } from "./invoice-view.js";
+import { applyDeductions, payForWorkBefore } from "./deduct.js";
 import { sweepContractor } from "./sweep.js";
 import { todayIn } from "../time/index.js";
 
@@ -205,19 +204,12 @@ export async function rebuild(client: PrismaClient, reference: string, userId: s
   });
 }
 
-/** True when a job on the draft got a `correction` note after the draft was made. Derived, no field. */
-export function correctedSince(draftCreatedAt: Date, jobNotes: readonly unknown[]): boolean {
-  return jobNotes.some((notes) =>
-    readNotes(notes).some((note) => note.type === "correction" && new Date(note.at).getTime() > draftCreatedAt.getTime()),
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Next payout
 // ---------------------------------------------------------------------------
 
 export interface NextPayout {
-  /** labour + adjustments + parts, GST excluded; 0 when nothing waits */
+  /** labour + adjustments (a deduction taken up to the pay for work) + parts, GST excluded; 0 when nothing waits */
   amount: number;
   /** visits with money on them, not yet on an invoice */
   jobs: number;
@@ -229,6 +221,12 @@ export interface NextPayout {
   payDay: string;
   /** the next Monday run, "Mon 19 Oct" */
   invoicedOn: string;
+  /** Feature 6007: what a minus correction cannot take from this run's pay for work, and whose job it was */
+  stillToDeduct: { amount: number; jobReferences: string[] } | null;
+  /** Feature 6007: the plus and minus lines waiting, net (what the run will take), in cents */
+  adjustmentsNet: number;
+  /** Feature 6007: the visits' labour waiting, in cents */
+  work: number;
   /** the period that run will cover, "12 Oct - 18 Oct 2026" */
   period: string;
   /** what the invoice will total, GST on top included for a registered contractor */
@@ -247,13 +245,23 @@ export async function nextPayout(db: Db, contractorId: string, now: Date): Promi
     },
     select: { contractorPay: true, materialsReimbursement: true },
   });
-  const adjustments = await db.contractorPayAdjustment.findMany({ where: { contractorId, settlementId: null }, select: { amount: true } });
+  const adjustments = await db.contractorPayAdjustment.findMany({
+    where: { contractorId, settlementId: null },
+    select: { id: true, amount: true, jobId: true, createdAt: true, job: { select: { reference: true } } },
+  });
   const run = nextRunMonday(settings, now);
-  const payForWork =
-    visits.reduce((sum, visit) => sum + (visit.contractorPay ?? 0), 0) +
-    adjustments.reduce((sum, adjustment) => sum + adjustment.amount, 0);
+  const labour = visits.reduce((sum, visit) => sum + (visit.contractorPay ?? 0), 0);
+  const deduction = applyDeductions(payForWorkBefore(labour, adjustments), adjustments);
+  const taken = [...deduction.taken.values()].reduce((sum, cents) => sum + cents, 0);
+  const plus = adjustments.filter((row) => row.amount > 0).reduce((sum, row) => sum + row.amount, 0);
+  const adjustmentsNet = plus - taken;
+  const payForWork = labour + adjustmentsNet;
   const parts = visits.reduce((sum, visit) => sum + (visit.materialsReimbursement ?? 0), 0);
   const gst = gstOnTop(payForWork, contractor.gstRegistered === true, Number(settings.gstRatePercent)) ?? 0;
+  const references = deduction.left.flatMap((row) => {
+    const reference = adjustments.find((adjustment) => adjustment.id === row.id)?.job?.reference;
+    return reference === undefined ? [] : [reference];
+  });
   return {
     amount: payForWork + parts,
     period: periodLabel(addDays(run, -cycleDays(settings)), addDays(run, -1)),
@@ -263,6 +271,9 @@ export async function nextPayout(db: Db, contractorId: string, now: Date): Promi
     plusGst: contractor.gstRegistered === true,
     payDay: dayLabel(payDayAfter(settings, run)),
     invoicedOn: dayLabel(run),
+    stillToDeduct: deduction.stillToDeduct > 0 ? { amount: deduction.stillToDeduct, jobReferences: [...new Set(references)] } : null,
+    adjustmentsNet,
+    work: labour,
   };
 }
 

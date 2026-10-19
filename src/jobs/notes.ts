@@ -107,6 +107,23 @@ export async function addNote(
   });
 }
 
+/**
+ * Feature 6007: Correct & reissue writes its `correction` note (the one type a person cannot pick)
+ * inside its own transaction, so the note and the correction commit together.
+ */
+export async function addCorrectionNote(
+  tx: Tx,
+  jobId: string,
+  operatorId: string,
+  text: string,
+  assignmentId: string,
+  now: Date,
+): Promise<void> {
+  const notes = await lockedNotes(tx, jobId);
+  notes.push({ id: randomUUID(), at: now.toISOString(), operatorId, type: "correction", note: text, assignmentId });
+  await tx.job.update({ where: { id: jobId }, data: { operatorNotes: toJson(notes) } });
+}
+
 export async function editNote(
   client: PrismaClient,
   jobId: string,

@@ -2,7 +2,8 @@
 //
 // POST /api/test-data/settlements/run                    the Monday run as of `now`
 // POST /api/test-data/settlements/:reference/approve-link a fresh approve link for a labelled settlement
-// POST /api/test-data/jobs/:reference/correction-note    the `correction` note Correct & reissue will write
+// POST /api/test-data/settlements/:reference/status      Feature 6007: a labelled draft made approved or paid
+// POST /api/test-data/jobs/:reference/correction         Feature 6007: a correction row of any size on a labelled job
 //
 // Non-production only; with a test-run cookie the run sweeps that label's own work and nothing else.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
@@ -16,7 +17,6 @@ import { seedAuthFixtures } from "../src/db/seed/auth.js";
 import { approveRoutes } from "../src/approve/routes.js";
 import { testRunSignal } from "../src/test-data/label.js";
 import { mountTestDataRoutes } from "../src/test-data/routes.js";
-import { correctedSince } from "../src/settlements/service.js";
 import type { PrismaClient } from "../src/db/client.js";
 
 let db: PrismaClient;
@@ -100,7 +100,7 @@ describe("the run hook", () => {
     const app = buildApp();
     await request(app).post("/api/test-data/settlements/run").send(RUN).expect(404);
     await request(app).post("/api/test-data/settlements/CINV-518/approve-link").expect(404);
-    await request(app).post("/api/test-data/jobs/JOB-1043/correction-note").expect(404);
+    await request(app).post("/api/test-data/settlements/CINV-518/status").send({ status: "paid" }).expect(404);
   });
 });
 
@@ -125,21 +125,52 @@ describe("the approve-link hook", () => {
   });
 });
 
-describe("the correction-note hook", () => {
-  test("writes a correction note dated now onto a labelled job, which flags a draft made before it", async () => {
-    const visit = await completedVisit(db, { contractorCode: "CON-014", day: "2026-10-14", hours: 1, testData: "e2e" });
+describe("the status hook", () => {
+  async function labelledDraft(): Promise<{ reference: string }> {
+    await completedVisit(db, { contractorCode: "CON-014", day: "2026-10-14", hours: 1, testData: "e2e" });
     await request(buildApp()).post("/api/test-data/settlements/run").send(RUN).expect(200);
-    const draft = await db.contractorSettlement.findFirstOrThrow();
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    return db.contractorSettlement.findFirstOrThrow({ select: { reference: true } });
+  }
 
-    await request(buildApp()).post(`/api/test-data/jobs/${visit.jobReference}/correction-note`).expect(200);
-    const job = await db.job.findUniqueOrThrow({ where: { id: visit.jobId } });
-    expect(job.operatorNotes).toEqual([expect.objectContaining({ type: "correction" })]);
-    expect(correctedSince(draft.createdAt, [job.operatorNotes])).toBe(true);
+  test("makes a labelled draft approved, then paid - the weeks a correction must never reopen", async () => {
+    const draft = await labelledDraft();
+    await request(buildApp()).post(`/api/test-data/settlements/${draft.reference}/status`).send({ status: "approved" }).expect(200);
+    const approved = await db.contractorSettlement.findFirstOrThrow();
+    expect(approved).toMatchObject({ status: "approved", contractorGstRegistered: expect.any(Boolean) as boolean });
+    expect(approved.approvedAt).not.toBeNull();
+
+    await request(buildApp()).post(`/api/test-data/settlements/${draft.reference}/status`).send({ status: "paid" }).expect(200);
+    const paid = await db.contractorSettlement.findFirstOrThrow();
+    expect(paid).toMatchObject({ status: "paid", paymentReference: draft.reference });
+    expect(paid.paidAt).not.toBeNull();
   });
 
-  test("refuses a job that is not test data", async () => {
-    const visit = await completedVisit(db, { contractorCode: "CON-014", day: "2026-10-14", hours: 1 });
-    await request(buildApp()).post(`/api/test-data/jobs/${visit.jobReference}/correction-note`).expect(404);
+  test("refuses a status that is not approved or paid, an unlabelled settlement, and a draft going straight on twice", async () => {
+    const draft = await labelledDraft();
+    await request(buildApp()).post(`/api/test-data/settlements/${draft.reference}/status`).send({ status: "draft" }).expect(400);
+    await request(buildApp()).post("/api/test-data/settlements/CINV-404/status").send({ status: "paid" }).expect(404);
+    await request(buildApp()).post(`/api/test-data/settlements/${draft.reference}/status`).send({ status: "paid" }).expect(200);
+    await request(buildApp()).post(`/api/test-data/settlements/${draft.reference}/status`).send({ status: "approved" }).expect(409);
+  });
+});
+
+describe("the correction hook", () => {
+  test("writes a correction of any size onto a labelled job's contractor, as Mike's, and nothing for a real job or a bad body", async () => {
+    const visit = await completedVisit(db, { contractorCode: "CON-014", day: "2026-10-14", hours: 1, testData: "e2e" });
+    await request(buildApp()).post(`/api/test-data/jobs/${visit.jobReference}/correction`).send({ amount: -500_000, reason: "A big one." }).expect(200);
+    const row = await db.contractorPayAdjustment.findFirstOrThrow();
+    expect(row).toMatchObject({ amount: -500_000, kind: "correction", reason: "A big one.", jobId: visit.jobId, settlementId: null });
+    expect(row.contractorId).toBe((await db.contractor.findUniqueOrThrow({ where: { code: "CON-014" } })).id);
+
+    await request(buildApp()).post(`/api/test-data/jobs/${visit.jobReference}/correction`).send({ amount: 0, reason: "x" }).expect(400);
+    await request(buildApp()).post(`/api/test-data/jobs/${visit.jobReference}/correction`).send({ amount: -100 }).expect(400);
+    const real = await completedVisit(db, { contractorCode: "CON-014", day: "2026-10-15", hours: 1 });
+    await request(buildApp()).post(`/api/test-data/jobs/${real.jobReference}/correction`).send({ amount: -100, reason: "x" }).expect(404);
+    expect(await db.contractorPayAdjustment.count()).toBe(1);
+  });
+
+  test("it does not exist in production", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    await request(buildApp()).post("/api/test-data/jobs/JOB-1043/correction").send({ amount: -100, reason: "x" }).expect(404);
   });
 });

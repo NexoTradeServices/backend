@@ -14,6 +14,7 @@
 //   Total       the settlement total plus GST
 import type { Prisma } from "../generated/prisma/client.js";
 import { contractorMultiplierOf, labourTotal, WEEKEND_CONTRACTOR_MULTIPLIER } from "../invoices/arithmetic.js";
+import { applyDeductions, payForWorkBefore } from "./deduct.js";
 import { dayLabel, friendlyDate, periodLabel, ymdOf } from "./calendar.js";
 import { todayIn } from "../time/index.js";
 
@@ -64,8 +65,18 @@ export interface PayLine {
 
 export interface AdjustmentLine {
   reason: string;
+  /** Feature 6007: the line as it prints -- "JOB-1042 Adjustment" / "JOB-1042 Correction", or just the word when no job (the reason never prints) */
+  label: string;
+  kind: "adjustment" | "correction";
+  /** signed cents */
   amount: number;
   jobReference: string | null;
+}
+
+/** The label a pay-adjustment row prints under (Contractor Settlement, Pay adjustments and corrections). */
+export function adjustmentLabel(kind: "adjustment" | "correction", jobReference: string | null): string {
+  const word = kind === "correction" ? "Correction" : "Adjustment";
+  return jobReference === null ? word : `${jobReference} ${word}`;
 }
 
 export interface MaterialsLine {
@@ -99,6 +110,8 @@ export interface InvoiceView {
   total: number;
   /** the next payout, shown as an invoice before the run has made it: no number, no approval */
   preview?: boolean;
+  /** Feature 6007: on the next payout only -- a deduction the run cannot take yet, "Still to deduct: $75.00 (JOB-1042)" */
+  stillToDeduct?: { amount: number; jobReferences: string[] } | null;
 }
 
 /** GST on top of pay for work, to the cent; null when the contractor is not registered. */
@@ -184,6 +197,8 @@ export async function buildInvoiceView(db: Db, settlement: SettlementForView): P
   const lines = built.map((entry) => entry.line);
   const adjustments: AdjustmentLine[] = settlement.payAdjustments.map((adjustment) => ({
     reason: adjustment.reason,
+    label: adjustmentLabel(adjustment.kind, adjustment.job?.reference ?? null),
+    kind: adjustment.kind,
     amount: adjustment.amount,
     jobReference: adjustment.job?.reference ?? null,
   }));
@@ -245,8 +260,18 @@ export async function buildNextPayoutView(db: Db, contractorId: string, now: Dat
     },
     include: include.assignments.include,
   });
-  const payAdjustments = await db.contractorPayAdjustment.findMany({ where: { contractorId, settlementId: null }, include: include.payAdjustments.include, orderBy: { createdAt: "asc" } });
-  if (assignments.length === 0 && payAdjustments.length === 0) return null;
+  const waiting = await db.contractorPayAdjustment.findMany({ where: { contractorId, settlementId: null }, include: include.payAdjustments.include, orderBy: { createdAt: "asc" } });
+  if (assignments.length === 0 && waiting.length === 0) return null;
+  // The run takes a minus row only up to the week's pay for work: show what it will take, and the rest apart.
+  const labour = assignments.reduce((sum, assignment) => sum + (assignment.contractorPay ?? 0), 0);
+  const deduction = applyDeductions(payForWorkBefore(labour, waiting), waiting);
+  const payAdjustments = waiting
+    .map((row) => ({ ...row, amount: row.amount > 0 ? row.amount : -(deduction.taken.get(row.id) ?? 0) }))
+    .filter((row) => row.amount !== 0);
+  const references = deduction.left.flatMap((row) => {
+    const reference = waiting.find((adjustment) => adjustment.id === row.id)?.job?.reference;
+    return reference === undefined ? [] : [reference];
+  });
   const pretend = {
     reference: "",
     status: "draft",
@@ -260,5 +285,11 @@ export async function buildNextPayoutView(db: Db, contractorId: string, now: Dat
     periodEnd: new Date(`${run.periodEnd}T00:00:00.000Z`),
   } as unknown as SettlementForView;
   void now;
-  return { ...(await buildInvoiceView(db, pretend)), heading: "Draft invoice", dateLabel: "Not yet invoiced", preview: true };
+  return {
+    ...(await buildInvoiceView(db, pretend)),
+    heading: "Draft invoice",
+    dateLabel: "Not yet invoiced",
+    preview: true,
+    stillToDeduct: deduction.stillToDeduct > 0 ? { amount: deduction.stillToDeduct, jobReferences: [...new Set(references)] } : null,
+  };
 }

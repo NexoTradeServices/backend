@@ -39,7 +39,7 @@ export interface IssuedInvoice {
 }
 
 /** "2.0h" for a whole number of hours, "2.25h" otherwise. */
-function hoursText(hours: number): string {
+export function hoursText(hours: number): string {
   return `${Number.isInteger(hours) ? hours.toFixed(1) : String(Number(hours.toFixed(2)))}h`;
 }
 

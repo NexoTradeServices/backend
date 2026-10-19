@@ -546,7 +546,7 @@ describe("AC7 -- the receipt's wording", () => {
         "",
         "Nothing further is owed.",
         "",
-        "Questions? Call us on 08 0000 0000.",
+        "Questions about this bill? Call us on 08 0000 0000.",
         "",
         "-- Perth Trades & Services",
       ].join("\n"),

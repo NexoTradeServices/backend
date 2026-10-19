@@ -6,6 +6,7 @@
 // only (the invoice, its lines, its billed-to copy), so the same invoice always
 // reads the same; it is built at send time and never stored. No bank account
 // appears anywhere: the customer pays online.
+import QRCode from "qrcode";
 import { PDFDocument, StandardFonts, type PDFFont } from "pdf-lib";
 import type { PrismaClient } from "../db/client.js";
 import type { Prisma } from "../generated/prisma/client.js";
@@ -124,7 +125,33 @@ export async function makeInvoicePdf(input: InvoicePdfInput): Promise<Uint8Array
     sheet.text(GST_NOT_APPLICABLE, 10, regular);
     sheet.y -= 6;
   }
-  if (input.payLinkUrl !== null) sheet.text(`Pay online: ${input.payLinkUrl}`, 10, regular);
+  if (input.payLinkUrl !== null) {
+    // Feature 6007: the pay link is also a QR code, beside the "Pay online" line (none on a $0 invoice,
+    // which has no link). Whoever holds the printed page can pay without typing the link.
+    const side = 84;
+    sheet.room(side + 12);
+    const top = sheet.y + 8;
+    const cells = QRCode.create(input.payLinkUrl, { errorCorrectionLevel: "M" }).modules;
+    const cell = side / (cells.size + 4); // a two-cell quiet zone round the code
+    for (let row = 0; row < cells.size; row += 1) {
+      for (let col = 0; col < cells.size; col += 1) {
+        if (cells.get(row, col) === 0) continue;
+        sheet.page.drawRectangle({
+          x: right - side + (col + 2) * cell,
+          y: top - (row + 3) * cell,
+          width: cell,
+          height: cell,
+          color: INK,
+        });
+      }
+    }
+    const textWidth = sheet.width - side - 16;
+    for (const piece of wrap(plain(`Pay online: ${input.payLinkUrl}`), regular, 10, textWidth)) {
+      sheet.page.drawText(piece, { x: left, y: sheet.y, size: 10, font: regular, color: INK });
+      sheet.y -= 15;
+    }
+    sheet.y = Math.min(sheet.y, top - side) - 4;
+  }
   sheet.text(`Questions about this bill? Call ${input.accountsPhone}`, 10, regular, MUTED);
 
   return pdf.save();

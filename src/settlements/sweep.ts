@@ -18,6 +18,7 @@ import { burnBySettlement, CapabilityTokenType } from "../capability-tokens/inde
 import { nextReference } from "../db/reference.js";
 import { isProduction } from "../test-data/label.js";
 import { addDays, cycleDays, periodFor, plainDate, workDayOf, ymdOf } from "./calendar.js";
+import { applyDeductions } from "./deduct.js";
 import { gstOnTop } from "./invoice-view.js";
 import { askDraftEmail } from "./messages.js";
 
@@ -87,7 +88,11 @@ export async function sweepContractor(tx: Db, contractorId: string, options: Swe
   const adjustments = await tx.contractorPayAdjustment.findMany({
     where: { contractorId, ...labelled, OR: old === null ? [{ settlementId: null }] : [{ settlementId: null }, { settlementId: old.id }] },
   });
-  if (visits.length === 0 && adjustments.length === 0) return null;
+  // Feature 6007: plus rows ride along; a minus row (a correction) takes from the week's pay for
+  // work, oldest first, and what it cannot take waits. With no visit and no plus row there is no
+  // pay for work to take from, so there is nothing to make a draft of.
+  const plusRows = adjustments.filter((adjustment) => adjustment.amount > 0);
+  if (visits.length === 0 && plusRows.length === 0) return null;
 
   if (old !== null) {
     await tx.contractorSettlement.update({
@@ -111,13 +116,18 @@ export async function sweepContractor(tx: Db, contractorId: string, options: Swe
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([trade, entry]) => ({ trade, count: entry.count, amount: entry.amount }));
   const labour = breakdownByTrade.reduce((sum, entry) => sum + entry.amount, 0);
-  const adjustmentsAmount = adjustments.reduce((sum, adjustment) => sum + adjustment.amount, 0);
+  const deduction = applyDeductions(labour + plusRows.reduce((sum, row) => sum + row.amount, 0), adjustments);
+  // A minus row is swept for the part taken; a part taken of 0 stays unswept.
+  const swept = adjustments
+    .map((row) => ({ row, amount: row.amount > 0 ? row.amount : -(deduction.taken.get(row.id) ?? 0) }))
+    .filter((entry) => entry.amount !== 0);
+  const adjustmentsAmount = swept.reduce((sum, entry) => sum + entry.amount, 0);
   const materialsAmount = visits.reduce((sum, visit) => sum + (visit.materialsReimbursement ?? 0), 0);
 
   const defaultStart = addDays(options.periodEnd, -(cycleDays(settings) - 1));
   const oldStart = old === null ? null : ymdOf(old.periodStart);
   const periodStart = oldStart !== null && oldStart < defaultStart ? oldStart : defaultStart;
-  const label = sharedLabel([...visits.map((visit) => visit.testData), ...adjustments.map((adjustment) => adjustment.testData)]);
+  const label = sharedLabel([...visits.map((visit) => visit.testData), ...swept.map((entry) => entry.row.testData)]);
 
   const created = await tx.contractorSettlement.create({
     data: {
@@ -136,7 +146,27 @@ export async function sweepContractor(tx: Db, contractorId: string, options: Swe
     select: { id: true, reference: true, contractorId: true, testData: true },
   });
   await tx.assignment.updateMany({ where: { id: { in: visits.map((visit) => visit.id) } }, data: { settlementId: created.id } });
-  await tx.contractorPayAdjustment.updateMany({ where: { id: { in: adjustments.map((adjustment) => adjustment.id) } }, data: { settlementId: created.id } });
+  for (const entry of swept) {
+    // A minus row only partly taken is split: this row keeps the part taken, a new unswept row holds the rest.
+    const rest = entry.row.amount - entry.amount;
+    if (rest !== 0) {
+      await tx.contractorPayAdjustment.create({
+        data: {
+          contractorId: entry.row.contractorId,
+          amount: rest,
+          kind: "correction",
+          carriedFromId: entry.row.id,
+          reason: entry.row.reason,
+          jobId: entry.row.jobId,
+          createdByUserId: entry.row.createdByUserId,
+          // the same moment as the row it continues, so "oldest first" keeps its place
+          createdAt: entry.row.createdAt,
+          ...(entry.row.testData === null ? {} : { testData: entry.row.testData }),
+        },
+      });
+    }
+    await tx.contractorPayAdjustment.update({ where: { id: entry.row.id }, data: { settlementId: created.id, amount: entry.amount } });
+  }
   return { ...created, replacedId: old?.id ?? null };
 }
 

@@ -15,7 +15,6 @@ import { seedBase } from "../src/db/seed/base.js";
 import { seedFixtures } from "../src/db/seed/fixtures.js";
 import { seedAuthFixtures } from "../src/db/seed/auth.js";
 import { CapabilityTokenType, mintCapabilityLink } from "../src/capability-tokens/index.js";
-import { correctedSince } from "../src/settlements/service.js";
 import { runWeekly } from "../src/settlements/sweep.js";
 import type { PrismaClient } from "../src/db/client.js";
 
@@ -120,47 +119,13 @@ describe("AC7 -- an ignored draft is superseded by the next run", () => {
   });
 });
 
-describe("AC8 -- Job corrected since, and Rebuild", () => {
+describe("AC8 -- Rebuild", () => {
   async function bobsDraft(): Promise<{ id: string; reference: string; jobId: string; assignmentId: string }> {
     const visit = await completedVisit(db, { contractorCode: "CON-014", day: "2026-10-14", hours: 3 });
     await runWeekly(db, MONDAY_19_OCT);
     const [draft] = await settlementsOf("CON-014");
     return { id: draft?.id ?? "", reference: draft?.reference ?? "", jobId: visit.jobId, assignmentId: visit.assignmentId };
   }
-
-  async function addNote(jobId: string, type: string, at: Date): Promise<void> {
-    await db.job.update({
-      where: { id: jobId },
-      data: { operatorNotes: [{ id: "n1", at: at.toISOString(), operatorId: await mikeId(), type, note: "Added the missing hour." }] },
-    });
-  }
-
-  interface OpsList {
-    rows: { reference: string; correctedSince: boolean; gstNotRecorded: boolean; jobs: number }[];
-  }
-
-  test("correctedSince is true only for a correction note dated after the draft was made", () => {
-    const made = new Date("2026-10-19T00:00:00.000Z");
-    const note = (type: string, at: string) => [{ at, operatorId: "u", type, note: "x" }];
-    expect(correctedSince(made, [note("correction", "2026-10-19T01:00:00.000Z")])).toBe(true);
-    expect(correctedSince(made, [note("correction", "2026-10-18T23:00:00.000Z")])).toBe(false);
-    expect(correctedSince(made, [note("general", "2026-10-19T01:00:00.000Z")])).toBe(false);
-    expect(correctedSince(made, [null, "junk"])).toBe(false);
-    expect(correctedSince(made, [])).toBe(false);
-  });
-
-  test("AC8: the Awaiting list flags a draft whose job was corrected after it was made - and only then", async () => {
-    const draft = await bobsDraft();
-    const flagged = async (): Promise<boolean> => {
-      const res = await request(app).get("/api/settlements?view=awaiting").set("Cookie", mike);
-      return (res.body as OpsList).rows.find((row) => row.reference === draft.reference)?.correctedSince ?? false;
-    };
-    expect(await flagged()).toBe(false);
-    await addNote(draft.jobId, "correction", new Date(Date.now() - 86_400_000)); // before the draft was made
-    expect(await flagged()).toBe(false);
-    await addNote(draft.jobId, "correction", new Date(Date.now() + 60_000));
-    expect(await flagged()).toBe(true);
-  });
 
   test("AC8: Rebuild supersedes it (who + when), makes a fresh draft with the same period end, emails a fresh link", async () => {
     const draft = await bobsDraft();

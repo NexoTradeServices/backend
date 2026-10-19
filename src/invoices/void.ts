@@ -6,6 +6,7 @@
 // a Stripe failure is logged and never undoes the void -- the daily sweep's switch-off step
 // tries again for a week.
 import type { PrismaClient } from "../db/client.js";
+import type { Prisma } from "../generated/prisma/client.js";
 import { isFakePayLink } from "../test-data/fake-stripe.js";
 import { stripeProvider } from "./stripe.js";
 
@@ -42,6 +43,39 @@ export async function switchPayLinkOff(paymentLinkId: string, invoiceReference: 
   }
 }
 
+type Db = Prisma.TransactionClient;
+
+/**
+ * The void itself, inside the caller's transaction (Feature 6007 voids inside Correct & reissue's):
+ * the invoice row locked, guarded on `status = sent`. The pay link is NOT switched off here -- the
+ * caller does that after its commit.
+ */
+export async function voidInTx(
+  tx: Db,
+  input: { invoiceId: string; userId: string; reason: string; now: Date },
+): Promise<VoidOutcome> {
+  const locked = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM "Invoice" WHERE id = ${input.invoiceId} FOR UPDATE`;
+  if (locked.length === 0) return "not_found";
+  const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: input.invoiceId }, select: { status: true, isZeroDollar: true } });
+  if (invoice.status === "paid") return "paid";
+  if (invoice.status === "void") return "void";
+  if (invoice.isZeroDollar) return "zero_dollar";
+  const changed = await tx.invoice.updateMany({
+    where: { id: input.invoiceId, status: "sent" },
+    data: { status: "void", voidReason: input.reason, voidedByUserId: input.userId, voidedAt: input.now },
+  });
+  return changed.count === 1 ? "voided" : "paid";
+}
+
+/** After the commit: switch the voided invoice's pay link off. Never throws. */
+export async function switchOffAfterVoid(client: PrismaClient, invoiceId: string): Promise<void> {
+  const invoice = await client.invoice.findUniqueOrThrow({
+    where: { id: invoiceId },
+    select: { stripePaymentLinkId: true, reference: true },
+  });
+  if (invoice.stripePaymentLinkId !== null) await switchPayLinkOff(invoice.stripePaymentLinkId, invoice.reference);
+}
+
 /**
  * Void the invoice. One transaction, guarded on `status = sent` (a payment landing at the
  * same moment wins or loses cleanly); then the pay link is switched off.
@@ -51,26 +85,8 @@ export async function voidInvoice(
   input: { invoiceId: string; userId: string; reason: string; now?: Date },
 ): Promise<VoidOutcome> {
   const now = input.now ?? new Date();
-  const outcome = await client.$transaction(async (tx): Promise<VoidOutcome> => {
-    const locked = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM "Invoice" WHERE id = ${input.invoiceId} FOR UPDATE`;
-    if (locked.length === 0) return "not_found";
-    const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: input.invoiceId }, select: { status: true, isZeroDollar: true } });
-    if (invoice.status === "paid") return "paid";
-    if (invoice.status === "void") return "void";
-    if (invoice.isZeroDollar) return "zero_dollar";
-    const changed = await tx.invoice.updateMany({
-      where: { id: input.invoiceId, status: "sent" },
-      data: { status: "void", voidReason: input.reason, voidedByUserId: input.userId, voidedAt: now },
-    });
-    return changed.count === 1 ? "voided" : "paid";
-  });
-  if (outcome === "voided") {
-    const invoice = await client.invoice.findUniqueOrThrow({
-      where: { id: input.invoiceId },
-      select: { stripePaymentLinkId: true, reference: true },
-    });
-    if (invoice.stripePaymentLinkId !== null) await switchPayLinkOff(invoice.stripePaymentLinkId, invoice.reference);
-  }
+  const outcome = await client.$transaction((tx) => voidInTx(tx, { ...input, now }));
+  if (outcome === "voided") await switchOffAfterVoid(client, input.invoiceId);
   return outcome;
 }
 

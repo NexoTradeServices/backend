@@ -5,7 +5,7 @@
 import type { PrismaClient } from "../db/client.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import { dayLabel, nextRunMonday, payDayAfter, payDayFor, periodLabel, ymdOf } from "./calendar.js";
-import { amountOf, correctedSince, nextPayout, type NextPayout } from "./service.js";
+import { amountOf, nextPayout, type NextPayout } from "./service.js";
 import { formatDate, todayIn } from "../time/index.js";
 
 export const SETTLEMENTS_PAGE = 50;
@@ -25,7 +25,7 @@ function firstNameOf(name: string): string {
 const rowInclude = {
   contractor: { select: { code: true, name: true, gstRegistered: true, payoutBsb: true, payoutAccountNo: true, payoutAccountName: true } },
   paidBy: { select: { name: true } },
-  assignments: { select: { job: { select: { operatorNotes: true } } } },
+  assignments: { select: { id: true } },
 } satisfies Prisma.ContractorSettlementInclude;
 
 type Row = Prisma.ContractorSettlementGetPayload<{ include: typeof rowInclude }>;
@@ -48,8 +48,6 @@ export interface OpsRow {
   madeLabel: string;
   paidLabel: string | null;
   paidBy: string | null;
-  /** a job on the draft got a correction note after it was made */
-  correctedSince: boolean;
   /** the contractor's GST registration is still not asked */
   gstNotRecorded: boolean;
 }
@@ -57,8 +55,12 @@ export interface OpsRow {
 export interface UpcomingRow {
   contractor: ContractorRef;
   jobs: number;
+  /** Feature 6007: the visits' labour waiting, cents */
+  work: number;
+  /** Feature 6007: the plus and minus lines waiting, net, cents (negative = a deduction) */
   adjustments: number;
-  amount: number;
+  /** Feature 6007: what the run will pay, parts included, cents */
+  payout: number;
   invoicedOn: string;
   paidOn: string;
 }
@@ -89,7 +91,6 @@ function rowOf(row: Row, zone: string, ratePercent: number): OpsRow {
     madeLabel: shortDate(zone, row.createdAt),
     paidLabel: row.paidAt === null ? null : shortDate(zone, row.paidAt),
     paidBy: row.paidBy?.name ?? null,
-    correctedSince: row.status === "draft" && correctedSince(row.createdAt, row.assignments.map((assignment) => assignment.job.operatorNotes)),
     gstNotRecorded: row.status === "draft" && row.contractor.gstRegistered === null,
   };
 }
@@ -114,8 +115,9 @@ async function upcomingRows(client: PrismaClient, now: Date): Promise<UpcomingRo
     rows.push({
       contractor: contractorRef(contractor),
       jobs: next.jobs,
-      adjustments: next.adjustments,
-      amount: next.amount,
+      work: next.work,
+      adjustments: next.adjustmentsNet,
+      payout: next.amount,
       invoicedOn: dayLabel(run),
       paidOn: dayLabel(payDayAfter(settings, run)),
     });
