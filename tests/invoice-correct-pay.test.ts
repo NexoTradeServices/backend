@@ -2,7 +2,7 @@
 //
 // AC7  a visit not yet swept recomputes; a visit on his unapproved draft recomputes and the draft is
 //      superseded and resent with a fresh approve link; a visit on an approved or paid week stays as paid
-//      and a correction (minus or plus) waits for his next run, worded "Correction - JOB-1042" (no reason)
+//      and a correction (minus or plus) waits for his next run, worded "JOB-1042 Correction" (no reason)
 // AC12 the invoice PDF shows a QR code of its pay link; a $0 invoice has none; the email has none
 // AC13 the Payment receipt ends "Questions about this bill? Call us on [accounts phone]", the operator phone when blank
 // AC14 Bob's dashboard keeps a completed job with an unpaid invoice as "Completed - awaiting payment"; it leaves once paid
@@ -151,7 +151,7 @@ describe("AC7 -- where the visit sits decides how Bob's pay follows", () => {
     expect(view?.stillToDeduct).toEqual({ amount: 45_000, jobReferences: [job.jobReference] });
   });
 
-  test("AC7: the run takes the correction onto his next draft as 'Correction - JOB-xxxx' with no reason, signed", async () => {
+  test("AC7: the run takes the correction onto his next draft as 'JOB-xxxx Correction' with no reason, signed", async () => {
     const job = await sarahsJob(db);
     await settle(db, "paid");
     await correct(job.jobReference, { timeEntries: [entry(DAY, "08:00", "10:00")], reason: "Logged 5h, worked 2h." }).expect(200);
@@ -163,7 +163,7 @@ describe("AC7 -- where the visit sits decides how Bob's pay follows", () => {
     expect(draft).toMatchObject({ adjustmentsAmount: -45_000, totalAmount: 80_000 - 45_000 });
     const res = await request(app).get(`/api/settlements/${draft.reference}`).set("Cookie", mike).expect(200);
     const lines = (res.body as { invoice: { adjustments: { label: string; amount: number }[] } }).invoice.adjustments;
-    expect(lines).toEqual([{ reason: "Logged 5h, worked 2h.", label: `Correction - ${job.jobReference}`, kind: "correction", amount: -45_000, jobReference: job.jobReference }]);
+    expect(lines).toEqual([{ reason: "Logged 5h, worked 2h.", label: `${job.jobReference} Correction`, kind: "correction", amount: -45_000, jobReference: job.jobReference }]);
   });
 
   test("AC7: hours found too low on a paid week make a plus correction", async () => {
@@ -217,13 +217,13 @@ describe("AC8 -- what Bob reads on his Payouts screen", () => {
     expect((list.body as { nextPayout: { stillToDeduct: unknown } }).nextPayout.stillToDeduct).toEqual({ amount: 45_000, jobReferences: [job.jobReference] });
   });
 
-  test("a pay adjustment reads 'Pay adjustment - [reason]' on his next payout", async () => {
+  test("a pay adjustment reads 'Adjustment' (no reason) on his next payout", async () => {
     const mikeUser = await db.user.findUniqueOrThrow({ where: { email: "mike@idelta.com.au" } });
     await db.contractorPayAdjustment.create({ data: { contractorId: (await bob()).id, amount: 2500, reason: "Parking", createdByUserId: mikeUser.id } });
     const bobCookie = await signIn(app, "bob@idelta.com.au");
     const next = await request(app).get("/api/contractor/settlements/next").set("Cookie", bobCookie).expect(200);
     expect((next.body as { invoice: { adjustments: { label: string; amount: number }[] } }).invoice.adjustments).toEqual([
-      expect.objectContaining({ label: "Pay adjustment - Parking", amount: 2500 }),
+      expect.objectContaining({ label: "Adjustment", amount: 2500 }),
     ]);
   });
 });

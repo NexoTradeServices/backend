@@ -215,7 +215,7 @@ describe("AC2/AC3 -- the Monday sweep", () => {
     expect(view.adjustments).toEqual([
       {
         reason: "Missing hour on the job, corrected after approval",
-        label: "Pay adjustment - Missing hour on the job, corrected after approval",
+        label: `${visit.jobReference} Adjustment`,
         kind: "adjustment",
         amount: 15_000,
         jobReference: visit.jobReference,
@@ -456,7 +456,7 @@ describe("6007 AC8 -- a deduction takes up to the week's pay for work", () => {
     expect(view.subtotal).toBe(0);
     expect(view.materialsTotal).toBe(4500);
     expect(view.total).toBe(4500);
-    expect(view.adjustments.map((line) => [line.label, line.amount])).toEqual([[`Correction - ${worked.jobReference}: Logged 5h, worked 2h.`, -10_000]]);
+    expect(view.adjustments.map((line) => [line.label, line.amount])).toEqual([[`${worked.jobReference} Correction`, -10_000]]);
 
     // The next payout shows what is still to deduct, and the next run takes it from new work.
     const bob = await db.contractor.findUniqueOrThrow({ where: { code: "CON-014" } });

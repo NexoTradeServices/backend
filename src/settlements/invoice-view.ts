@@ -65,7 +65,7 @@ export interface PayLine {
 
 export interface AdjustmentLine {
   reason: string;
-  /** Feature 6007: the line as it prints -- "Pay adjustment - [reason]" or "Correction - JOB-1042" (a correction never prints Mike's reason) */
+  /** Feature 6007: the line as it prints -- "JOB-1042 Adjustment" / "JOB-1042 Correction", or just the word when no job (the reason never prints) */
   label: string;
   kind: "adjustment" | "correction";
   /** signed cents */
@@ -74,8 +74,9 @@ export interface AdjustmentLine {
 }
 
 /** The label a pay-adjustment row prints under (Contractor Settlement, Pay adjustments and corrections). */
-export function adjustmentLabel(kind: "adjustment" | "correction", reason: string, jobReference: string | null): string {
-  return kind === "correction" ? `Correction - ${jobReference ?? "job"}` : `Pay adjustment - ${reason}`;
+export function adjustmentLabel(kind: "adjustment" | "correction", jobReference: string | null): string {
+  const word = kind === "correction" ? "Correction" : "Adjustment";
+  return jobReference === null ? word : `${jobReference} ${word}`;
 }
 
 export interface MaterialsLine {
@@ -196,7 +197,7 @@ export async function buildInvoiceView(db: Db, settlement: SettlementForView): P
   const lines = built.map((entry) => entry.line);
   const adjustments: AdjustmentLine[] = settlement.payAdjustments.map((adjustment) => ({
     reason: adjustment.reason,
-    label: adjustmentLabel(adjustment.kind, adjustment.reason, adjustment.job?.reference ?? null),
+    label: adjustmentLabel(adjustment.kind, adjustment.job?.reference ?? null),
     kind: adjustment.kind,
     amount: adjustment.amount,
     jobReference: adjustment.job?.reference ?? null,

@@ -120,7 +120,10 @@ describe("AC10 -- adding a pay adjustment", () => {
   });
 
   test("AC10: the dialog's muted line says which, before Mike presses Add", async () => {
-    expect((await landing()).body).toEqual({ landing: "next_run", sentence: "Goes on Bob's next payout - invoiced Mon 19 Oct." });
+    // The date is the next run Monday after the real clock, so only its shape is pinned.
+    const first = (await landing()).body as { landing: string; sentence: string };
+    expect(first.landing).toBe("next_run");
+    expect(first.sentence).toMatch(/^Goes on Bob's next payout - invoiced \w{3} \d{1,2} \w{3}\.$/);
     await sarahsJob(db);
     await settle(db, "draft");
     const draft = (await landing()).body as { landing: string; sentence: string };
