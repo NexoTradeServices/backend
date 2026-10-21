@@ -25,6 +25,10 @@ export interface CustomerRating {
   overdueInvoices: number;
   /** Cents, GST-inclusive. */
   totalDue: number;
+  /** Feature 6009: the stars she has given, every job of hers; null until she has given any. */
+  reviewsGiven: { average: number; count: number } | null;
+  /** Feature 6009: the average of her answered 0-10 scores, one decimal; null until she has answered one. */
+  wouldRecommend: number | null;
 }
 
 const YEAR_MS = 365 * 86_400_000;
@@ -97,6 +101,10 @@ export async function customerRatingOf(
   const overdueInvoices = owed.filter((invoice) => dueStateOf(invoice.dueAt, zone, now).kind === "overdue").length;
   const totalDue = owed.reduce((sum, invoice) => sum + invoice.amount, 0);
 
+  const given = await client.review.findMany({ where: { customerId }, select: { rating: true, recommendScore: true } });
+  const scores = given.flatMap((review) => (review.recommendScore === null ? [] : [review.recommendScore]));
+  const oneDecimal = (values: number[]): number => Math.round((values.reduce((sum, n) => sum + n, 0) / values.length) * 10) / 10;
+
   return {
     label,
     jobsInLastYear,
@@ -108,5 +116,7 @@ export async function customerRatingOf(
     disputes,
     overdueInvoices,
     totalDue,
+    reviewsGiven: given.length === 0 ? null : { average: oneDecimal(given.map((review) => review.rating)), count: given.length },
+    wouldRecommend: scores.length === 0 ? null : oneDecimal(scores),
   };
 }

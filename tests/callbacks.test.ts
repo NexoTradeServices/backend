@@ -5,6 +5,7 @@
 // AC3  a callback raised from a callback links to the root original
 // AC4  refused 409 on a job that is not completed; a contractor gets 403
 // AC5  the job read carries Callback on / Callbacks (oldest first) and the two flags
+// AC10 (Feature 6009) the Callback - no charge email ends "Questions about this bill? Call us on [accounts phone]."
 // AC5a the earlier notes (original, then earlier finished callbacks), read-only, on the callback Bob attends -- and only then
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import type { Express } from "express";
@@ -14,6 +15,7 @@ import { recordingAdapter } from "./helpers/notifications.js";
 import { registerProvider, resetProviders } from "../src/notifications/providers/registry.js";
 import { freshWorld, signIn } from "./helpers/ops-app.js";
 import { acceptCallback, buildCallbackApp, completedOriginal, raise } from "./helpers/callbacks.js";
+import { getTemplate } from "../src/notifications/templates/registry.js";
 import type { PrismaClient } from "../src/db/client.js";
 
 let db: PrismaClient;
@@ -262,5 +264,22 @@ describe("AC5a -- the earlier notes, read-only", () => {
     // Once his booking is over, the page is gone too.
     await db.assignment.update({ where: { id: booked.assignmentId }, data: { status: "completed" } });
     expect((await earlier(bob, ref, first.reference)).status).toBe(404);
+  });
+});
+
+describe("AC10 -- the Callback - no charge email's last line (Feature 6009)", () => {
+  test("AC10: text and html end with 'Questions about this bill? Call us on [phone].' before the signature", () => {
+    const template = getTemplate("callback_no_charge", "email");
+    const message = template?.render({
+      firstName: "Sarah",
+      trade: "plumbing",
+      jobReference: "JOB-1099",
+      invoiceReference: "INV-2050",
+      officePhone: "08 9000 1111",
+      platformName: "iDelta",
+    });
+    expect(message?.text).toContain("\n\nQuestions about this bill? Call us on 08 9000 1111.\n\n-- iDelta");
+    expect(message?.html).toContain("<p>Questions about this bill? Call us on 08 9000 1111.</p>");
+    expect(message?.text).not.toContain("\nQuestions? Call");
   });
 });

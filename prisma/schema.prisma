@@ -626,6 +626,8 @@ model Review {
   contractorId String
   rating       Int
   reviewText   String?
+  /// Feature 6009: "How likely are you to recommend us to a friend?" 0-10, optional. Rates the business.
+  recommendScore Int?
   createdAt    DateTime @default(now())
 
   job        Job        @relation(fields: [jobId], references: [id])
@@ -635,7 +637,8 @@ model Review {
   /// Test-data label (design: Data Model, Test data). Empty on every real record.
   testData String?
 
-  @@index([jobId])
+  /// One review per job (Feature 6009).
+  @@unique([jobId])
   @@index([contractorId])
 }
 
