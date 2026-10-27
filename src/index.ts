@@ -26,6 +26,7 @@ import { enquiryRoutes } from './enquiries/routes.js'
 import { jobRoutes } from './jobs/routes.js'
 import { respondRoutes } from './respond/routes.js'
 import { approveRoutes } from './approve/routes.js'
+import { reviewRoutes } from './reviews/routes.js'
 import { settlementRoutes } from './settlements/routes.js'
 import { contractorSettlementRoutes } from './settlements/contractor-routes.js'
 import { startSettlementLoop } from './settlements/loop.js'
@@ -126,6 +127,9 @@ app.use('/api/respond', respondRoutes(prisma))
 
 // Feature 6003: the contractor's approve link. No session -- the token in the path is the permission.
 app.use('/api/approve', approveRoutes(prisma))
+
+// Feature 6009: the customer's review link. No session -- the token in the path is the permission.
+app.use('/api/review', reviewRoutes(prisma))
 
 // Feature 4002, plan decision 13: the interim Texts sent page -- no login
 // (the site is not public yet), in dev and production alike, until BKLG-028

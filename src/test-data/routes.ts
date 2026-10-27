@@ -8,6 +8,7 @@
 // POST /api/test-data/settlements/:reference/status -- Feature 6007.
 // POST /api/test-data/jobs/:reference/correction -- Feature 6007.
 // POST /api/test-data/customer-login -- Feature 1018.
+// POST /api/test-data/jobs/:reference/review-link -- Feature 6009.
 //
 // Lets the browser tests clear their own label from wherever they run (the dev
 // machine, CI). Mounted only when NODE_ENV is not production -- absent, not
@@ -48,6 +49,10 @@
 // weeks Correct & reissue must never reopen. The correction hook writes a correction row of any size onto
 // a labelled job's contractor, so a browser test can reach "a deduction bigger than the week's pay for
 // work" (Still to deduct) whatever other work happens to be waiting.
+//
+// The review-link hook mints a fresh review link for a completed job labelled as test data and hands
+// back its URL (the real link only ever exists inside a delivered email). With `{ "state": "used" }` the
+// link is spent, with `{ "state": "expired" }` it is past its 30 days; otherwise it is open.
 //
 // The customer-login hook makes a labelled customer User with the dev password and answers its
 // email and name. The seeded cast has no customer login (Sarah is a guest by design, 1003 AC9),
@@ -211,6 +216,28 @@ export function testDataRoutes(client: PrismaClient): Router {
       res.json({ url: minted.url, path: new URL(minted.url).pathname });
     })().catch((error: unknown) => {
       console.error("POST /api/test-data/settlements/:reference/approve-link failed", error);
+      res.status(500).json({ error: error instanceof Error ? error.message : "internal error" });
+    });
+  });
+
+  router.post("/jobs/:reference/review-link", (req: Request<{ reference: string }>, res: Response) => {
+    void (async () => {
+      const state = (req.body as { state?: unknown } | undefined)?.state;
+      if (state !== undefined && state !== "open" && state !== "used" && state !== "expired") {
+        res.status(400).json({ error: "state must be open, used or expired" });
+        return;
+      }
+      const job = await client.job.findFirst({ where: { reference: req.params.reference, testData: { not: null } }, select: { id: true } });
+      if (job === null) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      const minted = await mintCapabilityLink(client, { type: CapabilityTokenType.review, jobId: job.id });
+      if (state === "used") await client.capabilityToken.update({ where: { id: minted.tokenId }, data: { usedAt: new Date() } });
+      if (state === "expired") await client.capabilityToken.update({ where: { id: minted.tokenId }, data: { expiresAt: new Date(Date.now() - 86_400_000) } });
+      res.json({ url: minted.url, path: new URL(minted.url).pathname });
+    })().catch((error: unknown) => {
+      console.error("POST /api/test-data/jobs/:reference/review-link failed", error);
       res.status(500).json({ error: error instanceof Error ? error.message : "internal error" });
     });
   });

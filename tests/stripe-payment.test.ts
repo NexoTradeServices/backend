@@ -203,11 +203,15 @@ describe("AC1 / AC2 -- a card payment, and Stripe repeating itself", () => {
     expect(after.notifications.map((n) => [n.type, n.channel, n.recipientType, n.idempotencyKey])).toEqual([
       ["payment_receipt", "email", "customer", `payment_receipt:payment:${payment.id}:email`],
       ["payment_received", "email", "ops", `payment_received:payment:${payment.id}:email`],
+      // Feature 6009: the paid step also asks for the one review request of the job.
+      ["review_request", "email", "customer", `review_request:job:${sarahs.jobId}:email`],
     ]);
-    expect(after.notifications.every((n) => n.relatedType === "payment" && n.relatedId === payment.id && n.jobId === sarahs.jobId)).toBe(true);
+    expect(
+      after.notifications.filter((n) => n.type !== "review_request").every((n) => n.relatedType === "payment" && n.relatedId === payment.id && n.jobId === sarahs.jobId),
+    ).toBe(true);
 
     await drainOnce(db);
-    expect(email.sent.map((m) => m.to).sort()).toEqual(["ops@idelta.com.au", "sarah@idelta.com.au"]);
+    expect(email.sent.map((m) => m.to).sort()).toEqual(["ops@idelta.com.au", "sarah@idelta.com.au", "sarah@idelta.com.au"]);
     const notice = email.sent.find((m) => m.to === "ops@idelta.com.au");
     expect(notice?.message.subject).toBe(`Payment received - INV-2042, $655 (${sarahs.jobReference})`);
     expect(notice?.message.text).toContain(`Sarah Chen paid INV-2042 for ${sarahs.jobReference}: $655 by card, 15 Oct 2026 at 2:15pm AWST.`);
@@ -226,7 +230,7 @@ describe("AC1 / AC2 -- a card payment, and Stripe repeating itself", () => {
     expect((await post(completed(pi))).status).toBe(200);
     const twice = await state(sarahs);
     expect(twice.payments).toHaveLength(1);
-    expect(twice.notifications).toHaveLength(2);
+    expect(twice.notifications).toHaveLength(3); // receipt, office notice, and 6009's review request
     expect(twice.invoice.paidAt).toEqual(once.invoice.paidAt);
   });
 
@@ -237,7 +241,7 @@ describe("AC1 / AC2 -- a card payment, and Stripe repeating itself", () => {
     expect([a.status, b.status]).toEqual([200, 200]);
     const after = await state(sarahs);
     expect(after.payments).toHaveLength(1);
-    expect(after.notifications).toHaveLength(2);
+    expect(after.notifications).toHaveLength(3); // receipt, office notice, and 6009's review request
   });
 });
 
@@ -307,7 +311,7 @@ describe("AC4 -- a later-settling method (PayTo)", () => {
     now = await state(sarahs);
     expect(now.invoice.status).toBe("paid");
     expect(now.payments).toEqual([expect.objectContaining({ status: "succeeded", method: "payto", amount: 65_500 })]);
-    expect(now.notifications.map((n) => n.type)).toEqual(["payment_receipt", "payment_received"]);
+    expect(now.notifications.map((n) => n.type)).toEqual(["payment_receipt", "payment_received", "review_request"]);
 
     await drainOnce(db);
     expect(email.sent.find((m) => m.to === "sarah@idelta.com.au")?.message.text).toContain("paid by PayTo on 15 Oct 2026");
@@ -455,11 +459,11 @@ describe("AC6 -- Check payment with Stripe", () => {
     const now = await state(sarahs);
     expect(now.invoice.status).toBe("paid");
     expect(now.payments).toEqual([expect.objectContaining({ status: "succeeded", method: "card", stripePaymentIntentId: pi })]);
-    expect(now.notifications.map((n) => n.type)).toEqual(["payment_receipt", "payment_received"]);
+    expect(now.notifications.map((n) => n.type)).toEqual(["payment_receipt", "payment_received", "review_request"]);
 
     // Stripe's late message afterwards changes nothing.
     expect((await post(completed(pi))).status).toBe(200);
-    expect(await db.notification.count({ where: { jobId: sarahs.jobId } })).toBe(2);
+    expect(await db.notification.count({ where: { jobId: sarahs.jobId } })).toBe(3);
     expect(await db.payment.count()).toBe(1);
   });
 
@@ -500,7 +504,7 @@ describe("AC6 -- Check payment with Stripe", () => {
     expect(res.status).toBe(200);
     expect((res.body as CheckBody).paid).toBe(true);
     expect((res.body as CheckBody).job.invoice).toMatchObject({ status: "paid", canCheckPayment: false });
-    expect(await db.notification.count({ where: { jobId: sarahs.jobId } })).toBe(2);
+    expect(await db.notification.count({ where: { jobId: sarahs.jobId } })).toBe(3);
     expect(await db.payment.count()).toBe(1);
   });
 

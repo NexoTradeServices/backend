@@ -6,6 +6,7 @@
 // AC4  late cancellations: cancelled after an acceptance only; a no-show is not one
 // AC5  disputes: a dispute or complaint note; other note types do not count
 // AC6  overdue invoices and total due: sent, not zero-dollar; paid, void and zero-dollar never count
+// AC9  (Feature 6009) Reviews given (average and count of her stars) and Would recommend (average of her answered scores), null until she has any
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { resetReferenceSequences, testClient, truncateAll } from "./helpers/database.js";
 import { seedBase } from "../src/db/seed/base.js";
@@ -240,5 +241,45 @@ describe("AC6 -- overdue invoices and total due", () => {
     const result = await rating();
     expect(result.overdueInvoices).toBe(1);
     expect(result.totalDue).toBe(48_000);
+  });
+});
+
+describe("AC9 -- reviews given and would recommend (Feature 6009)", () => {
+  async function review(jobId: string, rating: number, recommendScore: number | null): Promise<void> {
+    const bob = await db.contractor.findUniqueOrThrow({ where: { code: "CON-014" } });
+    await db.review.create({ data: { jobId, customerId, contractorId: bob.id, rating, recommendScore } });
+  }
+
+  test("none yet -> both null", async () => {
+    await makeJob(completed(10));
+    const result = await rating();
+    expect(result.reviewsGiven).toBeNull();
+    expect(result.wouldRecommend).toBeNull();
+  });
+
+  test("stars only -> Reviews given, Would recommend still null", async () => {
+    await review(await makeJob(completed(10)), 4, null);
+    const result = await rating();
+    expect(result.reviewsGiven).toEqual({ average: 4, count: 1 });
+    expect(result.wouldRecommend).toBeNull();
+  });
+
+  test("average of her stars and of her answered scores only, one decimal", async () => {
+    await review(await makeJob(completed(10)), 5, 9);
+    await review(await makeJob(completed(9)), 4, null);
+    await review(await makeJob(completed(8)), 4, 8);
+    const result = await rating();
+    expect(result.reviewsGiven).toEqual({ average: 4.3, count: 3 });
+    expect(result.wouldRecommend).toBe(8.5);
+  });
+
+  test("another customer's reviews never count", async () => {
+    const other = await db.customer.create({ data: { code: await nextReference("CUS", db), name: "Other", email: "other.test@example.com" } });
+    const job = await makeJob(completed(10));
+    const bob = await db.contractor.findUniqueOrThrow({ where: { code: "CON-014" } });
+    await db.review.create({ data: { jobId: job, customerId: other.id, contractorId: bob.id, rating: 1, recommendScore: 0 } });
+    const result = await rating();
+    expect(result.reviewsGiven).toBeNull();
+    expect(result.wouldRecommend).toBeNull();
   });
 });

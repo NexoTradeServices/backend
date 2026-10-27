@@ -23,6 +23,7 @@ import { readyToDispatch, type ReadyInput } from "./ready.js";
 import { parseServiceAreaInput, saveServiceArea, serviceAreaDtoOf } from "./service-area.js";
 import { loadContractorDay } from "./day.js";
 import { isValidAbn } from "../invoices/abn.js";
+import { listContractorReviews } from "../reviews/service.js";
 
 // ---------------------------------------------------------------------------
 // Shapes
@@ -485,6 +486,22 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
       res.json(await toDto(client, contractor));
     })().catch((error: unknown) => {
       console.error("GET /api/contractors/:code failed", error);
+      res.status(500).json({ error: "internal error" });
+    });
+  });
+
+  // Feature 6009: the Reviews tab -- his reviews, newest first, 50 at a time.
+  router.get("/:code/reviews", requireRole(Role.ops), (req: Request<{ code: string }>, res: Response) => {
+    void (async () => {
+      const contractor = await client.contractor.findUnique({ where: { code: req.params.code }, select: { id: true } });
+      if (contractor === null) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      const cursor = typeof req.query["cursor"] === "string" && req.query["cursor"] !== "" ? req.query["cursor"] : null;
+      res.json(await listContractorReviews(client, contractor.id, cursor));
+    })().catch((error: unknown) => {
+      console.error("GET /api/contractors/:code/reviews failed", error);
       res.status(500).json({ error: "internal error" });
     });
   });

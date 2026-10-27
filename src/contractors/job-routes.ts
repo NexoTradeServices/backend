@@ -21,6 +21,7 @@ import { suburbOf } from "../jobs/shared.js";
 import { billedHours } from "../jobs/billed-hours.js";
 import { issueInvoice } from "../invoices/issue.js";
 import { askCallbackNoCharge } from "../invoices/messages.js";
+import { askReviewRequest } from "../reviews/messages.js";
 import { earlierNotesOf, type EarlierJobNotes } from "../jobs/callbacks.js";
 import { kickPayLink } from "../invoices/pay-link.js";
 import { assignmentInclude, jobFactsOf, type JobFacts } from "../respond/service.js";
@@ -399,7 +400,11 @@ export function contractorJobRoutes(client: PrismaClient, options: ContractorJob
           now: completedAt,
         });
         // Goodwill: no pay link will ever exist, so the customer is told here instead (6004).
-        if (chargeable === false) await askCallbackNoCharge(tx, invoice.id);
+        if (chargeable === false) {
+          await askCallbackNoCharge(tx, invoice.id);
+          // Feature 6009: no payment will ever follow, so the review is asked for here, beside it.
+          await askReviewRequest(tx, locked.jobId);
+        }
         else issuedInvoiceId = invoice.id;
       });
     } catch (error: unknown) {

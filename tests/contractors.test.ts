@@ -22,11 +22,11 @@
 //      Priya's insurance is already expired
 // 6003 AC1 GST registration is a three-way answer (not asked, yes, no): not asked is
 //      Not ready, once answered it cannot go back, the migration maps false -> empty
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import express, { type Express } from "express";
 import request from "supertest";
 import { toNodeHandler } from "better-auth/node";
-import { testClient, truncateAll } from "./helpers/database.js";
+import { resetReferenceSequences, testClient, truncateAll } from "./helpers/database.js";
 import { seedBase } from "../src/db/seed/base.js";
 import { seedFixtures } from "../src/db/seed/fixtures.js";
 import { seedAuthFixtures, DEV_PASSWORD } from "../src/db/seed/auth.js";
@@ -36,6 +36,7 @@ import { authRoutes } from "../src/auth/routes.js";
 import { contractorLoginRoutes } from "../src/auth/login-routes.js";
 import { contractorRoutes } from "../src/contractors/routes.js";
 import { getTemplate } from "../src/notifications/templates/registry.js";
+import { owedInvoice } from "./helpers/owed-invoice.js";
 import { readFileSync } from "node:fs";
 import type { PrismaClient } from "../src/db/client.js";
 
@@ -772,5 +773,67 @@ describe("6003 AC1 -- GST registration is a three-way answer", () => {
     await db.$executeRawUnsafe(statement ?? "");
     const answers = await db.contractor.findMany({ select: { code: true, gstRegistered: true }, orderBy: { code: "asc" } });
     expect(answers.map((row) => row.gstRegistered)).toEqual([true, null, null]);
+  });
+});
+
+describe("6009 AC8 -- the Reviews tab's endpoint", () => {
+  // The test jobs below draw from the shared reference sequences; later files expect them at their start.
+  afterEach(async () => {
+    await resetReferenceSequences(db);
+  });
+
+  async function reviewed(rating: number, reviewText: string | null, at: Date, recommendScore: number | null = null): Promise<string> {
+    const job = await owedInvoice(db);
+    const bob = await db.contractor.findUniqueOrThrow({ where: { code: "CON-014" } });
+    await db.review.create({ data: { jobId: job.jobId, customerId: job.customerId, contractorId: bob.id, rating, reviewText, recommendScore, createdAt: at } });
+    return job.jobReference;
+  }
+  const reviewsOf = (cookie: string, code: string, cursor?: string) =>
+    request(app).get(`/api/contractors/${code}/reviews`).query(cursor === undefined ? {} : { cursor }).set("Cookie", cookie);
+
+  test("newest first with date, job reference, stars and comment; his average and count on top; no Would recommend score", async () => {
+    await seedCast();
+    const older = await reviewed(5, "Quick and tidy.", new Date("2026-10-14T02:00:00.000Z"), 9);
+    const newer = await reviewed(4, null, new Date("2026-10-16T02:00:00.000Z"), 7);
+    await db.contractor.update({ where: { code: "CON-014" }, data: { averageRating: 4.5, reviewCount: 2 } });
+    const mike = await signInCookie("mike@idelta.com.au");
+
+    const res = await reviewsOf(mike, "CON-014");
+    expect(res.status).toBe(200);
+    const body = res.body as { average: number; count: number; nextCursor: string | null; reviews: Record<string, unknown>[] };
+    expect(body.average).toBe(4.5);
+    expect(body.count).toBe(2);
+    expect(body.nextCursor).toBeNull();
+    expect(body.reviews.map((r) => [r["jobReference"], r["rating"], r["reviewText"], r["createdLabel"]])).toEqual([
+      [newer, 4, null, "16 Oct 2026"],
+      [older, 5, "Quick and tidy.", "14 Oct 2026"],
+    ]);
+    expect(JSON.stringify(body)).not.toContain("recommendScore");
+  });
+
+  test("a contractor with none: null average, count 0, no rows; an unknown code is 404; a contractor is refused", async () => {
+    await seedCast();
+    const mike = await signInCookie("mike@idelta.com.au");
+    const dave = await reviewsOf(mike, "CON-021");
+    expect(dave.status).toBe(200);
+    expect(dave.body).toEqual({ average: null, count: 0, reviews: [], nextCursor: null });
+    expect((await reviewsOf(mike, "CON-999")).status).toBe(404);
+    expect((await reviewsOf(await signInCookie("bob@idelta.com.au"), "CON-014")).status).toBe(403);
+  });
+
+  test("50 at a time: the next page follows the cursor, newest first, and the last page has no cursor", async () => {
+    await seedCast();
+    const base = new Date("2026-10-01T00:00:00.000Z").getTime();
+    const made: string[] = [];
+    for (let index = 0; index < 52; index += 1) made.push(await reviewed(5, null, new Date(base + index * 60_000)));
+    const mike = await signInCookie("mike@idelta.com.au");
+
+    const first = (await reviewsOf(mike, "CON-014")).body as { reviews: { jobReference: string }[]; nextCursor: string | null };
+    expect(first.reviews).toHaveLength(50);
+    expect(first.reviews[0]?.jobReference).toBe(made[51]);
+    expect(first.nextCursor).not.toBeNull();
+    const second = (await reviewsOf(mike, "CON-014", first.nextCursor ?? "")).body as { reviews: { jobReference: string }[]; nextCursor: string | null };
+    expect(second.reviews.map((r) => r.jobReference)).toEqual([made[1], made[0]]);
+    expect(second.nextCursor).toBeNull();
   });
 });

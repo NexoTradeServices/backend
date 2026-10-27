@@ -19,6 +19,7 @@
 import type { PrismaClient } from "../db/client.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import { currentLabel } from "../test-data/label.js";
+import { askReviewRequest } from "../reviews/messages.js";
 import { askClosedInvoiceNotice, askPaymentReceived, askPaymentReceipt } from "./messages.js";
 
 type Tx = Prisma.TransactionClient;
@@ -55,6 +56,11 @@ export interface PaidContext {
 const PAID_REACTIONS: ((context: PaidContext) => Promise<void>)[] = [
   ({ tx, paymentId }) => askPaymentReceipt(tx, paymentId),
   ({ tx, paymentId }) => askPaymentReceived(tx, paymentId),
+  // Feature 6009: one review request per job; a job with no completed visit (a no-show's call-out) asks nothing.
+  async ({ tx, invoiceId }) => {
+    const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId }, select: { jobId: true } });
+    await askReviewRequest(tx, invoice.jobId);
+  },
 ];
 
 /** The paid step. Never throws for a repeat; throws only when the database does. */

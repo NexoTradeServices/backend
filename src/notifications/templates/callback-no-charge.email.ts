@@ -14,14 +14,14 @@ Your {{trade}} callback {{jobReference}} is finished, at no charge.
 
 The invoice {{invoiceReference}} is attached for your files.
 
-Questions? Call us on {{officePhone}}.
+Questions about this bill? Call us on {{officePhone}}.
 
 -- {{platformName}}`;
 
 const HTML = `<p>Hi {{firstName}},</p>
 <p>Your {{trade}} callback {{jobReference}} is finished, at no charge.</p>
 <p>The invoice {{invoiceReference}} is attached for your files.</p>
-<p>Questions? Call us on {{officePhone}}.</p>
+<p>Questions about this bill? Call us on {{officePhone}}.</p>
 <p>-- {{platformName}}</p>`;
 
 export const callbackNoChargeEmail: NotificationTemplate = {

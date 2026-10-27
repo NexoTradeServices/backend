@@ -93,6 +93,16 @@ const CANCEL_REASON_LABELS: Record<string, string> = {
   other: "Other",
 };
 
+export interface ReviewView {
+  rating: number;
+  reviewText: string | null;
+  recommendScore: number | null;
+  customerName: string;
+  createdAt: string;
+  /** "16 Oct 2026" in the job's zone. */
+  createdLabel: string;
+}
+
 export interface JobDetail {
   reference: string;
   status: JobStatus;
@@ -135,6 +145,8 @@ export interface JobDetail {
   visit: VisitView | null;
   /** Feature 6001: the invoice Complete issued; null until there is one. */
   invoice: InvoiceView | null;
+  /** Feature 6009: the customer's review of this job; null until she rates (the page says "No review yet." on a completed job). */
+  review: ReviewView | null;
   /** Feature 4003 (plan decision 10): every assignment but the one in play, newest first. */
   earlierBookings: EarlierBooking[];
   /** AC29: the level and its price, shown once the job is dispatched (Job.serviceLevel set). */
@@ -246,6 +258,19 @@ async function visitOf(client: PrismaClient, job: JobWithRelations): Promise<Vis
   };
 }
 
+async function reviewViewOf(client: PrismaClient, jobId: string, zone: string): Promise<ReviewView | null> {
+  const review = await client.review.findFirst({ where: { jobId }, include: { customer: { select: { name: true } } } });
+  if (review === null) return null;
+  return {
+    rating: review.rating,
+    reviewText: review.reviewText,
+    recommendScore: review.recommendScore,
+    customerName: review.customer.name,
+    createdAt: review.createdAt.toISOString(),
+    createdLabel: formatDate(zone, review.createdAt),
+  };
+}
+
 export async function jobDetail(
   client: PrismaClient,
   job: JobWithRelations,
@@ -309,6 +334,7 @@ export async function jobDetail(
     contractor: contractorView(job, now),
     visit: await visitOf(client, job),
     invoice: await invoiceViewOf(client, job.id, job.timezone),
+    review: await reviewViewOf(client, job.id, job.timezone),
     earlierBookings,
     actions: {
       reschedule: job.status === "assigned" || job.status === "scheduled",

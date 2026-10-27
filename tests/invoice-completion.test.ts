@@ -1188,7 +1188,8 @@ describe("6004 AC8 -- a goodwill callback", () => {
 
     const mails = email.sent.filter((m) => m.to === "sarah@idelta.com.au" && (m.message.subject ?? "").includes("no charge"));
     expect(mails).toHaveLength(1);
-    expect(email.sent.filter((m) => m.to === "sarah@idelta.com.au")).toHaveLength(1);
+    // Feature 6009: the review request goes beside it -- the only other email she gets.
+    expect(email.sent.filter((m) => m.to === "sarah@idelta.com.au" && !(m.message.subject ?? "").startsWith("How did we go?"))).toHaveLength(1);
     expect(sms.sent).toHaveLength(0);
     const mail = mails[0];
     expect(mail?.message.subject).toBe(`Callback ${made.reference} - no charge`);
