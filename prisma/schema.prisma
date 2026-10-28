@@ -919,6 +919,9 @@ model Attachment {
 /// row per SUBURB+POSTCODE+STATE triple. Border towns are listed once per state
 /// and both rows are real places (TEXAS 4385 is both QLD and NSW), so name and
 /// postcode alone do NOT identify a suburb -- never key a lookup on the pair.
+/// Feature 3002: a GiST expression index on (ST_MakePoint(centroidLng, centroidLat)::geography)
+/// lives in migration suburb_spatial_index. Prisma cannot describe it here, so a later
+/// `prisma migrate dev` will try to DROP it as drift -- do not let it (a test checks it).
 model Suburb {
   id          String @id @default(uuid(7))
   name        String

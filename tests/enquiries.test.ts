@@ -31,6 +31,10 @@
 // 3003 AC3  six photos, a foreign folder, or a missing file name -> 400
 //           field "photos", no job
 //
+// Feature 3002 -- coverage tiers (the endpoint's half; the check itself is tests/coverage.test.ts)
+// 3002 AC3  an out-of-reach enquiry (Karl, Joondalup) submits as a normal new job, nothing about
+//           the tier stored on it
+//
 // Feature 3006 -- the enquiry form safe when Google is missing (the endpoint's half)
 // 3006 AC1  live site, no reCAPTCHA secret: 503 + operator phone, no rows;
 //           form-data says takingEnquiries false
@@ -550,5 +554,17 @@ describe("3006 AC5 / AC6 / AC7 -- a suburb picked from our own list", () => {
     );
     expect(res.status).toBe(400);
     expect((res.body as EnquiryResponseBody).field).toBe("location");
+  });
+});
+
+describe("3002 AC3 -- an out-of-reach enquiry is a normal new job", () => {
+  test("3002 AC3: Karl's Joondalup enquiry is accepted as status new and stores nothing about coverage", async () => {
+    const res = await request(app).post("/api/enquiries").send(validBody());
+    expect(res.status).toBe(201);
+    const reference = (res.body as EnquiryResponseBody).reference ?? "";
+    const job = await db.job.findUniqueOrThrow({ where: { reference } });
+    expect(job.status).toBe("new");
+    expect(Object.keys(job).filter((key) => /coverage|tier|reach/i.test(key))).toEqual([]);
+    expect(JSON.stringify(job.serviceLocation)).not.toMatch(/tier|coverage|reach/i);
   });
 });

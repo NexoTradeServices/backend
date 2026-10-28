@@ -1,6 +1,7 @@
 // Feature 1001, schema and seed
 //
 // AC9  PostGIS answers a distance query
+// 3002 AC13 the Suburb table carries its GiST expression index, and the in-range qualifying query uses it
 //
 // This is the query behind the operator's distance number at dispatch: how far
 // is Bob from the job? Coordinates are already stored (Places supplies them), so
@@ -62,5 +63,30 @@ describe("AC9 -- Fremantle to Hilton", () => {
     const { there, back, self } = rows[0];
     expect(there).toBeCloseTo(back, 6);
     expect(self).toBe(0);
+  });
+});
+
+describe("3002 AC13 -- the Suburb spatial index", () => {
+  test("the index exists after migrating (a later migration that drops it is caught here)", async () => {
+    const rows = await db.$queryRaw<{ indexdef: string }[]>`
+      SELECT indexdef FROM pg_indexes WHERE tablename = 'Suburb' AND indexname = 'Suburb_centroid_geog_idx'
+    `;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.indexdef).toMatch(/USING gist/i);
+  });
+
+  test("the qualifying-postcodes query reads through it (seq scan switched off: the table is tiny)", async () => {
+    const plan = await db.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe("SET LOCAL enable_seqscan = off");
+      return tx.$queryRaw<{ "QUERY PLAN": string }[]>`
+        EXPLAIN SELECT DISTINCT postcode FROM "Suburb"
+        WHERE ST_DWithin(
+          ST_MakePoint("centroidLng", "centroidLat")::geography,
+          ST_MakePoint(${115.0}::float8, ${-32.0}::float8)::geography,
+          ${10}::float8 * 1000
+        )
+      `;
+    });
+    expect(plan.map((row) => row["QUERY PLAN"]).join("\n")).toContain("Suburb_centroid_geog_idx");
   });
 });

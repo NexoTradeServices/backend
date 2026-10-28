@@ -11,4 +11,4 @@ _scratch
 
 # test runner output - screenshots, traces, coverage; never committed
 test-results
-coverage
+/coverage

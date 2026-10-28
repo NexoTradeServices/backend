@@ -8,6 +8,10 @@
 // within `km` of the pin, each row labelled with ALL its suburbs (not just
 // the in-range ones -- "6008 - Daglish, Shenton Park, Subiaco" even if only
 // one of the three is actually inside the radius), sorted nearest first.
+//
+// Feature 3002: the qualifying postcodes come first through ST_DWithin on the
+// GiST expression index (migration suburb_spatial_index); distances are then
+// computed only for suburbs in those postcodes, never for all of Australia.
 import type { PrismaClient } from "../db/client.js";
 
 export interface InRangePostcode {
@@ -27,15 +31,7 @@ export async function inRangeSuburbs(
   { lat, lng, km }: { lat: number; lng: number; km: number },
 ): Promise<InRangePostcode[]> {
   const rows = await client.$queryRaw<InRangeRow[]>`
-    WITH distances AS (
-      SELECT postcode, name,
-        ST_Distance(
-          ST_MakePoint("centroidLng", "centroidLat")::geography,
-          ST_MakePoint(${lng}::float8, ${lat}::float8)::geography
-        ) / 1000 AS km
-      FROM "Suburb"
-    ),
-    qualifying AS (
+    WITH qualifying AS (
       SELECT DISTINCT postcode
       FROM "Suburb"
       WHERE ST_DWithin(
@@ -44,12 +40,15 @@ export async function inRangeSuburbs(
         ${km}::float8 * 1000
       )
     )
-    SELECT d.postcode AS postcode,
-           array_agg(d.name ORDER BY d.name) AS suburbs,
-           MIN(d.km) AS "nearestKm"
-    FROM distances d
-    JOIN qualifying q ON q.postcode = d.postcode
-    GROUP BY d.postcode
+    SELECT s.postcode AS postcode,
+           array_agg(s.name ORDER BY s.name) AS suburbs,
+           MIN(ST_Distance(
+             ST_MakePoint(s."centroidLng", s."centroidLat")::geography,
+             ST_MakePoint(${lng}::float8, ${lat}::float8)::geography
+           ) / 1000) AS "nearestKm"
+    FROM "Suburb" s
+    JOIN qualifying q ON q.postcode = s.postcode
+    GROUP BY s.postcode
     ORDER BY "nearestKm" ASC
   `;
   return rows.map((row) => ({

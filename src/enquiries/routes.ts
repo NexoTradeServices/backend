@@ -14,6 +14,7 @@ import type { PrismaClient } from "../db/client.js";
 import { Prisma } from "../generated/prisma/client.js";
 import type { PreferredWindow } from "../generated/prisma/enums.js";
 import { nextReference } from "../db/reference.js";
+import { coverageOf, type CoverageInput } from "../coverage/tier.js";
 import { zoneForState, isWeekend } from "../time/index.js";
 import { sendNotification } from "../notifications/index.js";
 import { formatDollars } from "./money.js";
@@ -263,6 +264,37 @@ export function enquiryRoutes(client: PrismaClient, options: EnquiryRoutesOption
       return;
     }
     res.json(signEnquiryPhotoUpload(config));
+  });
+
+  // Feature 3002: the coverage check behind the suburb step. Public (the form
+  // has no login) and it answers the tier only -- the customer never sees a
+  // distance or anything about contractors (AC8).
+  router.get("/coverage", (req: Request, res: Response) => {
+    void (async () => {
+      const q = req.query as Record<string, unknown>;
+      let input: CoverageInput;
+      if (typeof q["suburbId"] === "string" && q["suburbId"].trim() !== "") {
+        const location = await resolveLocation(client, { suburbId: q["suburbId"].trim() });
+        if (location === null) {
+          res.status(404).json({ error: "no such suburb" });
+          return;
+        }
+        input = { postcode: location.postcode, lat: location.lat, lng: location.lng };
+      } else {
+        const postcode = q["postcode"];
+        const lat = typeof q["lat"] === "string" && q["lat"].trim() !== "" ? Number(q["lat"]) : NaN;
+        const lng = typeof q["lng"] === "string" && q["lng"].trim() !== "" ? Number(q["lng"]) : NaN;
+        if (typeof postcode !== "string" || postcode.trim() === "" || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+          res.status(400).json({ error: "send suburbId, or postcode with lat and lng" });
+          return;
+        }
+        input = { postcode: postcode.trim(), lat, lng };
+      }
+      const { tier } = await coverageOf(client, input);
+      res.json({ tier });
+    })().catch(() => {
+      res.status(500).json({ error: "could not check coverage" });
+    });
   });
 
   router.get("/form-data", (_req: Request, res: Response) => {
