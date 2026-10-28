@@ -17,7 +17,7 @@ import { nextReference } from "../db/reference.js";
 import { zoneForState, isWeekend } from "../time/index.js";
 import { sendNotification } from "../notifications/index.js";
 import { formatDollars } from "./money.js";
-import { verifyRecaptcha, type RecaptchaVerdict } from "./recaptcha.js";
+import { enquiriesRefusedForNoKey, verifyRecaptcha, type RecaptchaVerdict } from "./recaptcha.js";
 import { isTestRun } from "../test-data/label.js";
 import {
   isEnquiryPhotoKey,
@@ -45,7 +45,13 @@ interface Location {
   postcode: string;
   lat: number;
   lng: number;
-  placeId: string;
+  /** Absent when the suburb came from our own list (Feature 3006, Places down). */
+  placeId?: string;
+}
+
+/** Feature 3006: the suburb picked from the platform's own list instead of Places. */
+interface SuburbPick {
+  suburbId: string;
 }
 
 interface EnquiryInput {
@@ -54,7 +60,7 @@ interface EnquiryInput {
   phone: string;
   /** Feature 1017: optional; empty becomes null. */
   businessName: string | null;
-  location: Location;
+  location: Location | SuburbPick;
   trade: string;
   selectedOptions: string[];
   preferredDate: string;
@@ -87,9 +93,11 @@ function parseDateOnly(value: unknown): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function parseLocation(value: unknown): Location | null {
+function parseLocation(value: unknown): Location | SuburbPick | null {
   if (value === null || typeof value !== "object") return null;
   const l = value as Record<string, unknown>;
+  // Feature 3006: either the Places pick below, or just the id of one of our own suburbs.
+  if (isNonEmptyString(l["suburbId"])) return { suburbId: l["suburbId"].trim() };
   if (
     !isNonEmptyString(l["suburb"]) ||
     !isNonEmptyString(l["state"]) ||
@@ -218,6 +226,21 @@ function parseEnquiryInput(body: unknown): ParseResult {
   };
 }
 
+/** The stored location for a pick: the Places pick as it came, or the Suburb row's own values (no placeId). */
+async function resolveLocation(client: PrismaClient, pick: Location | SuburbPick): Promise<Location | null> {
+  if (!("suburbId" in pick)) return pick;
+  const row = await client.suburb.findUnique({ where: { id: pick.suburbId } });
+  if (row === null) return null;
+  return {
+    suburb: row.name,
+    state: row.state,
+    country: "AU",
+    postcode: row.postcode,
+    lat: row.centroidLat,
+    lng: row.centroidLng,
+  };
+}
+
 export interface EnquiryRoutesOptions {
   /** Swappable in tests -- see notifications/providers/registry.ts for the same seam. */
   verifyRecaptcha?: (token: string | undefined) => Promise<RecaptchaVerdict>;
@@ -261,7 +284,7 @@ export function enquiryRoutes(client: PrismaClient, options: EnquiryRoutesOption
           prefilledFields: true,
         },
       });
-      res.json({ operatorPhone: settings.operatorPhone, serviceTypes });
+      res.json({ operatorPhone: settings.operatorPhone, takingEnquiries: !enquiriesRefusedForNoKey(), serviceTypes });
     })().catch((error: unknown) => {
       console.error("GET /api/enquiries/form-data failed", error);
       res.status(500).json({ error: "internal error" });
@@ -283,6 +306,13 @@ export function enquiryRoutes(client: PrismaClient, options: EnquiryRoutesOption
         return;
       }
 
+      // Feature 3006: on the live site with no reCAPTCHA secret nothing is taken --
+      // before the check, before any row exists.
+      if (enquiriesRefusedForNoKey()) {
+        res.status(503).json({ error: "enquiries are not taken online right now", operatorPhone: settings.operatorPhone });
+        return;
+      }
+
       // Plan decision 1 (walkthrough-log.md row 49): checked before any
       // Customer or Job row exists. AC7: a confirmed bot refuses outright;
       // human OR unreachable/blocked both let it through identically.
@@ -295,6 +325,12 @@ export function enquiryRoutes(client: PrismaClient, options: EnquiryRoutesOption
         return;
       }
 
+      const location = await resolveLocation(client, input.location);
+      if (location === null) {
+        res.status(400).json({ error: "location must be a picked suburb", field: "location" });
+        return;
+      }
+
       const serviceType = await client.serviceType.findUnique({ where: { trade: input.trade } });
       if (serviceType === null) {
         res.status(400).json({ error: `no such trade "${input.trade}"`, field: "trade" });
@@ -303,9 +339,9 @@ export function enquiryRoutes(client: PrismaClient, options: EnquiryRoutesOption
 
       let zone: string;
       try {
-        zone = zoneForState(input.location.state);
+        zone = zoneForState(location.state);
       } catch {
-        res.status(400).json({ error: `no service zone for state "${input.location.state}"`, field: "location" });
+        res.status(400).json({ error: `no service zone for state "${location.state}"`, field: "location" });
         return;
       }
 
@@ -344,14 +380,14 @@ export function enquiryRoutes(client: PrismaClient, options: EnquiryRoutesOption
             serviceTypeId: serviceType.id,
             customerCalloutRate: serviceType.customerCalloutRate,
             customerStandardRate: serviceType.customerStandardRate,
-            postcode: input.location.postcode,
+            postcode: location.postcode,
             serviceLocation: {
-              suburb: input.location.suburb,
-              state: input.location.state,
-              country: input.location.country,
-              lat: input.location.lat,
-              lng: input.location.lng,
-              placeId: input.location.placeId,
+              suburb: location.suburb,
+              state: location.state,
+              country: location.country,
+              lat: location.lat,
+              lng: location.lng,
+              ...(location.placeId === undefined ? {} : { placeId: location.placeId }),
             },
             timezone: zone,
             description: input.description,
@@ -436,7 +472,7 @@ export function enquiryRoutes(client: PrismaClient, options: EnquiryRoutesOption
           context: {
             jobReference: job.reference,
             trade: serviceType.trade,
-            suburb: input.location.suburb,
+            suburb: location.suburb,
             preferredDate: input.preferredDate.slice(0, 10),
             preferredWindow: WINDOW_LABELS[input.preferredWindow],
             ...(webOrigin ? { jobUrl: `${webOrigin}/ops/jobs/${job.reference}` } : {}),

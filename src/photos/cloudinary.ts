@@ -34,6 +34,23 @@ export function readCloudinaryConfig(env: NodeJS.ProcessEnv = process.env): Clou
   return { cloudName, apiKey, apiSecret, uploadPreset };
 }
 
+const CLOUDINARY_KEYS = [
+  "CLOUDINARY_CLOUD_NAME",
+  "CLOUDINARY_API_KEY",
+  "CLOUDINARY_API_SECRET",
+  "CLOUDINARY_UPLOAD_PRESET",
+] as const;
+
+/** Feature 1015: one startup line naming every missing key. Never throws, never stops the boot. */
+export function warnIfCloudinaryMissing(env: NodeJS.ProcessEnv = process.env): void {
+  const missing = CLOUDINARY_KEYS.filter((key) => !env[key]?.trim());
+  if (missing.length === 0) return;
+  const verb = missing.length === 1 ? "is" : "are";
+  console.warn(
+    `photos: ${missing.join(", ")} ${verb} not set -- photo uploads and contractor agreement files are off until ${missing.length === 1 ? "it is" : "they are"}`,
+  );
+}
+
 /** What the browser needs for one signed direct upload. Never the API secret. */
 export interface PhotoUploadSignature {
   cloudName: string;

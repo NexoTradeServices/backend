@@ -9,6 +9,8 @@
 // configured, Google unreachable, a malformed response, no token at all
 // because the client's own script never loaded) -- lets the submission
 // through exactly as if it had passed: no flag, no field, no log anywhere.
+import { isProduction } from "../test-data/label.js";
+
 const SITEVERIFY_URL = "https://www.google.com/recaptcha/api/siteverify";
 
 /**
@@ -56,5 +58,22 @@ export async function verifyRecaptcha(token: string | undefined): Promise<Recapt
     return body.score < RECAPTCHA_BOT_THRESHOLD ? "bot" : "human";
   } catch {
     return "unreachable";
+  }
+}
+
+/**
+ * Feature 3006: on the live site a missing secret means no enquiry is taken --
+ * reCAPTCHA is a gate there, the exception to "outside services degrade, never
+ * block". Outside production (dev, CI, tests) a missing secret still lets it through.
+ */
+export function enquiriesRefusedForNoKey(): boolean {
+  return isProduction() && !process.env["RECAPTCHA_SECRET_KEY"]?.trim();
+}
+
+/** Feature 1015: one startup line when the secret is missing. Never throws, never stops the boot. */
+export function warnIfRecaptchaMissing(): void {
+  if (!process.env["RECAPTCHA_SECRET_KEY"]?.trim()) {
+    const meaning = isProduction() ? "web enquiries are refused" : "web enquiries are not bot-checked";
+    console.warn(`enquiries: RECAPTCHA_SECRET_KEY is not set -- ${meaning} until it is`);
   }
 }

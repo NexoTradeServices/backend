@@ -1,3 +1,7 @@
+// GET /api/suburbs/search -- Feature 3006, the enquiry form's suburb list when
+// Google Places is down. Public: the enquiry form has no login, and this is
+// read-only reference data with nothing personal in it.
+//
 // GET /api/suburbs/in-range -- Feature 2002, service area builder, plan
 // decision 3. Any logged-in role: the pin-and-radius fill is a plain read
 // over reference data, nothing role-specific about it.
@@ -7,6 +11,9 @@ import type { Request, Response } from "express";
 import type { PrismaClient } from "../db/client.js";
 import { requireAuth } from "../auth/middleware.js";
 import { inRangeSuburbs } from "./in-range.js";
+
+/** Feature 3006: the most rows the search answers with. */
+const SEARCH_LIMIT = 8;
 
 const VALID_KM = new Set([5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]);
 
@@ -18,6 +25,26 @@ function parseCoordinate(raw: unknown): number | null {
 
 export function suburbRoutes(client: PrismaClient): Router {
   const router = createRouter();
+
+  router.get("/search", (req: Request, res: Response) => {
+    void (async () => {
+      const q = typeof req.query["q"] === "string" ? req.query["q"].trim() : "";
+      if (q.length < 2) {
+        res.json([]);
+        return;
+      }
+      const rows = await client.suburb.findMany({
+        where: { name: { startsWith: q, mode: "insensitive" } },
+        orderBy: [{ name: "asc" }, { postcode: "asc" }],
+        take: SEARCH_LIMIT,
+        select: { id: true, name: true, postcode: true, state: true },
+      });
+      res.json(rows);
+    })().catch((error: unknown) => {
+      console.error("GET /api/suburbs/search failed", error);
+      res.status(500).json({ error: "internal error" });
+    });
+  });
 
   router.get("/in-range", requireAuth, (req: Request, res: Response) => {
     void (async () => {

@@ -10,7 +10,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import express from "express";
 import request from "supertest";
-import { RECAPTCHA_BOT_THRESHOLD, verifyRecaptcha } from "../src/enquiries/recaptcha.js";
+import { RECAPTCHA_BOT_THRESHOLD, verifyRecaptcha, warnIfRecaptchaMissing } from "../src/enquiries/recaptcha.js";
 import { enquiryRoutes } from "../src/enquiries/routes.js";
 import { testRunSignal } from "../src/test-data/label.js";
 import { seedBase } from "../src/db/seed/base.js";
@@ -190,5 +190,32 @@ describe("AC3b (9002) -- the test-run signal and the enquiry's reCAPTCHA check",
     const res = await request(app()).post("/api/enquiries").set("Cookie", "ts-test-run=e2e").send(enquiry("prod@idelta.com.au"));
     expect(res.status).toBe(403);
     expect(botCheck).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("3006 AC9 -- the startup warning says what a missing secret means where it runs", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  test("AC9: on the live site enquiries are refused until it is set", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("RECAPTCHA_SECRET_KEY", "");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    warnIfRecaptchaMissing();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toBe(
+      "enquiries: RECAPTCHA_SECRET_KEY is not set -- web enquiries are refused until it is",
+    );
+  });
+
+  test("AC9: anywhere else it keeps feature 1015's wording", () => {
+    vi.stubEnv("RECAPTCHA_SECRET_KEY", "");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    warnIfRecaptchaMissing();
+    expect(String(warn.mock.calls[0]?.[0])).toBe(
+      "enquiries: RECAPTCHA_SECRET_KEY is not set -- web enquiries are not bot-checked until it is",
+    );
   });
 });
