@@ -10,6 +10,7 @@
 // AC5  answered trade questions are stored on the job
 // AC6  a missing name, email, phone, suburb, trade, description or window: the field's own 400, nothing created
 // AC7  a { suburbId } pick (Places down) resolves and saves
+// 3010 AC8 the phone job keeps the contact typed on it
 // AC8  a `source` sent in the body is ignored; photos, marketing ticks and reCAPTCHA are not part of it
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import express, { type Express } from "express";
@@ -205,5 +206,16 @@ describe("AC7/AC8", () => {
     expect(job.source).toBe("phone");
     expect(await db.attachment.count({ where: { jobId: job.id } })).toBe(0);
     expect(job.customer.marketingConsent).toBeNull();
+  });
+});
+
+describe("3010 AC8 -- a phone job keeps what Mike keyed", () => {
+  test("3010 AC8: Tom's phone job with a new phone keeps it on the job; his record is untouched", async () => {
+    const mike = await signIn("mike@idelta.com.au");
+    const tom = await db.customer.findUniqueOrThrow({ where: { code: "CUS-1052" } });
+    const res = await phone(mike, body({ phone: "0412 777 888" }));
+    const job = await db.job.findUniqueOrThrow({ where: { reference: (res.body as { reference: string }).reference } });
+    expect(job.enquiryContact).toEqual({ name: "Tom", phone: "0412 777 888" });
+    expect((await db.customer.findUniqueOrThrow({ where: { id: tom.id } })).phone).toBe(tom.phone);
   });
 });

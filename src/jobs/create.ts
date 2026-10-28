@@ -14,6 +14,7 @@ import { nextReference } from "../db/reference.js";
 import { zoneForState, isWeekend } from "../time/index.js";
 import { sendNotification } from "../notifications/index.js";
 import { formatDollars } from "../enquiries/money.js";
+import { enquiryContactOf } from "./enquiry-contact.js";
 
 export const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export const PREFERRED_WINDOWS: readonly PreferredWindow[] = ["morning", "afternoon", "evening"];
@@ -254,6 +255,7 @@ export async function createJob(
           lng: location.lng,
           ...(location.placeId === undefined ? {} : { placeId: location.placeId }),
         },
+        enquiryContact: enquiryContactOf(input),
         timezone: zone,
         description: input.description,
         selectedOptions: input.selectedOptions,

@@ -671,6 +671,9 @@ model CalendarEvent {
 
 model Job {
   id                   String          @id @default(uuid(7))
+  /// Feature 3010: { name, phone, businessName? } exactly as typed on the request (web form or phone intake).
+  /// This job's texts go to its phone; older jobs have none.
+  enquiryContact       Json?
   /// human-readable JOB-xxxx, shown to customer + ops
   reference            String          @unique
   /// set when this job is a CALLBACK on an earlier job; points to the ROOT

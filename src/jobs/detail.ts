@@ -11,6 +11,7 @@ import { editableForSeconds, readNotes } from "./notes.js";
 import { jobMessages, type MessageView } from "./messages.js";
 import { asSiteContact, isClosed, type SiteContactView } from "./site-contact.js";
 import { billedHours } from "./billed-hours.js";
+import { asEnquiryContact, givenDetails } from "./enquiry-contact.js";
 import { customerRatingOf, type CustomerRating } from "./customer-rating.js";
 import { callbackLinksOf } from "./callbacks.js";
 import { CANCELLED_KIND_LABELS, cancelledKindOf } from "./booking.js";
@@ -128,6 +129,10 @@ export interface JobDetail {
     phone: string | null;
     email: string;
     billingAddress: Address | null;
+    /** Feature 3010: what she typed on this request where it differs from her record; null = same or empty. */
+    given: { name: string | null; phone: string | null; businessName: string | null };
+    /** Feature 3010: the phone or the business name differs (the name never counts). */
+    newDetails: boolean;
   };
   /** Feature 4010: who she is, worked out from her history on every read -- nothing stored. */
   customerRating: CustomerRating;
@@ -278,6 +283,7 @@ export async function jobDetail(
   now: Date = new Date(),
 ): Promise<JobDetail> {
   const billingAddress = asAddress(job.customer.billingAddress);
+  const given = givenDetails(asEnquiryContact(job.enquiryContact), job.customer);
   const siteAddress = asAddress(job.siteAddress);
   const hasAddress = effectiveAddress(job) !== null;
 
@@ -324,6 +330,8 @@ export async function jobDetail(
       phone: job.customer.phone,
       email: job.customer.email,
       billingAddress,
+      given: { name: given.name, phone: given.phone, businessName: given.businessName },
+      newDetails: given.newDetails,
     },
     customerRating: await customerRatingOf(client, job.customerId, job.id, settings?.timezone ?? job.timezone, now),
     siteAddress,

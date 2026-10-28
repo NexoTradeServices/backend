@@ -4,6 +4,7 @@
 // (dispatch, slot confirmation); that is a decision each sending feature makes
 // by choosing this channel, not something this component polices.
 import { asSiteContact } from "../../jobs/site-contact.js";
+import { asEnquiryContact } from "../../jobs/enquiry-contact.js";
 import type { AddressLookup, ChannelComponent } from "../types.js";
 
 /** One GSM-7 segment is 160 characters; a longer body is split and billed twice. */
@@ -12,8 +13,14 @@ const SINGLE_SEGMENT = 160;
 export const smsChannel: ChannelComponent = {
   channel: "sms",
 
-  async addressFor(context, recipientType, recipientId): Promise<AddressLookup> {
+  async addressFor(context, recipientType, recipientId, jobId): Promise<AddressLookup> {
     if (recipientType === "customer") {
+      // Feature 3010: a text about a job goes to the phone given on that job, else the record's.
+      if (jobId) {
+        const job = await context.client.job.findUnique({ where: { id: jobId }, select: { enquiryContact: true, customerId: true } });
+        const given = job !== null && job.customerId === recipientId ? asEnquiryContact(job.enquiryContact)?.phone.trim() : undefined;
+        if (given) return { address: given };
+      }
       const customer = await context.client.customer.findUnique({
         where: { id: recipientId },
         select: { phone: true },

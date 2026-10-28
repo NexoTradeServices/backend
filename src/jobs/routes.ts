@@ -55,6 +55,7 @@ import { cancelJob, parseCancelInput, takeOffJob } from "./changes.js";
 import { parseCallbackInput, raiseCallback } from "./callbacks.js";
 import { markNoShow, parseNoShowInput } from "./no-show.js";
 import { createJob, parseJobFields } from "./create.js";
+import { asEnquiryContact, givenDetails } from "./enquiry-contact.js";
 
 type WithReference = Request<{ reference: string }>;
 
@@ -107,6 +108,38 @@ export function jobRoutes(client: PrismaClient): Router {
       }
       res.status(201).json({ reference: created.job.reference });
     })().catch(failWith(res, "POST /api/jobs/phone"));
+  });
+
+  // Feature 3010: after confirming on the call, Mike copies what she gave onto her record for every later
+  // job: the given phone, and the given business name when not empty. A changed business name keeps the
+  // ABN and GST answer (the addresses save's rule: only clearing the name clears them). The name and the
+  // email are never touched. Any job status. Nothing to copy -> 409. Ops-only; answers the fresh detail.
+  router.post("/:reference/customer/update-from-request", requireRole(Role.ops), (req: WithReference, res: Response) => {
+    void (async () => {
+      const job = await loadJob(client, req.params.reference);
+      if (!job) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      const given = givenDetails(asEnquiryContact(job.enquiryContact), job.customer);
+      if (!given.newDetails) {
+        res.status(409).json({ error: "There is nothing new to copy onto the customer." });
+        return;
+      }
+      await client.customer.update({
+        where: { id: job.customerId },
+        data: {
+          ...(given.phone !== null ? { phone: given.phone } : {}),
+          ...(given.businessName !== null ? { businessName: given.businessName } : {}),
+        },
+      });
+      const fresh = await loadJob(client, req.params.reference);
+      if (!fresh) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      res.json(await jobDetail(client, fresh, req.authUser?.id ?? ""));
+    })().catch(failWith(res, "POST /api/jobs/:reference/customer/update-from-request"));
   });
 
   router.get("/:reference", requireRole(Role.ops), (req: WithReference, res: Response) => {

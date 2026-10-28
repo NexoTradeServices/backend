@@ -265,7 +265,7 @@ export async function deliver(client: TransactionalDb, row: ClaimedRow): Promise
   }
 
   const channel = channelFor(row.channel);
-  const lookup = await channel.addressFor(context, row.recipientType, row.recipientId);
+  const lookup = await channel.addressFor(context, row.recipientType, row.recipientId, row.jobId);
   if ("reason" in lookup) {
     await giveUp(client, row.id, lookup.reason);
     return;
