@@ -50,13 +50,13 @@ function isStringArray(value: unknown): value is string[] {
 }
 
 /** `preferredDate` is a plain calendar date -- YYYY-MM-DD, no time, no zone. */
-function parseDateOnly(value: unknown): Date | null {
+export function parseDateOnly(value: unknown): Date | null {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
   const date = new Date(`${value}T00:00:00.000Z`);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function parseLocation(value: unknown): Location | SuburbPick | null {
+export function parseLocation(value: unknown): Location | SuburbPick | null {
   if (value === null || typeof value !== "object") return null;
   const l = value as Record<string, unknown>;
   // Feature 3006: either the Places pick below, or just the id of one of our own suburbs.

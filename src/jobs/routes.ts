@@ -56,6 +56,7 @@ import { parseCallbackInput, raiseCallback } from "./callbacks.js";
 import { markNoShow, parseNoShowInput } from "./no-show.js";
 import { createJob, parseJobFields } from "./create.js";
 import { asEnquiryContact, givenDetails } from "./enquiry-contact.js";
+import { editRequest, parseRequestEdit } from "./request-edit.js";
 
 type WithReference = Request<{ reference: string }>;
 
@@ -108,6 +109,29 @@ export function jobRoutes(client: PrismaClient): Router {
       }
       res.status(201).json({ reference: created.job.reference });
     })().catch(failWith(res, "POST /api/jobs/phone"));
+  });
+
+  // Feature 4004: Mike corrects the request while the job is `new` (trade, description, date, window,
+  // suburb). Only the fields sent change; a dispatched job is locked (409); nothing is sent to anyone.
+  router.put("/:reference/request", requireRole(Role.ops), (req: WithReference, res: Response) => {
+    void (async () => {
+      const parsed = parseRequestEdit(req.body);
+      if (!parsed.ok) {
+        res.status(400).json({ error: parsed.error, field: parsed.field });
+        return;
+      }
+      const outcome = await editRequest(client, req.params.reference, parsed.data);
+      if (!outcome.ok) {
+        res.status(outcome.status).json({ error: outcome.error, ...(outcome.field === undefined ? {} : { field: outcome.field }) });
+        return;
+      }
+      const fresh = await loadJob(client, req.params.reference);
+      if (!fresh) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      res.json(await jobDetail(client, fresh, req.authUser?.id ?? ""));
+    })().catch(failWith(res, "PUT /api/jobs/:reference/request"));
   });
 
   // Feature 3010: after confirming on the call, Mike copies what she gave onto her record for every later

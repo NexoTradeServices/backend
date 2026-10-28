@@ -4,7 +4,7 @@
 // the customer sent it (read-only), the contractor (the shown assignment),
 // the customer's contact, the two addresses, and the notes log newest first.
 import type { PrismaClient } from "../db/client.js";
-import type { JobStatus } from "../generated/prisma/enums.js";
+import type { JobStatus, PreferredWindow } from "../generated/prisma/enums.js";
 import { formatDate, formatDateTimeLabel, formatPlainDate, formatSlotLabel } from "../time/index.js";
 import { customerPhotosOf, type PhotoView } from "../photos/cloudinary.js";
 import { editableForSeconds, readNotes } from "./notes.js";
@@ -113,6 +113,9 @@ export interface JobDetail {
   postcode: string;
   wantedDate: string;
   windowLabel: string;
+  /** Feature 4004: the plain date (YYYY-MM-DD) and the window value the edit form starts from. */
+  preferredDate: string;
+  preferredWindow: PreferredWindow;
   receivedLabel: string;
   description: string | null;
   /** Each answered question as saved, "<question>: <answer>", in the trade's order. */
@@ -317,6 +320,8 @@ export async function jobDetail(
     postcode: job.postcode,
     wantedDate: formatPlainDate(job.preferredDate),
     windowLabel: WINDOW_LABELS[job.preferredWindow],
+    preferredDate: job.preferredDate.toISOString().slice(0, 10),
+    preferredWindow: job.preferredWindow,
     receivedLabel: formatDateTimeLabel(job.timezone, job.createdAt, now),
     description: job.description,
     answers: answersOf(job.selectedOptions),
