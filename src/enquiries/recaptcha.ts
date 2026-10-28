@@ -58,3 +58,10 @@ export async function verifyRecaptcha(token: string | undefined): Promise<Recapt
     return "unreachable";
   }
 }
+
+/** Feature 1015: one startup line when the secret is missing. Never throws, never stops the boot. */
+export function warnIfRecaptchaMissing(): void {
+  if (!process.env["RECAPTCHA_SECRET_KEY"]?.trim()) {
+    console.warn("enquiries: RECAPTCHA_SECRET_KEY is not set -- web enquiries are not bot-checked until it is");
+  }
+}

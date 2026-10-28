@@ -6,6 +6,8 @@ import { toNodeHandler } from 'better-auth/node'
 import { notificationWebhooks, startNotifications } from './notifications/index.js'
 import { startPayLinkLoop } from './invoices/pay-link.js'
 import { warnIfWebhookSecretMissing } from './invoices/stripe.js'
+import { warnIfCloudinaryMissing } from './photos/cloudinary.js'
+import { warnIfRecaptchaMissing } from './enquiries/recaptcha.js'
 import { stripeWebhook } from './payments/webhook.js'
 import { receivablesRoutes } from './payments/routes.js'
 import { refundRoutes } from './refunds/routes.js'
@@ -177,6 +179,9 @@ startNotifications()
     startDailyLoop(prisma)
     // Feature 6002: no STRIPE_WEBHOOK_SECRET only warns -- the webhook refuses every call until it is set.
     warnIfWebhookSecretMissing()
+    // Feature 1015: a missing Cloudinary or reCAPTCHA key only warns -- the boot never stops for one.
+    warnIfCloudinaryMissing()
+    warnIfRecaptchaMissing()
     // 0.0.0.0, not localhost: Caddy on 192.168.1.41 has to reach this from another machine.
     app.listen(port, '0.0.0.0', () => {
       console.log(`backend listening on 0.0.0.0:${port}`)
