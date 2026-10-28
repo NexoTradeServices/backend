@@ -134,7 +134,7 @@ describe("AC1 -- Karl's enquiry, never contacted before", () => {
     // The next free code is 1052 on a quiet database; a burnt sequence number (a retry
     // on a cold CI runner) may push it up, so the test checks "at or past 1052" and
     // reads the row by the reference it was given.
-    const reference = (res.body as EnquiryResponseBody).reference;
+    const reference = (res.body as EnquiryResponseBody).reference ?? "";
     expect(Number(reference.replace("JOB-", ""))).toBeGreaterThanOrEqual(1052);
 
     const job = await db.job.findUniqueOrThrow({ where: { reference } });
