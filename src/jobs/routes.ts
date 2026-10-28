@@ -54,6 +54,7 @@ import {
 import { cancelJob, parseCancelInput, takeOffJob } from "./changes.js";
 import { parseCallbackInput, raiseCallback } from "./callbacks.js";
 import { markNoShow, parseNoShowInput } from "./no-show.js";
+import { createJob, parseJobFields } from "./create.js";
 
 type WithReference = Request<{ reference: string }>;
 
@@ -81,6 +82,31 @@ export function jobRoutes(client: PrismaClient): Router {
       }
       res.json(await listQueue(client, parsed.data, settings.timezone));
     })().catch(failWith(res, "GET /api/jobs"));
+  });
+
+  // Feature 3005, phone-taken job intake: Mike keys the job while the customer is on the line. The
+  // enquiry's fields less photos, marketing and reCAPTCHA; the job is stamped `phone` here and a
+  // `source` in the body is ignored. The customer gets the Enquiry received email; the office gets
+  // no new-job-request email (Mike is the one who just took it).
+  router.post("/phone", requireRole(Role.ops), (req: Request, res: Response) => {
+    void (async () => {
+      const body: unknown = req.body;
+      if (body === null || typeof body !== "object") {
+        res.status(400).json({ error: "request body must be an object" });
+        return;
+      }
+      const parsed = parseJobFields(body as Record<string, unknown>);
+      if (!parsed.ok) {
+        res.status(400).json({ error: parsed.error, field: parsed.field });
+        return;
+      }
+      const created = await createJob(client, "phone", parsed.data);
+      if (!created.ok) {
+        res.status(400).json({ error: created.error, field: created.field });
+        return;
+      }
+      res.status(201).json({ reference: created.job.reference });
+    })().catch(failWith(res, "POST /api/jobs/phone"));
   });
 
   router.get("/:reference", requireRole(Role.ops), (req: WithReference, res: Response) => {
