@@ -11,6 +11,7 @@ import { warnIfRecaptchaMissing } from './enquiries/recaptcha.js'
 import { stripeWebhook } from './payments/webhook.js'
 import { receivablesRoutes } from './payments/routes.js'
 import { refundRoutes } from './refunds/routes.js'
+import { statusRoutes } from './status/routes.js'
 import { buildAuth } from './auth/config.js'
 import { attachSession } from './auth/middleware.js'
 import { authRoutes } from './auth/routes.js'
@@ -120,6 +121,8 @@ app.use('/api/jobs', jobRoutes(prisma))
 // Feature 6002: every invoice still owed.
 app.use('/api/receivables', receivablesRoutes(prisma))
 app.use('/api/refunds', refundRoutes(prisma))
+// Feature 6012: is each outside service answering right now. Read-only, ops and the owner.
+app.use('/api/status', statusRoutes())
 // Feature 6003: the ops Settlements screen -- pay the approved invoices, mark them paid, rebuild a draft.
 app.use('/api/settlements', settlementRoutes(prisma))
 
