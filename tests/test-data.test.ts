@@ -261,6 +261,7 @@ describe("AC2 -- nested creates and sign-ins are labelled", () => {
 describe("AC3 -- production ignores the signal and never sweeps", () => {
   test("AC3: with NODE_ENV=production the cookie is ignored, the sweep route is absent, and the sweep, the label and the command refuse", async () => {
     vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("RECAPTCHA_SECRET_KEY", "a-secret"); // Feature 3006: production refuses enquiries with no secret; CI has none
     const app = buildApp();
 
     const res = await request(app).post("/api/enquiries").set("Cookie", "ts-test-run=e2e").send(enquiryBody("prod-karl@idelta.com.au"));
