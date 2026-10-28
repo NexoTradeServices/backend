@@ -9,6 +9,7 @@
 // POST /api/test-data/jobs/:reference/correction -- Feature 6007.
 // POST /api/test-data/customer-login -- Feature 1018.
 // POST /api/test-data/jobs/:reference/review-link -- Feature 6009.
+// POST /api/test-data/customers/set-password-link -- Feature 3004.
 //
 // Lets the browser tests clear their own label from wherever they run (the dev
 // machine, CI). Mounted only when NODE_ENV is not production -- absent, not
@@ -53,6 +54,10 @@
 // The review-link hook mints a fresh review link for a completed job labelled as test data and hands
 // back its URL (the real link only ever exists inside a delivered email). With `{ "state": "used" }` the
 // link is spent, with `{ "state": "expired" }` it is past its 30 days; otherwise it is open.
+//
+// The set-password-link hook hands back the path of the Set a new password page for the latest
+// Set your password email sent to a customer labelled as test data (the real link only ever exists
+// inside a delivered email, which a browser test cannot read).
 //
 // The customer-login hook makes a labelled customer User with the dev password and answers its
 // email and name. The seeded cast has no customer login (Sarah is a guest by design, 1003 AC9),
@@ -309,6 +314,38 @@ export function testDataRoutes(client: PrismaClient): Router {
       res.json({ added: true });
     })().catch((error: unknown) => {
       console.error("POST /api/test-data/jobs/:reference/correction failed", error);
+      res.status(500).json({ error: error instanceof Error ? error.message : "internal error" });
+    });
+  });
+
+  router.post("/customers/set-password-link", (req: Request, res: Response) => {
+    void (async () => {
+      const email = (req.body as { email?: unknown } | undefined)?.email;
+      if (typeof email !== "string") {
+        res.status(400).json({ error: "email is required" });
+        return;
+      }
+      const customer = await client.customer.findFirst({
+        where: { email: email.trim().toLowerCase(), testData: { not: null } },
+        select: { userId: true },
+      });
+      if (customer?.userId === null || customer === null) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      const row = await client.notification.findFirst({
+        where: { type: "customer_set_password", recipientType: "user", recipientId: customer.userId },
+        orderBy: { createdAt: "desc" },
+      });
+      const resetUrl = (row?.context as { resetUrl?: string } | null | undefined)?.resetUrl;
+      const token = resetUrl === undefined ? null : /\/reset-password\/([^?]+)/.exec(resetUrl)?.[1];
+      if (token === null || token === undefined) {
+        res.status(404).json({ error: "no set-password email sent" });
+        return;
+      }
+      res.json({ path: `/reset-password?token=${token}` });
+    })().catch((error: unknown) => {
+      console.error("POST /api/test-data/customers/set-password-link failed", error);
       res.status(500).json({ error: error instanceof Error ? error.message : "internal error" });
     });
   });

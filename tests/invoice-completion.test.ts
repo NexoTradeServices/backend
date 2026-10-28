@@ -679,7 +679,7 @@ describe("AC9 -- the email and the text", () => {
     expect(mail?.attachments?.[0]).toMatchObject({ fileName: "INV-2042.pdf", contentType: "application/pdf" });
     expect(pdfText(mail?.attachments?.[0]?.content ?? new Uint8Array())).toContain("INV-2042");
     expect(sms.sent[0]?.to).toBe(sarah.phone);
-    expect(sms.sent[0]?.message.text).toMatch(/^Perth Trades & Services: invoice INV-2042 for JOB-\d+, due \d{1,2} \w{3} \d{4}\. Pay now: https:\/\/pay\.test\/INV-2042$/);
+    expect(sms.sent[0]?.message.text).toMatch(/^Perth Trades & Services: invoice INV-2042 for JOB-\d+, due \d{1,2} \w{3} \d{4}\. Pay now: https:\/\/pay\.test\/INV-2042( Track your jobs: https:\/\/\S+\/set-password)?$/);
     expect(sms.sent[0]?.message.text).not.toContain("$");
     expect(sms.sent[0]?.attachments).toBeUndefined();
     // Never the site contact.

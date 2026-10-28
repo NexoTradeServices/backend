@@ -9,6 +9,7 @@
 // AC5  a used link says used (410, with the job); a link past 30 days says expired (410, with the
 //      office phone); an unknown link is 404
 // AC7  the ops job page carries the review (stars, comment, score, who and when) on a completed job, null before she rates
+// 3004 AC10 the read carries account: guest, or has_login once the customer has a password -- on an open link and a dead one
 // AC6  a saved review recomputes Bob's averageRating and reviewCount
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import type { Express } from "express";
@@ -280,5 +281,31 @@ describe("AC7 -- the job page's review", () => {
     const after = await jobPage(mike, sarahs.jobReference);
     expect(after.review).toMatchObject({ rating: 4, reviewText: "Quick and tidy.", recommendScore: 9, customerName: "Sarah Chen" });
     expect(after.review?.createdLabel).toMatch(/^\d{1,2} [A-Z][a-z]{2} \d{4}$/);
+  });
+});
+
+describe("3004 AC10 -- the read carries the customer's account state", () => {
+  test("3004 AC10: guest while Sarah has no password; has_login once she does; unknown links read guest", async () => {
+    const sarahs = await owedInvoice(db);
+    await pay(sarahs);
+    const token = await tokenFor(sarahs.jobId);
+
+    const open = await read(token);
+    expect(open.status).toBe(200);
+    expect((open.body as { account: string }).account).toBe("guest");
+
+    const user = await db.user.create({ data: { name: "Sarah Chen", email: "sarah@idelta.com.au", role: "customer" } });
+    await db.account.create({ data: { userId: user.id, accountId: user.id, providerId: "credential", password: "x" } });
+    await db.customer.update({ where: { code: "CUS-1050" }, data: { userId: user.id } });
+    expect(((await read(token)).body as { account: string }).account).toBe("has_login");
+
+    expect((await send(token, { rating: 5 })).status).toBe(200);
+    const used = await read(token);
+    expect(used.status).toBe(410);
+    expect((used.body as { account: string }).account).toBe("has_login");
+
+    const unknown = await read("not-a-real-token");
+    expect(unknown.status).toBe(404);
+    expect((unknown.body as { account: string }).account).toBe("guest");
   });
 });
