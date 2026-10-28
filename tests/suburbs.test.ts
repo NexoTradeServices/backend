@@ -13,11 +13,17 @@
 // AC11  border towns survive
 // AC12  every kept row with a non-"Delivery Area" category is logged and pinned
 //
+// Feature 3006 -- GET /api/suburbs/search, the enquiry form's list when Places is down
+// 3006 search  no login; under 2 characters -> empty; prefix, any case; at most 8;
+//              ordered by name then postcode; Ardross 6153 present beside its postcode mates
+//
 // The 15,608 rows are loaded HERE, by the file that needs them -- not by the
 // global harness. No other suite should pay for them.
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import express from "express";
+import request from "supertest";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { testClient, truncateAll } from "./helpers/database.js";
 import {
@@ -28,6 +34,7 @@ import {
   suburbSlug,
   SUBURB_DATA_FILE,
 } from "../src/db/seed/suburbs.js";
+import { suburbRoutes } from "../src/suburbs/routes.js";
 import type { SeedSuburbsResult } from "../src/db/seed/suburbs.js";
 import type { PrismaClient } from "../src/db/client.js";
 
@@ -481,5 +488,52 @@ describe("the committed file is the one the plan describes", () => {
       ["a", "b"],
       ["1", "2"],
     ]);
+  });
+});
+
+describe("3006 -- GET /api/suburbs/search", () => {
+  type Hit = { id: string; name: string; postcode: string; state: string };
+  const app = express();
+  beforeAll(() => {
+    app.use("/api/suburbs", suburbRoutes(db));
+  });
+  const search = async (q: string): Promise<{ status: number; body: Hit[] }> => {
+    const res = await request(app).get("/api/suburbs/search").query({ q });
+    return { status: res.status, body: res.body as Hit[] };
+  };
+
+  test("answers with no login at all", async () => {
+    expect((await search("Hilton")).status).toBe(200);
+  });
+
+  test("under two characters -> an empty list", async () => {
+    expect((await search("")).body).toEqual([]);
+    expect((await search("H")).body).toEqual([]);
+    expect((await search(" H ")).body).toEqual([]);
+  });
+
+  test("prefix and case-insensitive, each row id, name, postcode and state only", async () => {
+    const hits = (await search("hilt")).body;
+    const hilton = hits.find((hit) => hit.name === "Hilton" && hit.postcode === "6163");
+    expect(hilton).toBeDefined();
+    expect(Object.keys(hilton ?? {}).sort()).toEqual(["id", "name", "postcode", "state"]);
+    for (const hit of hits) expect(hit.name.toLowerCase().startsWith("hilt")).toBe(true);
+  });
+
+  test("at most 8 rows, ordered by name then postcode", async () => {
+    const hits = (await search("Ma")).body;
+    expect(hits).toHaveLength(8);
+    const sameOrder = await db.suburb.findMany({
+      where: { name: { startsWith: "Ma", mode: "insensitive" } },
+      orderBy: [{ name: "asc" }, { postcode: "asc" }],
+      take: 8,
+      select: { id: true },
+    });
+    expect(hits.map((hit) => hit.id)).toEqual(sameOrder.map((row) => row.id));
+  });
+
+  test("AC6: Ardross 6153 is its own row", async () => {
+    const hits = (await search("Ardross")).body;
+    expect(hits.some((hit) => hit.name === "Ardross" && hit.postcode === "6153" && hit.state === "WA")).toBe(true);
   });
 });

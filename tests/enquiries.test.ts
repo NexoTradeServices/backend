@@ -30,7 +30,15 @@
 // 3003 AC2  an enquiry with no photos writes no Attachment rows
 // 3003 AC3  six photos, a foreign folder, or a missing file name -> 400
 //           field "photos", no job
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
+//
+// Feature 3006 -- the enquiry form safe when Google is missing (the endpoint's half)
+// 3006 AC1  live site, no reCAPTCHA secret: 503 + operator phone, no rows;
+//           form-data says takingEnquiries false
+// 3006 AC2  not the live site, no secret: accepted as before; form-data true
+// 3006 AC5  a { suburbId } pick stores the Suburb row's values, no placeId
+// 3006 AC6  a postcode shared by several suburbs: the picked row is the one stored
+// 3006 AC7  an unknown suburbId -> 400 on the field "location", no job
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import express, { type Express } from "express";
 import request from "supertest";
 import { testClient, truncateAll } from "./helpers/database.js";
@@ -51,6 +59,7 @@ interface EnquiryResponseBody {
 
 interface FormDataResponseBody {
   operatorPhone: string;
+  takingEnquiries: boolean;
   serviceTypes: { trade: string; prefilledFields: string[]; customerCalloutRate: number }[];
 }
 
@@ -109,6 +118,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   email.reset();
 });
 
@@ -450,5 +460,91 @@ describe("1017 -- business customers", () => {
     const notice = email.sent.find((m) => m.to === settings.operatorEmail);
     expect(notice?.message.text).toContain("Evening (17:00-19:00)");
     expect(notice?.message.text).not.toContain("20:00");
+  });
+});
+
+describe("3006 AC1 / AC2 -- reCAPTCHA is a gate on the live site only", () => {
+  test("AC1: live site, no secret -> 503 with the operator phone, no Customer, no Job; form-data says closed", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("RECAPTCHA_SECRET_KEY", "");
+    const customers = await db.customer.count();
+    const jobs = await db.job.count();
+
+    const res = await request(app).post("/api/enquiries").send(validBody({ email: "gate@idelta.com.au" }));
+    expect(res.status).toBe(503);
+    const body = res.body as EnquiryResponseBody & { error?: string };
+    expect(body.error).toBe("enquiries are not taken online right now");
+    expect(body.operatorPhone).toBeTruthy();
+    expect(await db.customer.count()).toBe(customers);
+    expect(await db.job.count()).toBe(jobs);
+
+    const formData = await request(app).get("/api/enquiries/form-data");
+    expect((formData.body as FormDataResponseBody).takingEnquiries).toBe(false);
+  });
+
+  test("AC1: live site WITH a secret -> the form is open as before", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("RECAPTCHA_SECRET_KEY", "a-secret");
+    const formData = await request(app).get("/api/enquiries/form-data");
+    expect((formData.body as FormDataResponseBody).takingEnquiries).toBe(true);
+  });
+
+  test("AC2: not the live site, no secret -> accepted exactly as before; form-data says open", async () => {
+    vi.stubEnv("RECAPTCHA_SECRET_KEY", "");
+    const res = await request(app).post("/api/enquiries").send(validBody({ email: "dev@idelta.com.au" }));
+    expect(res.status).toBe(201);
+    const formData = await request(app).get("/api/enquiries/form-data");
+    expect((formData.body as FormDataResponseBody).takingEnquiries).toBe(true);
+  });
+});
+
+describe("3006 AC5 / AC6 / AC7 -- a suburb picked from our own list", () => {
+  async function ownSuburbs(): Promise<{ hilton: string; ardross: string; applecross: string }> {
+    const make = (name: string, slug: string, postcode: string, lat: number, lng: number) =>
+      db.suburb.create({ data: { name, slug, postcode, state: "WA", centroidLat: lat, centroidLng: lng } });
+    const hilton = await make("Hilton", "hilton-wa-6163", "6163", -32.0731, 115.7797);
+    const ardross = await make("Ardross", "ardross-wa-6153", "6153", -32.0201, 115.8394);
+    const applecross = await make("Applecross", "applecross-wa-6153", "6153", -32.0125, 115.8419);
+    return { hilton: hilton.id, ardross: ardross.id, applecross: applecross.id };
+  }
+
+  test("AC5: the job stores the row's suburb, postcode, state, country AU and centroid, with no placeId", async () => {
+    const ids = await ownSuburbs();
+    const res = await request(app)
+      .post("/api/enquiries")
+      .send(validBody({ name: "Sarah Chen", email: "sarah@idelta.com.au", location: { suburbId: ids.hilton } }));
+    expect(res.status).toBe(201);
+
+    const job = await db.job.findUniqueOrThrow({ where: { reference: (res.body as EnquiryResponseBody).reference ?? "" } });
+    expect(job.postcode).toBe("6163");
+    expect(job.serviceLocation).toEqual({ suburb: "Hilton", state: "WA", country: "AU", lat: -32.0731, lng: 115.7797 });
+    expect(job.serviceLocation).not.toHaveProperty("placeId");
+  });
+
+  test("AC6: one postcode, many suburbs -- the picked row is the one stored", async () => {
+    const ids = await ownSuburbs();
+    const res = await request(app)
+      .post("/api/enquiries")
+      .send(validBody({ email: "margaret@idelta.com.au", location: { suburbId: ids.ardross } }));
+    expect(res.status).toBe(201);
+    const job = await db.job.findUniqueOrThrow({ where: { reference: (res.body as EnquiryResponseBody).reference ?? "" } });
+    expect(job.postcode).toBe("6153");
+    expect(job.serviceLocation).toMatchObject({ suburb: "Ardross" });
+  });
+
+  test("AC7: an unknown suburbId -> 400 on the field location, and no job", async () => {
+    const jobs = await db.job.count();
+    const res = await request(app).post("/api/enquiries").send(validBody({ location: { suburbId: "no-such-suburb" } }));
+    expect(res.status).toBe(400);
+    expect((res.body as EnquiryResponseBody).field).toBe("location");
+    expect(await db.job.count()).toBe(jobs);
+  });
+
+  test("AC8: a Places pick still needs its placeId", async () => {
+    const res = await request(app).post("/api/enquiries").send(
+      validBody({ location: { suburb: "Joondalup", state: "WA", country: "AU", postcode: "6027", lat: -31.7, lng: 115.7 } }),
+    );
+    expect(res.status).toBe(400);
+    expect((res.body as EnquiryResponseBody).field).toBe("location");
   });
 });
