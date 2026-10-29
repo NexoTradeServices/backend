@@ -3,7 +3,7 @@ import express from 'express'
 import cors from 'cors'
 import pg from 'pg'
 import { toNodeHandler } from 'better-auth/node'
-import { notificationWebhooks, startNotifications } from './notifications/index.js'
+import { notificationWebhooks, startNotifications, warnIfWebhookSecretsMissing } from './notifications/index.js'
 import { startPayLinkLoop } from './invoices/pay-link.js'
 import { warnIfWebhookSecretMissing } from './invoices/stripe.js'
 import { warnIfCloudinaryMissing } from './photos/cloudinary.js'
@@ -167,7 +167,7 @@ app.get('/health/db', (_req, res) => {
 })
 
 // Provider delivery events (feature 1004). The module owns the route bodies;
-// this file only says where they live: /webhooks/mailjet, /webhooks/clicksend.
+// this file only says where they live: /webhooks/mailjet/<secret>, /webhooks/clicksend/<secret>.
 app.use('/webhooks', notificationWebhooks())
 
 // The notification queue drains inside this process (feature 1004). It is
@@ -188,6 +188,8 @@ startNotifications()
     startDailyLoop(prisma)
     // Feature 6002: no STRIPE_WEBHOOK_SECRET only warns -- the webhook refuses every call until it is set.
     warnIfWebhookSecretMissing()
+    // Feature 7001: no Mailjet or ClickSend webhook secret only warns -- that delivery webhook refuses every call.
+    warnIfWebhookSecretsMissing()
     // Feature 1015: a missing Cloudinary or reCAPTCHA key only warns -- the boot never stops for one.
     warnIfCloudinaryMissing()
     warnIfRecaptchaMissing()

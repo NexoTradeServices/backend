@@ -11,6 +11,7 @@
 // POST /api/test-data/jobs/:reference/review-link -- Feature 6009.
 // POST /api/test-data/customers/set-password-link -- Feature 3004.
 // POST /api/test-data/jobs/:reference/visit-today -- Feature 5004.
+// POST /api/test-data/jobs/:reference/email-bounce -- Feature 7001.
 //
 // Lets the browser tests clear their own label from wherever they run (the dev
 // machine, CI). Mounted only when NODE_ENV is not production -- absent, not
@@ -59,6 +60,11 @@
 // The visit-today hook moves the booked visit of a job labelled as test data (its calendar block and
 // its assignment's slot) to noon today on the job's own clock, so a browser test reaches "a job booked
 // today" -- where Bob's On my way button lives -- whenever it runs. Only a labelled job is moved.
+//
+// The email-bounce hook lists the email of a labelled job's customer as bounced, as a hard bounce report
+// from Mailjet would (the real report only ever arrives from Mailjet, at a secret address), so a browser
+// test reaches the job page's "Bouncing" tag. Only a labelled job; the listing carries the test-run label
+// and the sweep removes it.
 //
 // The set-password-link hook hands back the path of the Set a new password page for the latest
 // Set your password email sent to a customer labelled as test data (the real link only ever exists
@@ -214,6 +220,26 @@ export function testDataRoutes(client: PrismaClient): Router {
       res.json({ moved: true });
     })().catch((error: unknown) => {
       console.error("POST /api/test-data/jobs/:reference/visit-today failed", error);
+      res.status(500).json({ error: error instanceof Error ? error.message : "internal error" });
+    });
+  });
+
+  router.post("/jobs/:reference/email-bounce", (req: Request<{ reference: string }>, res: Response) => {
+    void (async () => {
+      const job = await client.job.findFirst({
+        where: { reference: req.params.reference, testData: { not: null } },
+        select: { customer: { select: { email: true } } },
+      });
+      if (job === null) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      const address = job.customer.email.trim().toLowerCase();
+      const listed = await client.suppression.findUnique({ where: { channel_address: { channel: "email", address } }, select: { id: true } });
+      if (listed === null) await client.suppression.create({ data: { channel: "email", address, reason: "bounced" } });
+      res.json({ listed: address });
+    })().catch((error: unknown) => {
+      console.error("POST /api/test-data/jobs/:reference/email-bounce failed", error);
       res.status(500).json({ error: error instanceof Error ? error.message : "internal error" });
     });
   });

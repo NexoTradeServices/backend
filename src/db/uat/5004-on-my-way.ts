@@ -48,6 +48,7 @@ async function makeRecords(client: PrismaClient, which: Set<string>): Promise<st
   const bob = await client.contractor.findUniqueOrThrow({ where: { code: "CON-014" }, include: { specialties: true } });
   const specialty = bob.specialties.find((s) => s.trade === "Plumbing");
   if (!specialty) throw new Error("Bob has no Plumbing specialty");
+  const specialtyId = specialty.id;
   const now = new Date();
   const lines: string[] = [];
 
@@ -87,7 +88,7 @@ async function makeRecords(client: PrismaClient, which: Set<string>): Promise<st
       data: {
         jobId: job.id,
         contractorId: bob.id,
-        specialtyId: specialty.id,
+        specialtyId,
         status: opts.state,
         proposedSlot: opts.slot,
         ...(opts.state === "accepted" ? { confirmedSlot: opts.slot, acceptedAt: now } : { dispatchedAt: now }),

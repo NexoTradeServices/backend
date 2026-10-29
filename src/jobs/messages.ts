@@ -47,6 +47,9 @@ const TYPE_NAMES: Record<string, string> = {
   refund_issued: "Refund issued",
   refund_failed: "Refund failed",
   refund_made_in_stripe: "Refund made in Stripe",
+  email_bouncing: "Email bouncing",
+  // Not job-linked, so never on a job page; named for the Email bouncing notice (Feature 7001).
+  password_reset: "Password reset",
 };
 
 const STATUS_LABELS: Record<NotificationStatus, string> = {

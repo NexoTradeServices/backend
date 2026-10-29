@@ -23,6 +23,9 @@ delete process.env["STRIPE_SECRET_KEY"];
 for (const key of ["MAILJET_API_KEY", "MAILJET_API_SECRET", "MAILJET_FROM_EMAIL", "CLICKSEND_USERNAME", "CLICKSEND_API_KEY"]) {
   delete process.env[key];
 }
+// Feature 7001: the delivery webhooks answer only at an address ending in their secret; fixed test values.
+process.env["MAILJET_WEBHOOK_SECRET"] = "test-mailjet-webhook-secret-0123456789";
+process.env["CLICKSEND_WEBHOOK_SECRET"] = "test-clicksend-webhook-secret-0123456789";
 process.env["WEB_ORIGIN"] ??= "https://idelta.com.au";
 process.env["COOKIE_DOMAIN"] ??= "idelta.com.au";
 process.env["BETTER_AUTH_SECRET"] ??= "test-only-secret-do-not-use-outside-tests";

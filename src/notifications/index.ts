@@ -27,7 +27,7 @@ import { startDispatcher, type Dispatcher, type DispatcherOptions } from "./disp
 export { sendNotification } from "./send.js";
 export { drainOnce, startDispatcher, MAX_ATTEMPTS, RETRY_BACKOFF_MINUTES } from "./dispatcher.js";
 export type { Dispatcher, DispatcherOptions } from "./dispatcher.js";
-export { notificationWebhooks } from "./webhooks.js";
+export { notificationWebhooks, warnIfWebhookSecretsMissing } from "./webhooks.js";
 export type {
   EmailAttachment,
   Notification,
