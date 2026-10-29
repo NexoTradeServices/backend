@@ -9,6 +9,7 @@ import { sendNotification } from "../notifications/index.js";
 import type { NotificationChannel, NotificationContext } from "../notifications/index.js";
 import { asSiteContact } from "../jobs/site-contact.js";
 import { effectiveAddress } from "../jobs/shared.js";
+import { isServiceLevelMultipliers, priceLine } from "../jobs/dispatch-level.js";
 import { formatSlotLabel } from "../time/index.js";
 import type { AnswerFacts } from "./service.js";
 
@@ -21,6 +22,7 @@ export async function sendSlotConfirmed(client: PrismaClient, facts: AnswerFacts
     where: { id: facts.jobId },
     include: {
       customer: { select: { id: true, name: true, billingAddress: true } },
+      serviceType: { select: { serviceLevelMultipliers: true } },
     },
   });
   const settings = await client.platformSettings.findFirst({ select: { operatorPhone: true } });
@@ -38,9 +40,23 @@ export async function sendSlotConfirmed(client: PrismaClient, facts: AnswerFacts
     officePhone: settings?.operatorPhone ?? "",
   } satisfies NotificationContext;
 
+  // Feature 4005: Sarah's EMAIL states the booked visit's rates, priced the way the invoice will be
+  // (the job's frozen card times the multiplier of the job's service level). Left out when the level
+  // is somehow empty -- never guess one. The text and the site contact's copy stay money-free.
+  const multipliers = job.serviceType.serviceLevelMultipliers;
+  const bookedRates =
+    job.serviceLevel !== null && isServiceLevelMultipliers(multipliers)
+      ? priceLine(
+          { calloutRate: job.customerCalloutRate, standardRate: job.customerStandardRate },
+          multipliers,
+          job.serviceLevel,
+        )
+      : null;
+
   const customerContext: NotificationContext = {
     ...common,
     audience: "customer",
+    ...(bookedRates === null ? {} : { priceLine: bookedRates }),
     firstName: firstNameOf(job.customer.name),
     // The customer's wording says the site contact has been told, and never who.
     ...(siteContact === null ? {} : { siteContactTold: true }),

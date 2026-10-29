@@ -11,10 +11,10 @@ import type { PrismaClient } from "../db/client.js";
 import { Prisma } from "../generated/prisma/client.js";
 import type { PreferredWindow } from "../generated/prisma/enums.js";
 import { nextReference } from "../db/reference.js";
-import { zoneForState, isWeekend } from "../time/index.js";
+import { zoneForState, formatPlainDate } from "../time/index.js";
 import { sendNotification } from "../notifications/index.js";
-import { formatDollars } from "../enquiries/money.js";
 import { enquiryContactOf } from "./enquiry-contact.js";
+import { WINDOW_LABELS } from "./shared.js";
 
 export const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export const PREFERRED_WINDOWS: readonly PreferredWindow[] = ["morning", "afternoon", "evening"];
@@ -216,12 +216,7 @@ export async function createJob(
   const preferredDateValue = new Date(input.preferredDate);
   // BKLG-020: the job stores the unmultiplied rate card (Invoicing / Two-tier pricing -- "rate
   // snapshots"). Which price list applies is settled now; whether it is a weekend job is only settled
-  // at dispatch (Feature 4002), so the multiplier is never baked in here -- only computed, below, for
-  // the confirmation email's own wording.
-  const multipliers = serviceType.serviceLevelMultipliers as { normal: number; weekend: number };
-  const multiplier = isWeekend(zone, preferredDateValue) ? multipliers.weekend : multipliers.normal;
-  const displayCalloutRate = Math.round(serviceType.customerCalloutRate * multiplier);
-  const displayStandardRate = Math.round(serviceType.customerStandardRate * multiplier);
+  // at dispatch (Feature 4002), so the multiplier is never baked in here.
   const photos = input.photos ?? [];
 
   const job = await client.$transaction(async (tx) => {
@@ -294,10 +289,10 @@ export async function createJob(
     return createdJob;
   });
 
-  // BKLG-020, AC39: the job's frozen base card is never what a message quotes -- the price for THIS
-  // job's date (a message stating a price computes it the way the invoice will).
-  // A phone job's email is worded for a customer who has just spoken to Mike (no "we'll call you").
-  const settings = source === "phone" ? await client.platformSettings.findFirst({ select: { operatorPhone: true } }) : null;
+  // Feature 4005: the Enquiry received email states no price (the Job booked email is the one customer
+  // message that does); it echoes the request instead. A phone job's email is worded for a customer
+  // who has just spoken to Mike (no "we'll call you"); both wordings end with the office number.
+  const settings = await client.platformSettings.findFirst({ select: { operatorPhone: true } });
   await sendNotification(
     {
       type: "enquiry_confirmation",
@@ -311,9 +306,12 @@ export async function createJob(
       context: {
         name: input.name,
         jobReference: job.reference,
-        calloutRate: formatDollars(displayCalloutRate),
-        standardRate: formatDollars(displayStandardRate),
-        ...(source === "phone" ? { source: "phone", officePhone: settings?.operatorPhone ?? "" } : {}),
+        trade: serviceType.trade,
+        suburb: location.suburb,
+        preferredTime: `${formatPlainDate(preferredDateValue)}, ${WINDOW_LABELS[input.preferredWindow]}`,
+        description: input.description,
+        officePhone: settings?.operatorPhone ?? "",
+        ...(source === "phone" ? { source: "phone" } : {}),
       },
     },
     client,

@@ -50,6 +50,7 @@ import { drainOnce } from "../src/notifications/index.js";
 import { registerProvider, resetProviders } from "../src/notifications/providers/registry.js";
 import { CapabilityTokenType, mintCapabilityLink } from "../src/capability-tokens/index.js";
 import { nextReference } from "../src/db/reference.js";
+import { priceLine } from "../src/jobs/dispatch-level.js";
 import { Prisma } from "../src/generated/prisma/client.js";
 import type { PrismaClient } from "../src/db/client.js";
 
@@ -152,6 +153,19 @@ async function textFor(reference: string, badge: string): Promise<DevTextRow | u
 
 function mailTo(address: string, subjectPart: string) {
   return email.sent.find((m) => m.to === address && (m.message.subject ?? "").includes(subjectPart));
+}
+
+/** 4005: the rate line the invoice would use for the job's own service level, as the email words it. */
+async function bookedRateLine(reference: string): Promise<string> {
+  const job = await db.job.findUniqueOrThrow({ where: { reference }, include: { serviceType: true } });
+  const multipliers = job.serviceType.serviceLevelMultipliers as { normal: number; emergency: number; weekend: number };
+  if (job.serviceLevel === null) throw new Error(`${reference} has no service level`);
+  const line = priceLine(
+    { calloutRate: job.customerCalloutRate, standardRate: job.customerStandardRate },
+    multipliers,
+    job.serviceLevel,
+  );
+  return `${line}, billed in 15-minute blocks after the first hour.`;
 }
 
 async function operatorPhone(): Promise<string> {
@@ -474,9 +488,11 @@ describe("the slot confirmation", () => {
       expect(text).toContain(part);
     }
     expect(text).toMatch(/Thu \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am AWST/);
-    // Reworded at 4006's UAT: no message states a price.
-    expect(text).not.toContain("$");
-    expect(html).not.toContain("$");
+    // 4005 AC3: the email (and only it) states the booked visit's rates, as the invoice will price them.
+    const rateLine = await bookedRateLine("JOB-1042");
+    expect(rateLine).toMatch(/^First hour \(includes call-out\) \$\d+(\.\d\d)?, then \$\d+(\.\d\d)?\/h, billed in 15-minute blocks after the first hour\.$/);
+    expect(text).toContain(rateLine);
+    expect(html).toContain(rateLine);
     // 3004: the shared account offer ("Manage your jobs online") is the one link
     // and the one "track" these messages now carry; the rest of the message is checked without it.
     expect(text).toContain("Set your password and activate your account: https://idelta.com.au/set-password");
@@ -491,6 +507,7 @@ describe("the slot confirmation", () => {
     for (const part of ["Bob", "12 Paget Street, Hilton", "JOB-1042", "Plumbing", office]) {
       expect(sms?.text).toContain(part);
     }
+    // 4005 AC5: her text stays money-free.
     expect(sms?.text).not.toContain("$");
     expect(sms?.text).toMatch(/Thu \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am AWST/);
     // 3004: the text ends with the short account offer; everything before it is checked as before.
@@ -498,7 +515,7 @@ describe("the slot confirmation", () => {
     expect((sms?.text ?? "").split("\n\nSet up your account")[0]).not.toMatch(/track|remind|http/i);
   });
 
-  test("AC12: a job dispatched for a Saturday is stamped weekend, and no message states a price", async () => {
+  test("AC12 / 4005 AC4: a job dispatched for a Saturday is stamped weekend, and Sarah's email shows the weekend rates", async () => {
     const mike = await signInCookie("mike@idelta.com.au");
     const job = await makeNewJob();
     const dispatched = await request(app)
@@ -510,11 +527,16 @@ describe("the slot confirmation", () => {
     await accept(await link(assignment.id));
     await drainOnce(db);
 
-    // The level is still stamped (the invoice prices it); the message just no longer says the rate.
     expect((await db.job.findUniqueOrThrow({ where: { id: job.id } })).serviceLevel).toBe("weekend");
     const mail = mailTo("sarah@idelta.com.au", job.reference);
     expect(mail).toBeDefined();
-    expect(mail?.message.text).not.toContain("$");
+    const rateLine = await bookedRateLine(job.reference);
+    expect(mail?.message.text).toContain(rateLine);
+    // The weekend card, not the normal one: the multiplier applied differs from the unmultiplied card.
+    const frozen = await db.job.findUniqueOrThrow({ where: { id: job.id } });
+    expect(rateLine).not.toContain(`$${frozen.customerCalloutRate / 100},`);
+    const text = await textFor(job.reference, "CUSTOMER SMS");
+    expect(text?.text).not.toContain("$");
   });
 
   test("AC13: with Lena as site contact, Sarah's wording says the site contact has been informed and never names Lena", async () => {

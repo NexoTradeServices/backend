@@ -131,7 +131,7 @@ describe("AC2/AC3 -- Tom rings", () => {
     expect(job.postcode).toBe("6076");
   });
 
-  test("AC3: Tom gets the Enquiry received email with the reference and the prices; the office gets no new-job-request", async () => {
+  test("AC3 / 4005 AC2: Tom gets the Enquiry received email with the reference, Trade, Suburb and Job description and no price; the office gets no new-job-request", async () => {
     const mike = await signIn("mike@idelta.com.au");
     const res = await phone(mike, body());
     const reference = (res.body as { reference: string }).reference;
@@ -141,7 +141,14 @@ describe("AC2/AC3 -- Tom rings", () => {
     expect(email.sent).toHaveLength(1);
     expect(email.sent[0]?.to).toBe("tom@idelta.com.au");
     expect(email.sent[0]?.message.text).toContain(reference);
-    expect(email.sent[0]?.message.text).toContain("$");
+    // 4005 AC2: the phone wording echoes Trade, Suburb and Job description, has no Preferred time, no price.
+    const text = email.sent[0]?.message.text ?? "";
+    expect(text).toContain("Trade: Plumbing");
+    expect(text).toContain("Suburb: Kalamunda");
+    expect(text).toContain("Job description: Burst pipe under the house.");
+    expect(text).not.toContain("Preferred time");
+    expect(text).not.toContain("$");
+    expect(email.sent[0]?.message.html).not.toContain("$");
     // The owner's phone wording: the customer has just spoken to Mike, so no "we'll call you".
     expect(email.sent[0]?.message.text).toContain("Thanks for your call. Your request is booked in as " + reference + ".");
     expect(email.sent[0]?.message.text).toContain("We'll send you the booking details shortly. If you need anything in the meantime, please ring the office on");

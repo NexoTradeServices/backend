@@ -8,7 +8,8 @@
 // AC2  a Saturday enquiry freezes the WEEKEND multiplier on the job
 // AC3  a repeat enquiry from a known email attaches to the existing
 //      Customer row -- no second Customer, no overwrite of name/phone
-// AC5  the confirmation email quotes the rates frozen on the job
+// AC5  (4005 AC1) the confirmation email echoes the request -- Trade, Suburb, Preferred time, Job
+//      description and the urgent office number -- and states no price
 // AC6  the new-job-request notice is addressed from operatorEmail; unset,
 //      that one row fails on its own, the customer's job/confirmation
 //      unaffected
@@ -214,8 +215,8 @@ describe("AC3 -- a known email attaches to the existing Customer", () => {
   });
 });
 
-describe("AC5 -- the confirmation email quotes the frozen rates", () => {
-  test("AC5: 'first hour (includes call-out) $250, then $180/h' for a weekday plumbing job", async () => {
+describe("AC5 -- the confirmation email echoes the request and states no price (4005 AC1)", () => {
+  test("AC5 / 4005 AC1: labelled Trade, Suburb, Preferred time and Job description, the urgent line with the office number, no '$' anywhere", async () => {
     const res = await request(app).post("/api/enquiries").send(validBody());
     expect(res.status).toBe(201);
 
@@ -223,9 +224,40 @@ describe("AC5 -- the confirmation email quotes the frozen rates", () => {
     const confirmation = email.sent.find((m) => m.message.subject === "We've got your request");
     expect(confirmation).toBeDefined();
     expect(confirmation?.to).toBe("karl@idelta.com.au");
-    expect(confirmation?.message.text).toContain("$250");
-    expect(confirmation?.message.text).toContain("$180/h");
-    expect(confirmation?.message.text).toContain((res.body as EnquiryResponseBody).reference);
+    const text = confirmation?.message.text ?? "";
+    const html = confirmation?.message.html ?? "";
+    const office = (await db.platformSettings.findFirstOrThrow()).operatorPhone;
+    expect(text).toContain((res.body as EnquiryResponseBody).reference);
+    expect(text).toContain("Trade: Plumbing");
+    expect(text).toContain("Suburb: Joondalup");
+    expect(text).toMatch(/Preferred time: Wed 9 Sep( 2026)?, morning 7:00-12:00/);
+    expect(text).toContain("Job description: Kitchen tap won't stop dripping.");
+    expect(text).toContain("We'll call you shortly to confirm a time.");
+    expect(text).toContain(`If it's urgent, ring us now on ${office}.`);
+    expect(html).toContain("<strong>Trade:</strong> Plumbing");
+    expect(html).toContain(`If it's urgent, ring us now on ${office}.`);
+    expect(text).not.toContain("$");
+    expect(html).not.toContain("$");
+  });
+
+  test("AC5 / 4005 AC1: a job with no description leaves the Job description line out rather than printing it empty", async () => {
+    const res = await request(app).post("/api/enquiries").send(validBody());
+    expect(res.status).toBe(201);
+    const job = await db.job.findUniqueOrThrow({ where: { reference: (res.body as EnquiryResponseBody).reference } });
+    // Rendered directly (a description is required on the form, so only a direct build can lack one).
+    const { enquiryConfirmationEmail } = await import("../src/notifications/templates/enquiry-confirmation.email.js");
+    const rendered = enquiryConfirmationEmail.render({
+      name: "Karl",
+      jobReference: job.reference,
+      trade: "Plumbing",
+      suburb: "Joondalup",
+      preferredTime: "Wed 9 Sep, morning 7:00-12:00",
+      officePhone: "08 9000 0000",
+      platformName: "Trade Services",
+    });
+    expect(rendered.text).not.toContain("Job description");
+    expect(rendered.html).not.toContain("Job description");
+    expect(rendered.text).toContain("Preferred time: Wed 9 Sep, morning 7:00-12:00");
   });
 });
 
