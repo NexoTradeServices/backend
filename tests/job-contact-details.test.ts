@@ -29,6 +29,8 @@ import { drainOnce, sendNotification } from "../src/notifications/index.js";
 import { registerTemplate, resetTemplates } from "../src/notifications/templates/registry.js";
 import { registerProvider, resetProviders } from "../src/notifications/providers/registry.js";
 import { givenDetails } from "../src/jobs/enquiry-contact.js";
+import { loadDevTextBlocks } from "../src/notifications/dev-texts.js";
+import { DEV_SMS_TEXT_CONTEXT_KEY } from "../src/notifications/dispatcher.js";
 import type { PrismaClient } from "../src/db/client.js";
 
 let db: PrismaClient;
@@ -198,6 +200,25 @@ describe("AC3/AC9 -- where this job's texts go", () => {
     const reference = await makeJob({ businessName: "Chen Consulting" });
     expect(await textAbout(reference)).toBe("0412 555 019");
     expect(await textAbout("JOB-1042")).toBe(sarah.phone);
+  });
+
+  test("AC3: the Texts sent page shows the given phone as the number the text went to", async () => {
+    const reference = await makeJob({ businessName: "Chen Consulting" });
+    for (const ref of [reference, "JOB-1042"]) {
+      const job = await db.job.findUniqueOrThrow({ where: { reference: ref } });
+      await db.notification.create({
+        data: {
+          recipientType: "customer", recipientId: job.customerId, channel: "sms", type: "dispatched", category: "transactional",
+          jobId: job.id, status: "sent", idempotencyKey: `dispatched:test:${ref}:page`,
+          context: { [DEV_SMS_TEXT_CONTEXT_KEY]: "Hello" },
+        },
+      });
+    }
+    const sarah = await db.customer.findUniqueOrThrow({ where: { code: "CUS-1050" } });
+    const blocks = await loadDevTextBlocks(db);
+    const to = (ref: string) => blocks.find((b) => b.jobReference === ref)?.texts[0]?.toNumber;
+    expect(to(reference)).toBe("0412 555 019");
+    expect(to("JOB-1042")).toBe(sarah.phone);
   });
 
   test("AC9: a job with no contact texts the record's phone; a text with no job does too", async () => {
