@@ -28,8 +28,10 @@ import type { PrismaClient } from "../db/client.js";
 import { requireRole } from "../auth/middleware.js";
 import { Role } from "../generated/prisma/enums.js";
 import { listQueue, parseQueueQuery } from "./queue.js";
+import { parseSiteContact } from "./site-contact.js";
+import type { Address } from "./shared.js";
 import { jobDetail, loadJob } from "./detail.js";
-import { parseAddressesInput, saveAddresses } from "./addresses.js";
+import { parseAddressesInput, parsePick, saveAddresses } from "./addresses.js";
 import { OPEN_VISIT_STATUSES, Refused, lockAssignment, lockedFailure, parseTimeEntries, writeEntries } from "./visit.js";
 import { hasPayableLink } from "../invoices/view.js";
 import { askInvoiceMessages } from "../invoices/messages.js";
@@ -102,7 +104,23 @@ export function jobRoutes(client: PrismaClient): Router {
         res.status(400).json({ error: parsed.error, field: parsed.field });
         return;
       }
-      const created = await createJob(client, "phone", parsed.data);
+      // Taken on the call, both optional: the street (a full Places pick, as the job page's Addresses
+      // card takes it) and whoever lets the contractor in (name and phone together, email optional).
+      const rawBody = body as Record<string, unknown>;
+      let address: Address | null = null;
+      if (rawBody["siteAddress"] !== undefined && rawBody["siteAddress"] !== null) {
+        address = parsePick(rawBody["siteAddress"]);
+        if (address === null) {
+          res.status(400).json({ error: "siteAddress must be a picked address", field: "siteAddress" });
+          return;
+        }
+      }
+      const contact = parseSiteContact(rawBody["siteContact"]);
+      if (!contact.ok) {
+        res.status(contact.status).json({ error: contact.error, field: contact.field });
+        return;
+      }
+      const created = await createJob(client, "phone", parsed.data, { address, contact: contact.data ?? null });
       if (!created.ok) {
         res.status(400).json({ error: created.error, field: created.field });
         return;

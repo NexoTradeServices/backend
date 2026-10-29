@@ -12,6 +12,8 @@
 // AC7  a { suburbId } pick (Places down) resolves and saves
 // 3010 AC8 the phone job keeps the contact typed on it
 // AC8  a `source` sent in the body is ignored; photos, marketing ticks and reCAPTCHA are not part of it
+// UAT (owner's call) the street address and the site contact are taken on the call: both optional,
+//      a street pick moves the job to the pick, a half-filled contact or a typed address is a 400
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import express, { type Express } from "express";
 import request from "supertest";
@@ -217,5 +219,42 @@ describe("3010 AC8 -- a phone job keeps what Mike keyed", () => {
     const job = await db.job.findUniqueOrThrow({ where: { reference: (res.body as { reference: string }).reference } });
     expect(job.enquiryContact).toEqual({ name: "Tom", phone: "0412 777 888" });
     expect((await db.customer.findUniqueOrThrow({ where: { id: tom.id } })).phone).toBe(tom.phone);
+  });
+});
+
+describe("UAT -- the street address and site contact taken on the call", () => {
+  const STREET = { street: "14 Mundaring Weir Road", suburb: "Kalamunda", state: "WA", country: "AU", postcode: "6076", lat: -31.9792, lng: 116.0488, placeId: "fixture-place-14-mundaring" };
+
+  test("both are stored on the job; a street in another suburb moves the job to it", async () => {
+    const mike = await signIn("mike@idelta.com.au");
+    const other = { ...STREET, street: "5 Carrington Street", suburb: "Hilton", postcode: "6163", lat: -32.0731, lng: 115.7797, placeId: "fixture-place-hilton-street" };
+    const res = await phone(mike, body({ siteAddress: other, siteContact: { name: "Lena Park", phone: "0400 111 222", email: "lena@idelta.com.au" } }));
+    expect(res.status).toBe(201);
+    const job = await db.job.findUniqueOrThrow({ where: { reference: (res.body as { reference: string }).reference } });
+    expect(job.siteAddress).toMatchObject({ street: "5 Carrington Street", suburb: "Hilton", postcode: "6163" });
+    expect(job.siteContact).toEqual({ name: "Lena Park", phone: "0400 111 222", email: "lena@idelta.com.au" });
+    expect(job.postcode).toBe("6163");
+    expect(job.serviceLocation).toMatchObject({ suburb: "Hilton", placeId: "fixture-place-hilton-street" });
+  });
+
+  test("neither is required: a job without them has none", async () => {
+    const mike = await signIn("mike@idelta.com.au");
+    const res = await phone(mike, body());
+    const job = await db.job.findUniqueOrThrow({ where: { reference: (res.body as { reference: string }).reference } });
+    expect(job.siteAddress).toBeNull();
+    expect(job.siteContact).toBeNull();
+    expect(job.postcode).toBe("6076");
+  });
+
+  test("a contact with a name and no phone, or a typed address, is a 400 on its own field and nothing is created", async () => {
+    const mike = await signIn("mike@idelta.com.au");
+    const before = await db.job.count();
+    const half = await phone(mike, body({ siteContact: { name: "Lena Park", phone: "" } }));
+    expect(half.status).toBe(400);
+    expect(half.body).toMatchObject({ field: "siteContactPhone" });
+    const typed = await phone(mike, body({ siteAddress: { street: "14 Mundaring Weir Road" } }));
+    expect(typed.status).toBe(400);
+    expect(typed.body).toMatchObject({ field: "siteAddress" });
+    expect(await db.job.count()).toBe(before);
   });
 });
