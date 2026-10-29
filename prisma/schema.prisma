@@ -1237,6 +1237,8 @@ model Notification {
   idempotencyKey    String                    @unique
   attempts          Int                       @default(0)
   error             String?
+  /// set on each failure: when this row may be tried next. Null = due now.
+  nextAttemptAt     DateTime?
   sentAt            DateTime?
   deliveredAt       DateTime?
   createdAt         DateTime                  @default(now())
@@ -1248,6 +1250,7 @@ model Notification {
 
   @@index([jobId])
   @@index([status])
+  @@index([status, nextAttemptAt])
 }
 
 /// Block-list, SCOPED BY REASON -- what blocks what is a design rule, not a
