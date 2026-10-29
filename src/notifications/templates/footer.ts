@@ -5,12 +5,12 @@
 // customer at send time: no login yet -> "Manage your jobs online" with a Set
 // your password button (the text says "Set a password" on the shorter channels
 // and pages); has a password -> "Log in to see all your jobs". No amounts, per
-// the message rules. Never on the enquiry confirmation (its page carries the
-// offer), account mail, ops or contractor mail, or the site-contact wording.
+// the message rules. Never on account mail, ops or contractor mail, or the site-contact wording.
 import type { NotificationDb, NotificationChannel, NotificationContext, RenderedMessage } from "../types.js";
 import { fill, fillHtml } from "./render.js";
 
 export const OFFER_FOOTER_TYPES: ReadonlySet<string> = new Set([
+  "enquiry_confirmation",
   "slot_confirmed",
   "job_update",
   "job_moved",

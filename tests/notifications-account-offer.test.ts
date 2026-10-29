@@ -23,7 +23,7 @@ let bobId: string;
 const email = recordingAdapter("test-email-3004b", "email");
 const sms = recordingAdapter("test-sms-3004b", "sms");
 
-const UNLISTED_CUSTOMER_TYPES = ["enquiry_confirmation", "password_reset", "customer_set_password", "account_exists"];
+const UNLISTED_CUSTOMER_TYPES = ["password_reset", "customer_set_password", "account_exists"];
 
 function stand(type: string, channel: "email" | "sms") {
   registerTemplate({
@@ -117,7 +117,7 @@ describe("AC9 -- the footer by state", () => {
     expect(email.sent[0]?.message.text).toContain("Set your password");
   });
 
-  test("the enquiry confirmation and account mail carry neither offer", async () => {
+  test("account mail carries neither offer", async () => {
     for (const type of UNLISTED_CUSTOMER_TYPES) await send(type, "email", "customer");
     await drainOnce(db, 100);
     expect(email.sent).toHaveLength(UNLISTED_CUSTOMER_TYPES.length);
