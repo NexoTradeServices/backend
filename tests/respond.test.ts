@@ -494,8 +494,8 @@ describe("the slot confirmation", () => {
     expect(sms?.text).not.toContain("$");
     expect(sms?.text).toMatch(/Thu \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am AWST/);
     // 3004: the text ends with the short account offer; everything before it is checked as before.
-    expect(sms?.text).toMatch(/ Track your jobs: https:\/\/\S+\/set-password$/);
-    expect((sms?.text ?? "").split(" Track your jobs:")[0]).not.toMatch(/track|remind|http/i);
+    expect(sms?.text).toMatch(/\n\nSet up your account\nManage jobs and access your service history\.\nhttps:\/\/\S+\/set-password$/);
+    expect((sms?.text ?? "").split("\n\nSet up your account")[0]).not.toMatch(/track|remind|http/i);
   });
 
   test("AC12: a job dispatched for a Saturday is stamped weekend, and no message states a price", async () => {

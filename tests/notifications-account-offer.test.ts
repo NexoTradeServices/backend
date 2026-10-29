@@ -94,8 +94,8 @@ describe("AC9 -- the footer by state", () => {
       expect(sent.message.html).toContain('href="https://idelta.com.au/set-password"');
     }
     for (const sent of sms.sent) {
-      expect(sent.message.text).toContain("https://idelta.com.au/set-password");
-      expect(sent.message.text.length).toBeLessThan(160);
+      expect(sent.message.text).toContain("Set up your account\nManage jobs and access your service history.\nhttps://idelta.com.au/set-password");
+      expect(sent.message.text.length).toBeLessThan(306);
     }
   });
 

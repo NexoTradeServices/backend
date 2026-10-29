@@ -54,7 +54,9 @@ const EMAIL_HTML: Record<AccountState, string> = {
 };
 
 const SMS_TEXT: Record<AccountState, string> = {
-  guest: "Track your jobs: {{siteUrl}}/set-password",
+  guest: `Set up your account
+Manage jobs and access your service history.
+{{siteUrl}}/set-password`,
   has_login: "Your jobs: {{siteUrl}}/account",
 };
 
@@ -73,7 +75,8 @@ export async function withOfferFooter(
   const vars: NotificationContext = { siteUrl };
 
   if (row.channel === "sms") {
-    return { ...rendered, text: `${rendered.text} ${fill(SMS_TEXT[state], vars)}` };
+    const separator = state === "guest" ? "\n\n" : " ";
+    return { ...rendered, text: `${rendered.text}${separator}${fill(SMS_TEXT[state], vars)}` };
   }
   return {
     ...rendered,
