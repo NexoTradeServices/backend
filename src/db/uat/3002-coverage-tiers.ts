@@ -128,11 +128,21 @@ export async function topUp(client: PrismaClient): Promise<string[]> {
 export async function restoreCast(client: PrismaClient): Promise<void> {
   // Karl's form run is made by the running site, unlabelled: label every job of Greg's and Karl's
   // and anything starting with the marker, so the sweep takes them (and the two guests) together.
+  // Only unlabelled rows are taken: another feature's labelled job (4004 also uses Karl) is never
+  // relabelled, and a guest that such a job points at is not labelled either -- the sweep would
+  // remove that job with him.
+  const guests = ["greg@idelta.com.au", "karl@idelta.com.au"];
   await client.job.updateMany({
-    where: { OR: [{ description: { startsWith: MARKER } }, { customer: { email: { in: ["greg@idelta.com.au", "karl@idelta.com.au"] } } }] },
+    where: { testData: null, OR: [{ description: { startsWith: MARKER } }, { customer: { email: { in: guests } } }] },
     data: { testData: LABEL },
   });
-  await client.customer.updateMany({ where: { email: { in: ["greg@idelta.com.au", "karl@idelta.com.au"] } }, data: { testData: LABEL } });
+  await client.customer.updateMany({
+    where: {
+      email: { in: guests },
+      jobs: { none: { testData: { not: null }, NOT: { testData: LABEL } } },
+    },
+    data: { testData: LABEL },
+  });
   await sweepTestData(client, LABEL);
   await client.platformSettings.updateMany({ data: { serviceReachKm: SEED_REACH_KM } });
 }
