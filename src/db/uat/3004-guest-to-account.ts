@@ -18,6 +18,7 @@ import { nextReference } from "../reference.js";
 import { sendNotification } from "../../notifications/index.js";
 import { CapabilityTokenType, mintCapabilityLink } from "../../capability-tokens/index.js";
 import { formatSlotLabel } from "../../time/index.js";
+import { sweepTestData } from "../../test-data/sweep.js";
 
 const ZONE = "Australia/Perth";
 const HOUR_MS = 60 * 60 * 1000;
@@ -25,6 +26,8 @@ const HILTON = { suburb: "Hilton", state: "WA", country: "AU", lat: -32.0731, ln
 const SITE = { street: "5 Carrington Street", ...HILTON, postcode: "6163" };
 const MARKER_BOOKED = "[uat-3004:booked]";
 const MARKER_DONE = "[uat-3004:done]";
+const LABEL = "uat-3004";
+const FORM_MARKER = "UAT 3004";
 
 export async function make(client: PrismaClient): Promise<string[]> {
   await restoreCast(client);
@@ -135,6 +138,14 @@ async function makeRecords(client: PrismaClient, which: Set<"booked" | "done">):
 
 /** Clear runs this after the label sweep; make runs it first: Sarah is a guest again. */
 export async function restoreCast(client: PrismaClient): Promise<void> {
+  // The form run (UAT step 3) is made by the running site, unlabelled: label Sarah's jobs that the
+  // owner started with the marker so the sweep takes them (and their messages) with the rest. Only
+  // unlabelled rows are taken, so another feature's labelled job is never relabelled.
+  await client.job.updateMany({
+    where: { testData: null, description: { startsWith: FORM_MARKER }, customer: { code: "CUS-1050" } },
+    data: { testData: LABEL },
+  });
+  await sweepTestData(client, LABEL);
   const sarah = await client.customer.findUnique({ where: { code: "CUS-1050" }, select: { id: true, userId: true } });
   if (sarah?.userId === null || sarah === null) return;
   const userId = sarah.userId;
