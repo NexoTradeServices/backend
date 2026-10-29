@@ -30,6 +30,7 @@ const TYPE_NAMES: Record<string, string> = {
   new_job_request: "New job request",
   job_dispatched: "Job dispatched",
   slot_confirmed: "Slot confirmed",
+  on_my_way: "On my way",
   contractor_declined: "Contractor declined",
   job_moved: "Job rescheduled",
   taken_off: "Job reassigned",

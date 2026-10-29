@@ -129,3 +129,78 @@ export async function sendDeclinedNotice(client: PrismaClient, facts: AnswerFact
     client,
   );
 }
+
+/**
+ * Feature 5004: "On my way" -- one message per booked visit (calendar block) to the customer
+ * (email + text) and the site contact (text, and email when given), each in their own wording.
+ * The key carries the calendar block, so a second tap, or a tap from the other place, is the
+ * same ask and lands on the same row; a return visit's block is its own key. No money, no link.
+ */
+export async function sendOnMyWay(client: PrismaClient, assignmentId: string, calendarEventId: string): Promise<void> {
+  const assignment = await client.assignment.findUniqueOrThrow({
+    where: { id: assignmentId },
+    include: {
+      contractor: { select: { name: true } },
+      specialty: { select: { trade: true } },
+      job: { include: { customer: { select: { id: true, name: true, billingAddress: true } } } },
+    },
+  });
+  const job = assignment.job;
+  const settings = await client.platformSettings.findFirst({ select: { operatorPhone: true } });
+  const address = effectiveAddress(job);
+  if (address === null) throw new Error(`job ${job.reference} has no address to tell`);
+
+  const siteContact = asSiteContact(job.siteContact);
+  const common = {
+    contractorFirstName: firstNameOf(assignment.contractor.name),
+    jobReference: job.reference,
+    trade: assignment.specialty.trade.toLowerCase(),
+    street: address.street,
+    suburb: address.suburb,
+    officePhone: settings?.operatorPhone ?? "",
+  } satisfies NotificationContext;
+
+  const ask = async (
+    channel: NotificationChannel,
+    audience: "customer" | "site_contact",
+    context: NotificationContext,
+  ): Promise<void> => {
+    await sendNotification(
+      {
+        type: "on_my_way",
+        channel,
+        recipientType: audience,
+        recipientId: audience === "customer" ? job.customer.id : job.id,
+        idempotencyKey: `on_my_way:assignment:${assignmentId}:${calendarEventId}:${audience}:${channel}`,
+        relatedType: "assignment",
+        relatedId: assignmentId,
+        jobId: job.id,
+        context,
+      },
+      client,
+    );
+  };
+
+  const customerContext: NotificationContext = {
+    ...common,
+    audience: "customer",
+    firstName: firstNameOf(job.customer.name),
+    ...(siteContact === null ? {} : { siteContactTold: true }),
+  };
+  for (const channel of ["email", "sms"] as const) {
+    await ask(channel, "customer", customerContext);
+  }
+
+  if (siteContact !== null) {
+    const siteContext: NotificationContext = {
+      ...common,
+      audience: "site_contact",
+      firstName: firstNameOf(siteContact.name),
+      recipientName: siteContact.name,
+    };
+    await ask("sms", "site_contact", siteContext);
+    if (siteContact.email !== null && siteContact.email.trim() !== "") {
+      await ask("email", "site_contact", siteContext);
+    }
+  }
+}

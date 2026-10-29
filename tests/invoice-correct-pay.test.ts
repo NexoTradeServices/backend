@@ -311,7 +311,7 @@ describe("AC14 -- Bob's dashboard keeps a completed job until it is paid", () =>
   test("AC14: a completed job with a sent invoice shows as awaiting payment, opens, and leaves once paid", async () => {
     const job = await sarahsJob(db);
     const awaiting = (await cards()).filter((card) => card.awaitingPayment);
-    expect(awaiting).toEqual([{ reference: job.jobReference, jobStatus: "completed", opens: true, awaitingPayment: true, slotLabel: null, customerName: "Sarah Chen", trade: "Plumbing", suburb: "Hilton" }]);
+    expect(awaiting).toEqual([{ reference: job.jobReference, jobStatus: "completed", opens: true, awaitingPayment: true, onMyWay: null, slotLabel: null, customerName: "Sarah Chen", trade: "Plumbing", suburb: "Hilton" }]);
 
     await payInFull(db, job);
     expect((await cards()).filter((card) => card.awaitingPayment)).toEqual([]);

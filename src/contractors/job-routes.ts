@@ -2,6 +2,7 @@
 //
 //   GET  /api/contractor/jobs/:reference                  the screen's read
 //   POST /api/contractor/jobs/:reference/on-site          the optional "On site" tap
+//   POST /api/contractor/jobs/:reference/on-my-way        the optional "On my way" tap (Feature 5004)
 //   PUT  /api/contractor/jobs/:reference                  Save: times, notes, parts, as a whole
 //   POST /api/contractor/jobs/:reference/complete         save, then freeze
 //   POST /api/contractor/jobs/:reference/receipt-signature  a signed direct upload for a receipt
@@ -25,6 +26,8 @@ import { askReviewRequest } from "../reviews/messages.js";
 import { earlierNotesOf, type EarlierJobNotes } from "../jobs/callbacks.js";
 import { kickPayLink } from "../invoices/pay-link.js";
 import { assignmentInclude, jobFactsOf, type JobFacts } from "../respond/service.js";
+import { sendOnMyWay } from "../respond/messages.js";
+import { onMyWayOf, todaysVisit, onMyWayKey, type OnMyWayView } from "./on-my-way.js";
 import {
   isReceiptKey,
   photoUrls,
@@ -113,6 +116,8 @@ export interface ContractorJobView extends JobFacts {
   frozen: boolean;
   /** "On site" is offered only while the visit is accepted. */
   canOnSite: boolean;
+  /** Feature 5004: null (no visit booked today), or whether On my way has gone for today's visit. */
+  onMyWay: OnMyWayView;
   timezone: string;
   /** Feature 6004: the root original's reference when this job is a callback, else null. */
   callbackOn: string | null;
@@ -235,6 +240,11 @@ async function viewOf(client: PrismaClient, assignment: OwnAssignment, now: Date
     maxContractorPartAmount: settings?.maxContractorPartAmount ?? 15_000,
     frozen: assignment.status === "completed",
     canOnSite: assignment.status === "accepted",
+    onMyWay: await onMyWayOf(
+      client,
+      { id: assignment.id, jobStatus: job.status, assignmentStatus: assignment.status, timezone: zone },
+      now,
+    ),
     timezone: zone,
   };
 }
@@ -322,6 +332,32 @@ export function contractorJobRoutes(client: PrismaClient, options: ContractorJob
       }
       res.json(await viewOf(client, fresh, new Date()));
     })().catch(failWith(res, "POST /api/contractor/jobs/:reference/on-site"));
+  });
+
+  // Feature 5004: the optional "On my way" tap. Changes no status. No visit today -> 409; already
+  // sent for that visit -> 200 and nothing more is asked (the keys would land on the same rows anyway).
+  router.post("/:reference/on-my-way", requireRole(Role.contractor), (req: WithReference, res: Response) => {
+    void (async () => {
+      const assignment = await own(req, res);
+      if (assignment === null) return;
+      const input = {
+        id: assignment.id,
+        jobStatus: assignment.job.status,
+        assignmentStatus: assignment.status,
+        timezone: assignment.job.timezone,
+      };
+      const visit = await todaysVisit(client, input, new Date());
+      if (visit === null) {
+        res.status(409).json({ error: "There is no visit booked for today." });
+        return;
+      }
+      const already = await client.notification.findUnique({
+        where: { idempotencyKey: onMyWayKey(assignment.id, visit.calendarEventId) },
+        select: { id: true },
+      });
+      if (already === null) await sendOnMyWay(client, assignment.id, visit.calendarEventId);
+      res.json(await viewOf(client, assignment, new Date()));
+    })().catch(failWith(res, "POST /api/contractor/jobs/:reference/on-my-way"));
   });
 
   /** Save and Complete share this: parse, lock, write -- Complete adds its two needs and the freeze. */

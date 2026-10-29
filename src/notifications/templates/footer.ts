@@ -12,6 +12,7 @@ import { fill, fillHtml } from "./render.js";
 export const OFFER_FOOTER_TYPES: ReadonlySet<string> = new Set([
   "enquiry_confirmation",
   "slot_confirmed",
+  "on_my_way",
   "job_update",
   "job_moved",
   "job_cancelled",
