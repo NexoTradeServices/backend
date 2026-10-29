@@ -231,7 +231,7 @@ describe("AC6 -- the hour, and a failing step", () => {
     expect(await remindersOf(sarahs.jobId)).toHaveLength(0);
 
     const result = await dailyTick(db, new Date("2026-10-14T01:00:00.000Z"));
-    expect(result?.ran).toEqual(["invoice reminders", "pay-link switch-off", "licence and insurance alerts"]);
+    expect(result?.ran).toEqual(["invoice reminders", "pay-link switch-off", "licence and insurance alerts", "job-tomorrow reminders"]);
     expect(await remindersOf(sarahs.jobId)).toHaveLength(1);
   });
 
@@ -241,7 +241,7 @@ describe("AC6 -- the hour, and a failing step", () => {
     const boom: DailyStep = { name: "boom", run: () => Promise.reject(new Error("a step failed")) };
     const result = await runDailySteps(db, { zone: ZONE, now: MORNING, steps: [boom, ...DAILY_STEPS] });
     expect(result.failed).toEqual(["boom"]);
-    expect(result.ran).toEqual(["invoice reminders", "pay-link switch-off", "licence and insurance alerts"]);
+    expect(result.ran).toEqual(["invoice reminders", "pay-link switch-off", "licence and insurance alerts", "job-tomorrow reminders"]);
     expect(await remindersOf(sarahs.jobId)).toHaveLength(1);
   });
 });

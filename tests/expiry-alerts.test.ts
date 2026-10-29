@@ -82,8 +82,8 @@ describe("the step arithmetic", () => {
     expect([31, 30, 24, 23, 17, 16, 10, 9, 3, 2, 1, 0, -4].map(alertStep)).toEqual([null, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, null, null]);
   });
 
-  test("the morning run carries the step, after the two invoice steps", () => {
-    expect(DAILY_STEPS.map((step) => step.name)).toEqual(["invoice reminders", "pay-link switch-off", "licence and insurance alerts"]);
+  test("the morning run carries the step, after the two invoice steps (7004 appends its own after it)", () => {
+    expect(DAILY_STEPS.map((step) => step.name)).toEqual(["invoice reminders", "pay-link switch-off", "licence and insurance alerts", "job-tomorrow reminders"]);
   });
 });
 

@@ -14,6 +14,8 @@ import { jobDispatchedEmail } from "./job-dispatched.email.js";
 import { jobDispatchedSms } from "./job-dispatched.sms.js";
 import { onMyWayEmail } from "./on-my-way.email.js";
 import { onMyWaySms } from "./on-my-way.sms.js";
+import { jobTomorrowEmail } from "./job-tomorrow.email.js";
+import { jobTomorrowSms } from "./job-tomorrow.sms.js";
 import { slotConfirmedEmail } from "./slot-confirmed.email.js";
 import { slotConfirmedSms } from "./slot-confirmed.sms.js";
 import { contractorDeclinedEmail } from "./contractor-declined.email.js";
@@ -62,6 +64,8 @@ const BUILT_IN: NotificationTemplate[] = [
   jobDispatchedSms,
   onMyWayEmail,
   onMyWaySms,
+  jobTomorrowEmail,
+  jobTomorrowSms,
   slotConfirmedEmail,
   slotConfirmedSms,
   contractorDeclinedEmail,

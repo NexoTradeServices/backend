@@ -9,12 +9,13 @@
 // never stops the others.
 //
 // HOOKING ON. A later feature that wants the morning run (the
-// job-tomorrow reminder, the photo clean-up) adds a step to DAILY_STEPS below -- never a second timer.
+// photo clean-up) adds a step to DAILY_STEPS below -- never a second timer.
 import type { PrismaClient } from "../db/client.js";
 import { getPrisma } from "../db/client.js";
 import { runInvoiceReminders } from "../invoices/reminders.js";
 import { runPayLinkSwitchOff } from "../invoices/void.js";
 import { runExpiryAlerts } from "../contractors/expiry-alerts.js";
+import { runJobTomorrowReminders } from "../jobs/job-tomorrow.js";
 import { clockTimeIn, todayIn } from "../time/index.js";
 
 export const DAILY_LOOP_MS = 5 * 60 * 1000;
@@ -59,6 +60,13 @@ export const DAILY_STEPS: DailyStep[] = [
     async run({ client, zone, today, label }) {
       const made = await runExpiryAlerts(client, { zone, today, onlyLabel: label });
       if (made.sent > 0) console.log(`daily: licence and insurance alerts -- ${String(made.sent)} emailed`);
+    },
+  },
+  {
+    name: "job-tomorrow reminders",
+    async run({ client, zone, now, today, label }) {
+      const made = await runJobTomorrowReminders(client, { zone, now, today, runAt: DAILY_RUN_AT, onlyLabel: label });
+      if (made.visits > 0) console.log(`daily: job-tomorrow reminders -- ${String(made.visits)} visits`);
     },
   },
 ];

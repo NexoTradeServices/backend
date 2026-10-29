@@ -11,13 +11,15 @@ import { asSiteContact } from "../jobs/site-contact.js";
 import { effectiveAddress } from "../jobs/shared.js";
 import { isServiceLevelMultipliers, priceLine } from "../jobs/dispatch-level.js";
 import { formatSlotLabel } from "../time/index.js";
+import { DAILY_RUN_AT } from "../daily/index.js";
+import { reminderWillCome } from "../jobs/job-tomorrow.js";
 import type { AnswerFacts } from "./service.js";
 
 function firstNameOf(name: string): string {
   return name.split(" ")[0] ?? name;
 }
 
-export async function sendSlotConfirmed(client: PrismaClient, facts: AnswerFacts): Promise<void> {
+export async function sendSlotConfirmed(client: PrismaClient, facts: AnswerFacts, now: Date = new Date()): Promise<void> {
   const job = await client.job.findUniqueOrThrow({
     where: { id: facts.jobId },
     include: {
@@ -25,7 +27,7 @@ export async function sendSlotConfirmed(client: PrismaClient, facts: AnswerFacts
       serviceType: { select: { serviceLevelMultipliers: true } },
     },
   });
-  const settings = await client.platformSettings.findFirst({ select: { operatorPhone: true } });
+  const settings = await client.platformSettings.findFirst({ select: { operatorPhone: true, timezone: true } });
   const address = effectiveAddress(job);
   if (address === null) throw new Error(`job ${job.reference} has no address to confirm`);
 
@@ -36,8 +38,14 @@ export async function sendSlotConfirmed(client: PrismaClient, facts: AnswerFacts
     trade: facts.trade,
     street: address.street,
     suburb: address.suburb,
-    slotLabel: formatSlotLabel(facts.jobTimezone, facts.proposedSlot, new Date()),
+    slotLabel: formatSlotLabel(facts.jobTimezone, facts.proposedSlot, now),
     officePhone: settings?.operatorPhone ?? "",
+    // Feature 7004: "We'll send you a reminder the day before." only when one will come (the morning run
+    // sends for a visit two or more days away, or tomorrow's while it is still before the run's time).
+    ...(settings !== null &&
+    reminderWillCome({ businessZone: settings.timezone, jobZone: facts.jobTimezone, slot: facts.proposedSlot, now, runAt: DAILY_RUN_AT })
+      ? { reminderComing: true }
+      : {}),
   } satisfies NotificationContext;
 
   // Feature 4005: Sarah's EMAIL states the booked visit's rates, priced the way the invoice will be
