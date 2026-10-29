@@ -122,6 +122,8 @@ export interface ChannelComponent {
     context: SendContext,
     recipientType: NotificationRecipientType,
     recipientId: string,
+    /** Feature 3010: the job the message is about, when it has one -- a customer text goes to the phone given on it. */
+    jobId?: string | null,
   ): Promise<AddressLookup>;
   /** what this channel will not send: an email with no subject, an empty SMS */
   check(message: RenderedMessage): string | null;

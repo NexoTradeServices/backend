@@ -477,7 +477,10 @@ describe("the slot confirmation", () => {
     // Reworded at 4006's UAT: no message states a price.
     expect(text).not.toContain("$");
     expect(html).not.toContain("$");
-    for (const body of [text, html]) {
+    // 3004: the shared account offer ("Manage your jobs online") is the one link
+    // and the one "track" these messages now carry; the rest of the message is checked without it.
+    expect(text).toContain("Set your password and activate your account: https://idelta.com.au/set-password");
+    for (const body of [text.split("Manage your jobs online")[0] ?? "", html.split("Manage your jobs online")[0] ?? ""]) {
       expect(body).not.toMatch(/track/i);
       expect(body).not.toMatch(/remind/i);
       expect(body).not.toContain("http");
@@ -490,7 +493,9 @@ describe("the slot confirmation", () => {
     }
     expect(sms?.text).not.toContain("$");
     expect(sms?.text).toMatch(/Thu \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am AWST/);
-    expect(sms?.text).not.toMatch(/track|remind|http/i);
+    // 3004: the text ends with the short account offer; everything before it is checked as before.
+    expect(sms?.text).toMatch(/\n\nSet up your account\nManage jobs and access your service history\.\nhttps:\/\/\S+\/set-password$/);
+    expect((sms?.text ?? "").split("\n\nSet up your account")[0]).not.toMatch(/track|remind|http/i);
   });
 
   test("AC12: a job dispatched for a Saturday is stamped weekend, and no message states a price", async () => {

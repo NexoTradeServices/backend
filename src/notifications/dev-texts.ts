@@ -12,6 +12,7 @@ import type { PrismaClient } from "../db/client.js";
 import { DEV_SMS_TEXT_CONTEXT_KEY } from "./dispatcher.js";
 import { formatDateTimeLabel } from "../time/index.js";
 import { asSiteContact } from "../jobs/site-contact.js";
+import { asEnquiryContact } from "../jobs/enquiry-contact.js";
 
 /** "job_dispatched" -> "dispatched" -- the step name a block is headed with. */
 const STEP_LABELS: Record<string, string> = {
@@ -56,6 +57,8 @@ interface RawRow {
   jobReference: string | null;
   jobTimezone: string | null;
   jobSiteContact: unknown;
+  jobEnquiryContact: unknown;
+  jobCustomerId: string | null;
   recipientName: string | null;
   at: Date;
   text: string;
@@ -64,7 +67,7 @@ interface RawRow {
 export async function loadDevTextBlocks(client: PrismaClient, now: Date = new Date()): Promise<DevTextBlock[]> {
   const rows = await client.$queryRaw<RawRow[]>`
     SELECT n.id, n."recipientType", n."recipientId", n.type, n."idempotencyKey", n."jobId",
-           j.reference AS "jobReference", j.timezone AS "jobTimezone", j."siteContact" AS "jobSiteContact",
+           j.reference AS "jobReference", j.timezone AS "jobTimezone", j."siteContact" AS "jobSiteContact", j."enquiryContact" AS "jobEnquiryContact", j."customerId" AS "jobCustomerId",
            n.context->>'recipientName' AS "recipientName",
            COALESCE(n."sentAt", n."createdAt") AS "at",
            n.context->>${DEV_SMS_TEXT_CONTEXT_KEY} AS text
@@ -121,7 +124,9 @@ export async function loadDevTextBlocks(client: PrismaClient, now: Date = new Da
     } else if (row.recipientType === "customer") {
       const c = customerById.get(row.recipientId);
       toName = c?.name ?? null;
-      toNumber = c?.phone ?? "";
+      // Feature 3010: the text went to the phone given on the job, else the record's -- as the SMS channel sends it.
+      const given = row.jobCustomerId === row.recipientId ? asEnquiryContact(row.jobEnquiryContact)?.phone.trim() : undefined;
+      toNumber = given || (c?.phone ?? "");
       recipientBadge = "CUSTOMER SMS";
     } else {
       toName = null;

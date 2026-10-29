@@ -10,14 +10,18 @@ import type { PrismaClient } from "../db/client.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import { CapabilityTokenType, consumeCapabilityToken, findCapabilityToken } from "../capability-tokens/index.js";
 import { formatDate } from "../time/index.js";
+import { accountStateOf } from "../notifications/templates/footer.js";
 
 type Db = Prisma.TransactionClient | PrismaClient;
 
+/** Feature 3004: whether the job's customer has chosen a password -- the page's footer offer reads it. */
+export type ReviewAccount = "guest" | "has_login";
+
 export type ReviewRead =
-  | { state: "open"; firstName: string; trade: string; jobReference: string; finishedOn: string; officePhone: string }
-  | { state: "used"; jobReference: string; officePhone: string }
-  | { state: "expired"; jobReference: string; officePhone: string }
-  | { state: "unknown"; officePhone: string };
+  | { state: "open"; firstName: string; trade: string; jobReference: string; finishedOn: string; officePhone: string; account: ReviewAccount }
+  | { state: "used"; jobReference: string; officePhone: string; account: ReviewAccount }
+  | { state: "expired"; jobReference: string; officePhone: string; account: ReviewAccount }
+  | { state: "unknown"; officePhone: string; account: ReviewAccount };
 
 export function statusOfRead(read: ReviewRead): number {
   if (read.state === "open") return 200;
@@ -35,7 +39,7 @@ function firstNameOf(name: string): string {
 
 export async function readReview(client: PrismaClient, rawToken: string, now: Date): Promise<ReviewRead> {
   const officePhone = await officePhoneOf(client);
-  const unknown: ReviewRead = { state: "unknown", officePhone };
+  const unknown: ReviewRead = { state: "unknown", officePhone, account: "guest" };
   const token = await findCapabilityToken(client, rawToken);
   if (token === null || token.type !== CapabilityTokenType.review || token.jobId === null) return unknown;
   const job = await client.job.findUnique({
@@ -49,8 +53,9 @@ export async function readReview(client: PrismaClient, rawToken: string, now: Da
   const done = job?.assignments[0];
   if (job === null || job === undefined || done === undefined) return unknown;
   const reviewed = (await client.review.count({ where: { jobId: job.id } })) > 0;
-  if (token.usedAt !== null || reviewed) return { state: "used", jobReference: job.reference, officePhone };
-  if (token.expiresAt.getTime() <= now.getTime()) return { state: "expired", jobReference: job.reference, officePhone };
+  const account = await accountStateOf(client, job.customerId);
+  if (token.usedAt !== null || reviewed) return { state: "used", jobReference: job.reference, officePhone, account };
+  if (token.expiresAt.getTime() <= now.getTime()) return { state: "expired", jobReference: job.reference, officePhone, account };
   return {
     state: "open",
     firstName: firstNameOf(done.contractor.name),
@@ -58,6 +63,7 @@ export async function readReview(client: PrismaClient, rawToken: string, now: Da
     jobReference: job.reference,
     finishedOn: formatDate(job.timezone, done.completedAt ?? now),
     officePhone,
+    account,
   };
 }
 

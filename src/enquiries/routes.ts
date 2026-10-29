@@ -11,12 +11,10 @@ import type { Router } from "express";
 import { Router as createRouter } from "express";
 import type { Request, Response } from "express";
 import type { PrismaClient } from "../db/client.js";
-import { Prisma } from "../generated/prisma/client.js";
 import type { PreferredWindow } from "../generated/prisma/enums.js";
-import { nextReference } from "../db/reference.js";
-import { zoneForState, isWeekend } from "../time/index.js";
+import { createJob, isNonEmptyString, parseJobFields, resolveLocation, type NewJobInput } from "../jobs/create.js";
+import { coverageOf, type CoverageInput } from "../coverage/tier.js";
 import { sendNotification } from "../notifications/index.js";
-import { formatDollars } from "./money.js";
 import { enquiriesRefusedForNoKey, verifyRecaptcha, type RecaptchaVerdict } from "./recaptcha.js";
 import { isTestRun } from "../test-data/label.js";
 import {
@@ -29,96 +27,11 @@ import {
 /** Feature 3003: at most this many photos on one enquiry. */
 export const MAX_ENQUIRY_PHOTOS = 5;
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const PREFERRED_WINDOWS: readonly PreferredWindow[] = ["morning", "afternoon", "evening"];
-
 const WINDOW_LABELS: Record<PreferredWindow, string> = {
   morning: "Morning (7:00-12:00)",
   afternoon: "Afternoon (12:00-17:00)",
   evening: "Evening (17:00-19:00)",
 };
-
-interface Location {
-  suburb: string;
-  state: string;
-  country: string;
-  postcode: string;
-  lat: number;
-  lng: number;
-  /** Absent when the suburb came from our own list (Feature 3006, Places down). */
-  placeId?: string;
-}
-
-/** Feature 3006: the suburb picked from the platform's own list instead of Places. */
-interface SuburbPick {
-  suburbId: string;
-}
-
-interface EnquiryInput {
-  name: string;
-  email: string;
-  phone: string;
-  /** Feature 1017: optional; empty becomes null. */
-  businessName: string | null;
-  location: Location | SuburbPick;
-  trade: string;
-  selectedOptions: string[];
-  preferredDate: string;
-  preferredWindow: PreferredWindow;
-  description: string;
-  marketingEmail: boolean;
-  marketingSms: boolean;
-  photos: { storageKey: string; fileName: string }[];
-  recaptchaToken: string | undefined;
-}
-
-type ParseResult = { ok: true; data: EnquiryInput } | { ok: false; error: string; field?: string };
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === "string" && entry.trim().length > 0);
-}
-
-/** `preferredDate` is a plain calendar date -- YYYY-MM-DD, no time, no zone. */
-function parseDateOnly(value: unknown): Date | null {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-  const date = new Date(`${value}T00:00:00.000Z`);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-function parseLocation(value: unknown): Location | SuburbPick | null {
-  if (value === null || typeof value !== "object") return null;
-  const l = value as Record<string, unknown>;
-  // Feature 3006: either the Places pick below, or just the id of one of our own suburbs.
-  if (isNonEmptyString(l["suburbId"])) return { suburbId: l["suburbId"].trim() };
-  if (
-    !isNonEmptyString(l["suburb"]) ||
-    !isNonEmptyString(l["state"]) ||
-    !isNonEmptyString(l["country"]) ||
-    !isNonEmptyString(l["postcode"]) ||
-    !isFiniteNumber(l["lat"]) ||
-    !isFiniteNumber(l["lng"]) ||
-    !isNonEmptyString(l["placeId"])
-  ) {
-    return null;
-  }
-  return {
-    suburb: l["suburb"],
-    state: l["state"],
-    country: l["country"],
-    postcode: l["postcode"],
-    lat: l["lat"],
-    lng: l["lng"],
-    placeId: l["placeId"],
-  };
-}
 
 /** Feature 3003 AC3: an optional list, at most five, each one of ours with a file name. */
 function parsePhotos(value: unknown): { storageKey: string; fileName: string }[] | null {
@@ -135,6 +48,12 @@ function parsePhotos(value: unknown): { storageKey: string; fileName: string }[]
   return photos;
 }
 
+interface EnquiryInput extends NewJobInput {
+  recaptchaToken: string | undefined;
+}
+
+type ParseResult = { ok: true; data: EnquiryInput } | { ok: false; error: string; field?: string };
+
 /** AC8: every field required except the two marketing checkboxes and the photos. */
 function parseEnquiryInput(body: unknown): ParseResult {
   if (body === null || typeof body !== "object") {
@@ -142,52 +61,8 @@ function parseEnquiryInput(body: unknown): ParseResult {
   }
   const b = body as Record<string, unknown>;
 
-  if (!isNonEmptyString(b["name"])) {
-    return { ok: false, error: "name is required", field: "name" };
-  }
-  const email = b["email"];
-  if (!isNonEmptyString(email) || !EMAIL_PATTERN.test(email)) {
-    return { ok: false, error: "email must be a valid email address", field: "email" };
-  }
-  if (!isNonEmptyString(b["phone"])) {
-    return { ok: false, error: "phone is required", field: "phone" };
-  }
-
-  const rawBusinessName = b["businessName"];
-  if (rawBusinessName !== undefined && rawBusinessName !== null && typeof rawBusinessName !== "string") {
-    return { ok: false, error: "businessName must be a string when present", field: "businessName" };
-  }
-
-  const location = parseLocation(b["location"]);
-  if (location === null) {
-    return { ok: false, error: "location must be a picked suburb", field: "location" };
-  }
-
-  if (!isNonEmptyString(b["trade"])) {
-    return { ok: false, error: "trade is required", field: "trade" };
-  }
-
-  const selectedOptions = b["selectedOptions"];
-  if (!isStringArray(selectedOptions)) {
-    return { ok: false, error: "selectedOptions must be an array of strings", field: "selectedOptions" };
-  }
-
-  const preferredDate = parseDateOnly(b["preferredDate"]);
-  if (preferredDate === null) {
-    return { ok: false, error: "preferredDate must be a YYYY-MM-DD date", field: "preferredDate" };
-  }
-
-  const preferredWindow = b["preferredWindow"];
-  if (
-    typeof preferredWindow !== "string" ||
-    !PREFERRED_WINDOWS.includes(preferredWindow as PreferredWindow)
-  ) {
-    return { ok: false, error: "preferredWindow must be morning, afternoon or evening", field: "preferredWindow" };
-  }
-
-  if (!isNonEmptyString(b["description"])) {
-    return { ok: false, error: "description is required", field: "description" };
-  }
+  const fields = parseJobFields(b);
+  if (!fields.ok) return fields;
 
   const marketingEmail = b["marketingEmail"];
   const marketingSms = b["marketingSms"];
@@ -205,40 +80,7 @@ function parseEnquiryInput(body: unknown): ParseResult {
     return { ok: false, error: "recaptchaToken must be a string when present", field: "recaptchaToken" };
   }
 
-  return {
-    ok: true,
-    data: {
-      name: b["name"].trim(),
-      email: email.trim().toLowerCase(),
-      phone: b["phone"].trim(),
-      businessName: typeof rawBusinessName === "string" && rawBusinessName.trim() !== "" ? rawBusinessName.trim() : null,
-      location,
-      trade: b["trade"].trim(),
-      selectedOptions: selectedOptions.map((entry) => entry.trim()),
-      preferredDate: preferredDate.toISOString(),
-      preferredWindow: preferredWindow as PreferredWindow,
-      description: b["description"].trim(),
-      marketingEmail,
-      marketingSms,
-      photos,
-      recaptchaToken,
-    },
-  };
-}
-
-/** The stored location for a pick: the Places pick as it came, or the Suburb row's own values (no placeId). */
-async function resolveLocation(client: PrismaClient, pick: Location | SuburbPick): Promise<Location | null> {
-  if (!("suburbId" in pick)) return pick;
-  const row = await client.suburb.findUnique({ where: { id: pick.suburbId } });
-  if (row === null) return null;
-  return {
-    suburb: row.name,
-    state: row.state,
-    country: "AU",
-    postcode: row.postcode,
-    lat: row.centroidLat,
-    lng: row.centroidLng,
-  };
+  return { ok: true, data: { ...fields.data, marketingEmail, marketingSms, photos, recaptchaToken } };
 }
 
 export interface EnquiryRoutesOptions {
@@ -263,6 +105,37 @@ export function enquiryRoutes(client: PrismaClient, options: EnquiryRoutesOption
       return;
     }
     res.json(signEnquiryPhotoUpload(config));
+  });
+
+  // Feature 3002: the coverage check behind the suburb step. Public (the form
+  // has no login) and it answers the tier only -- the customer never sees a
+  // distance or anything about contractors (AC8).
+  router.get("/coverage", (req: Request, res: Response) => {
+    void (async () => {
+      const q = req.query as Record<string, unknown>;
+      let input: CoverageInput;
+      if (typeof q["suburbId"] === "string" && q["suburbId"].trim() !== "") {
+        const location = await resolveLocation(client, { suburbId: q["suburbId"].trim() });
+        if (location === null) {
+          res.status(404).json({ error: "no such suburb" });
+          return;
+        }
+        input = { postcode: location.postcode, lat: location.lat, lng: location.lng };
+      } else {
+        const postcode = q["postcode"];
+        const lat = typeof q["lat"] === "string" && q["lat"].trim() !== "" ? Number(q["lat"]) : NaN;
+        const lng = typeof q["lng"] === "string" && q["lng"].trim() !== "" ? Number(q["lng"]) : NaN;
+        if (typeof postcode !== "string" || postcode.trim() === "" || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+          res.status(400).json({ error: "send suburbId, or postcode with lat and lng" });
+          return;
+        }
+        input = { postcode: postcode.trim(), lat, lng };
+      }
+      const { tier } = await coverageOf(client, input);
+      res.json({ tier });
+    })().catch(() => {
+      res.status(500).json({ error: "could not check coverage" });
+    });
   });
 
   router.get("/form-data", (_req: Request, res: Response) => {
@@ -325,131 +198,13 @@ export function enquiryRoutes(client: PrismaClient, options: EnquiryRoutesOption
         return;
       }
 
-      const location = await resolveLocation(client, input.location);
-      if (location === null) {
-        res.status(400).json({ error: "location must be a picked suburb", field: "location" });
+      // Feature 3005: the road from the filled-in form to a `new` job is the shared service's.
+      const created = await createJob(client, "web", input);
+      if (!created.ok) {
+        res.status(400).json({ error: created.error, field: created.field });
         return;
       }
-
-      const serviceType = await client.serviceType.findUnique({ where: { trade: input.trade } });
-      if (serviceType === null) {
-        res.status(400).json({ error: `no such trade "${input.trade}"`, field: "trade" });
-        return;
-      }
-
-      let zone: string;
-      try {
-        zone = zoneForState(location.state);
-      } catch {
-        res.status(400).json({ error: `no service zone for state "${location.state}"`, field: "location" });
-        return;
-      }
-
-      const preferredDateValue = new Date(input.preferredDate);
-      // BKLG-020: the job stores the unmultiplied rate card (Invoicing /
-      // Two-tier pricing -- "rate snapshots"). Which price list applies is
-      // settled now; whether it is a weekend job is only settled at dispatch
-      // (Feature 4002), so the multiplier is never baked in here -- only
-      // computed, below, for the confirmation email's own wording.
-      const multipliers = serviceType.serviceLevelMultipliers as { normal: number; weekend: number };
-      const weekend = isWeekend(zone, preferredDateValue);
-      const multiplier = weekend ? multipliers.weekend : multipliers.normal;
-      const displayCalloutRate = Math.round(serviceType.customerCalloutRate * multiplier);
-      const displayStandardRate = Math.round(serviceType.customerStandardRate * multiplier);
-
-      const job = await client.$transaction(async (tx) => {
-        // Find-or-create by email, guest by default -- never overwriting an
-        // existing row's name or phone (AC1, AC3; Guest by default).
-        const existingCustomer = await tx.customer.findUnique({ where: { email: input.email } });
-        const customer =
-          existingCustomer ??
-          (await tx.customer.create({
-            data: {
-              code: await nextReference("CUS", tx),
-              name: input.name,
-              email: input.email,
-              phone: input.phone,
-              businessName: input.businessName,
-            },
-          }));
-
-        const createdJob = await tx.job.create({
-          data: {
-            reference: await nextReference("JOB", tx),
-            customerId: customer.id,
-            serviceTypeId: serviceType.id,
-            customerCalloutRate: serviceType.customerCalloutRate,
-            customerStandardRate: serviceType.customerStandardRate,
-            postcode: location.postcode,
-            serviceLocation: {
-              suburb: location.suburb,
-              state: location.state,
-              country: location.country,
-              lat: location.lat,
-              lng: location.lng,
-              ...(location.placeId === undefined ? {} : { placeId: location.placeId }),
-            },
-            timezone: zone,
-            description: input.description,
-            selectedOptions: input.selectedOptions,
-            source: "web",
-            preferredWindow: input.preferredWindow,
-            preferredDate: preferredDateValue,
-          },
-        });
-
-        if (input.photos.length > 0) {
-          await tx.attachment.createMany({
-            data: input.photos.map((photo) => ({
-              jobId: createdJob.id,
-              assignmentId: null,
-              uploadedByRole: "customer" as const,
-              storageKey: photo.storageKey,
-              fileName: photo.fileName,
-            })),
-          });
-        }
-
-        if (input.marketingEmail || input.marketingSms) {
-          await tx.customer.update({
-            where: { id: customer.id },
-            data: {
-              marketingConsent: {
-                email: input.marketingEmail,
-                sms: input.marketingSms,
-                optedInAt: new Date().toISOString(),
-                source: "enquiry_form",
-              } satisfies Prisma.InputJsonValue,
-            },
-          });
-        }
-
-        return createdJob;
-      });
-
-      // BKLG-020, AC39: the job's frozen base card is never what a message
-      // quotes -- the price for THIS enquiry's date (a message stating a
-      // price computes it the way the invoice will; Notifications /
-      // Transactional messages).
-      await sendNotification(
-        {
-          type: "enquiry_confirmation",
-          channel: "email",
-          recipientType: "customer",
-          recipientId: job.customerId,
-          idempotencyKey: `enquiry_confirmation:job:${job.id}`,
-          relatedType: "job",
-          relatedId: job.id,
-          jobId: job.id,
-          context: {
-            name: input.name,
-            jobReference: job.reference,
-            calloutRate: formatDollars(displayCalloutRate),
-            standardRate: formatDollars(displayStandardRate),
-          },
-        },
-        client,
-      );
+      const job = created.job;
 
       // AC6: addressed from PlatformSettings.operatorEmail by the email
       // channel (BKLG-004) -- recipientId is unused there, the job id is
@@ -471,8 +226,8 @@ export function enquiryRoutes(client: PrismaClient, options: EnquiryRoutesOption
           jobId: job.id,
           context: {
             jobReference: job.reference,
-            trade: serviceType.trade,
-            suburb: location.suburb,
+            trade: created.trade,
+            suburb: created.suburb,
             preferredDate: input.preferredDate.slice(0, 10),
             preferredWindow: WINDOW_LABELS[input.preferredWindow],
             ...(webOrigin ? { jobUrl: `${webOrigin}/ops/jobs/${job.reference}` } : {}),

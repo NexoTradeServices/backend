@@ -44,6 +44,8 @@ import { callbackNoChargeEmail } from "./callback-no-charge.email.js";
 import { missedVisitEmail } from "./missed-visit.email.js";
 import { missedVisitSms } from "./missed-visit.sms.js";
 import { reviewRequestEmail } from "./review-request.email.js";
+import { customerSetPasswordEmail } from "./customer-set-password.email.js";
+import { accountExistsEmail } from "./account-exists.email.js";
 
 /** Every template this build ships. Features append; nothing else registers. */
 const BUILT_IN: NotificationTemplate[] = [
@@ -85,6 +87,8 @@ const BUILT_IN: NotificationTemplate[] = [
   missedVisitEmail,
   missedVisitSms,
   reviewRequestEmail,
+  customerSetPasswordEmail,
+  accountExistsEmail,
 ];
 
 function key(type: string, channel: NotificationChannel): string {

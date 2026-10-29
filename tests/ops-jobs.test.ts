@@ -27,6 +27,7 @@
 // 5001 AC9 Mike changes a time entry before Complete and Bob's screen shows it; after
 //      Complete the ops time entries are refused and the read carries the notes and parts
 // AC26 (BKLG-023) a fresh base seed gives Plumbing the six questions
+// 3002 AC9/AC11/AC12 the queue row carries the coverage tier of the job's current suburb (open jobs only)
 // 1017 AC3 the job read carries the customer's business name; Save adds, fixes
 //      or clears it on any job, ops only; AC5 the evening window label
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
@@ -84,6 +85,7 @@ interface QueueRow {
   noSiteAddress: boolean;
   closedLabel: string | null;
   contractor: ContractorView | null;
+  coverage: { tier: "covered" | "near_miss" | "out_of_reach"; nearestKm: number | null } | null;
 }
 
 interface QueueBody {
@@ -1219,5 +1221,52 @@ describe("1017 -- business customers on the job page", () => {
     expect((await detail(mike, job.reference)).windowLabel).toBe("evening 17:00-19:00");
     const row = (await queue(mike)).rows.find((j) => j.reference === job.reference);
     expect(row?.windowLabel).toBe("evening 17:00-19:00");
+  });
+});
+
+const GREG_ROTTNEST: Place = { suburb: "Rottnest Island", postcode: "6161", lat: -32.0072, lng: 115.5413, placeId: "fixture-place-rottnest" };
+
+describe("3002 -- coverage on the queue", () => {
+  test("AC9: Greg's job carries No-direct-coverage with a distance, Karl's Out-of-reach, Sarah's nothing, a closed job nothing", async () => {
+    const mike = await signInCookie("mike@idelta.com.au");
+    const greg = await makeJob({ newCustomer: { name: "Greg", email: "greg@idelta.com.au", phone: "0400 000 998" }, place: GREG_ROTTNEST });
+    const karl = await makeJob({ newCustomer: { name: "Karl", email: "karl@idelta.com.au", phone: "0400 000 999" }, place: JOONDALUP });
+    const sarah = await makeJob({ place: HILTON });
+    const closed = await makeJob({ newCustomer: { name: "Karl Two", email: "karl2@idelta.com.au", phone: "0400 000 997" }, place: JOONDALUP, status: "cancelled", cancelledAt: new Date() });
+
+    const rows = (await queue(mike)).rows;
+    const of = (reference: string) => rows.find((r) => r.reference === reference)?.coverage;
+    expect(of(greg.reference)?.tier).toBe("near_miss");
+    expect(of(greg.reference)?.nearestKm).toBeGreaterThan(0);
+    expect(of(karl.reference)?.tier).toBe("out_of_reach");
+    expect(of(karl.reference)?.nearestKm).toBeGreaterThan(25);
+    expect(of(sarah.reference)?.tier).toBe("covered");
+
+    const closedRows = (await queue(mike, { status: "closed" })).rows;
+    expect(closedRows.find((r) => r.reference === closed.reference)?.coverage).toBeNull();
+  });
+
+  test("AC11: a Fremantle site address on Karl's new job drops his Out-of-reach tag", async () => {
+    const mike = await signInCookie("mike@idelta.com.au");
+    const karl = await makeJob({ newCustomer: { name: "Karl", email: "karl@idelta.com.au", phone: "0400 000 999" }, place: JOONDALUP });
+    const rowOf = async () => (await queue(mike)).rows.find((r) => r.reference === karl.reference);
+    expect((await rowOf())?.coverage?.tier).toBe("out_of_reach");
+
+    const res = await saveAddresses(mike, karl.reference, { site: { sameAsBilling: false, address: FREMANTLE_SITE } });
+    expect(res.status).toBe(200);
+    expect((await rowOf())?.coverage?.tier).toBe("covered");
+  });
+
+  test("AC12: raising serviceReachKm past Karl's distance turns his tag to No direct coverage, the job untouched", async () => {
+    const mike = await signInCookie("mike@idelta.com.au");
+    const karl = await makeJob({ newCustomer: { name: "Karl", email: "karl@idelta.com.au", phone: "0400 000 999" }, place: JOONDALUP });
+    const before = (await queue(mike)).rows.find((r) => r.reference === karl.reference);
+    expect(before?.coverage?.tier).toBe("out_of_reach");
+    const stored = await db.job.findUniqueOrThrow({ where: { id: karl.id } });
+
+    await db.platformSettings.updateMany({ data: { serviceReachKm: Math.ceil(before?.coverage?.nearestKm ?? 0) + 1 } });
+    const after = (await queue(mike)).rows.find((r) => r.reference === karl.reference);
+    expect(after?.coverage?.tier).toBe("near_miss");
+    expect(await db.job.findUniqueOrThrow({ where: { id: karl.id } })).toEqual(stored);
   });
 });

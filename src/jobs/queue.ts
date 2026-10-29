@@ -11,6 +11,7 @@
 import type { PrismaClient } from "../db/client.js";
 import { Prisma } from "../generated/prisma/client.js";
 import type { JobStatus } from "../generated/prisma/enums.js";
+import { coverageFor, type Coverage, type CoverageInput } from "../coverage/tier.js";
 import { formatDateLabel, formatDateTimeLabel, formatLabelled, formatPlainDate } from "../time/index.js";
 import {
   CLOSED_STATUSES,
@@ -102,6 +103,12 @@ export interface QueueRow {
    * dispatches again, since the latest assignment is then a live one.
    */
   declined: { by: string; note: string | null } | null;
+  /**
+   * Feature 3002: derived every time, never stored -- the tier of the job's
+   * CURRENT suburb (so a site-address move changes it). Open jobs only; null
+   * once the job is closed.
+   */
+  coverage: Coverage | null;
 }
 
 export interface QueueResult {
@@ -148,7 +155,12 @@ function closedLabelOf(job: JobWithRelations): string | null {
   return null;
 }
 
-export function toQueueRow(job: JobWithRelations, now: Date, declined: QueueRow["declined"] = null): QueueRow {
+export function toQueueRow(
+  job: JobWithRelations,
+  now: Date,
+  declined: QueueRow["declined"] = null,
+  coverage: Coverage | null = null,
+): QueueRow {
   return {
     reference: job.reference,
     status: job.status,
@@ -166,7 +178,23 @@ export function toQueueRow(job: JobWithRelations, now: Date, declined: QueueRow[
     closedLabel: closedLabelOf(job),
     contractor: contractorView(job, now),
     declined,
+    coverage,
   };
+}
+
+/** Feature 3002: one batched coverage read for the open jobs of a page. */
+async function coverageBadges(client: PrismaClient, jobs: JobWithRelations[]): Promise<Map<string, Coverage>> {
+  const open = jobs.filter((job) => OPEN_STATUSES.includes(job.status));
+  const inputs: CoverageInput[] = [];
+  const ids: string[] = [];
+  for (const job of open) {
+    const where = job.serviceLocation as { lat?: unknown; lng?: unknown } | null;
+    if (typeof where?.lat !== "number" || typeof where.lng !== "number") continue;
+    ids.push(job.id);
+    inputs.push({ postcode: job.postcode, lat: where.lat, lng: where.lng });
+  }
+  const answers = await coverageFor(client, inputs);
+  return new Map(ids.map((id, i) => [id, answers[i]]));
 }
 
 /** Plan decision 9: the badge for each job in `jobs` that waits at new behind a decline. */
@@ -265,9 +293,9 @@ export async function listQueue(
     page = all.slice(query.offset, query.offset + query.limit);
   }
 
-  const badges = await declinedBadges(client, page);
+  const [badges, coverage] = await Promise.all([declinedBadges(client, page), coverageBadges(client, page)]);
   return {
-    rows: page.map((job) => toQueueRow(job, now, badges.get(job.id) ?? null)),
+    rows: page.map((job) => toQueueRow(job, now, badges.get(job.id) ?? null, coverage.get(job.id) ?? null)),
     total,
     hasMore: query.offset + page.length < total,
     counts,

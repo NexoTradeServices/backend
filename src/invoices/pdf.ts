@@ -7,7 +7,7 @@
 // reads the same; it is built at send time and never stored. No bank account
 // appears anywhere: the customer pays online.
 import QRCode from "qrcode";
-import { PDFDocument, StandardFonts, type PDFFont } from "pdf-lib";
+import { PDFDocument, StandardFonts, degrees, rgb, type PDFFont } from "pdf-lib";
 import type { PrismaClient } from "../db/client.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import { plain, wrap } from "../agreements/pdf.js";
@@ -35,6 +35,8 @@ export interface InvoicePdfInput {
   /** Paid in full: AMOUNT DUE reads $0.00. */
   paid: boolean;
   payLinkUrl: string | null;
+  /** A void invoice: a red VOID stamp across the middle of every page (6010 UAT). */
+  voided?: boolean;
   /** Feature 6004: set on a callback's invoice (derived from the job's parent, never stored). */
   callbackOn?: string | null;
 }
@@ -154,6 +156,27 @@ export async function makeInvoicePdf(input: InvoicePdfInput): Promise<Uint8Array
   }
   sheet.text(`Questions about this bill? Call ${input.accountsPhone}`, 10, regular, MUTED);
 
+  if (input.voided === true) {
+    // One big slanted VOID, centred on each page, over everything else.
+    const size = 120;
+    const angle = 35 * (Math.PI / 180);
+    const word = "VOID";
+    const w = bold.widthOfTextAtSize(word, size);
+    const h = size * 0.7;
+    for (const page of pdf.getPages()) {
+      const { width, height } = page.getSize();
+      page.drawText(word, {
+        x: width / 2 - ((w / 2) * Math.cos(angle) - (h / 2) * Math.sin(angle)),
+        y: height / 2 - ((w / 2) * Math.sin(angle) + (h / 2) * Math.cos(angle)),
+        size,
+        font: bold,
+        color: rgb(0.8, 0.1, 0.1),
+        opacity: 0.4,
+        rotate: degrees(35),
+      });
+    }
+  }
+
   return pdf.save();
 }
 
@@ -198,6 +221,7 @@ export async function buildInvoicePdf(
     gstApplied: invoice.gstApplied,
     gstAmount: invoice.gstAmount ?? 0,
     paid: invoice.status === "paid",
+    voided: invoice.status === "void",
     payLinkUrl: invoice.stripePaymentLinkUrl,
     callbackOn: invoice.job.parentJob?.reference ?? null,
   });

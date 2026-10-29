@@ -44,6 +44,10 @@ services:
       # so these point the app at the container database without editing .env.
       DATABASE_URL: postgresql://tradeservice:tradeservice@ts-db:5432/tradeservice_dev
       TEST_DATABASE_URL: postgresql://tradeservice:tradeservice@ts-db:5432/tradeservice_test
+    # Ceilings, not reservations (see the same note in ../frontend/compose.yaml):
+    # a runaway process stops here instead of taking the machine down.
+    cpus: 4
+    mem_limit: 6g
     depends_on:
       ts-db:
         condition: service_healthy

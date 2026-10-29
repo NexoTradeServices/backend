@@ -26,6 +26,8 @@ import { contractorJobRoutes } from './contractors/job-routes.js'
 import { agreementRoutes } from './agreements/routes.js'
 import { suburbRoutes } from './suburbs/routes.js'
 import { enquiryRoutes } from './enquiries/routes.js'
+import { accountRoutes } from './account/routes.js'
+import { accountPortalRoutes } from './account/portal-routes.js'
 import { jobRoutes } from './jobs/routes.js'
 import { respondRoutes } from './respond/routes.js'
 import { approveRoutes } from './approve/routes.js'
@@ -117,6 +119,10 @@ app.use('/api/contractor/settlements', contractorSettlementRoutes(prisma))
 app.use('/api', agreementRoutes(prisma))
 app.use('/api/suburbs', suburbRoutes(prisma))
 app.use('/api/enquiries', enquiryRoutes(prisma))
+// Feature 3004: a guest asks for a login (public, reCAPTCHA-checked, always the same answer).
+app.use('/api/account', accountRoutes(prisma, auth))
+// Feature 6010: the customer portal's reads (customer role, her own records only).
+app.use('/api/account', accountPortalRoutes(prisma))
 app.use('/api/jobs', jobRoutes(prisma))
 // Feature 6002: every invoice still owed.
 app.use('/api/receivables', receivablesRoutes(prisma))

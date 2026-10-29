@@ -54,6 +54,9 @@ import {
 import { cancelJob, parseCancelInput, takeOffJob } from "./changes.js";
 import { parseCallbackInput, raiseCallback } from "./callbacks.js";
 import { markNoShow, parseNoShowInput } from "./no-show.js";
+import { createJob, parseJobFields } from "./create.js";
+import { asEnquiryContact, givenDetails } from "./enquiry-contact.js";
+import { editRequest, parseRequestEdit } from "./request-edit.js";
 
 type WithReference = Request<{ reference: string }>;
 
@@ -81,6 +84,106 @@ export function jobRoutes(client: PrismaClient): Router {
       }
       res.json(await listQueue(client, parsed.data, settings.timezone));
     })().catch(failWith(res, "GET /api/jobs"));
+  });
+
+  // Feature 3005, phone-taken job intake: Mike keys the job while the customer is on the line. The
+  // enquiry's fields less photos, marketing and reCAPTCHA; the job is stamped `phone` here and a
+  // `source` in the body is ignored. The customer gets the Enquiry received email; the office gets
+  // no new-job-request email (Mike is the one who just took it).
+  router.post("/phone", requireRole(Role.ops), (req: Request, res: Response) => {
+    void (async () => {
+      const body: unknown = req.body;
+      if (body === null || typeof body !== "object") {
+        res.status(400).json({ error: "request body must be an object" });
+        return;
+      }
+      const parsed = parseJobFields(body as Record<string, unknown>);
+      if (!parsed.ok) {
+        res.status(400).json({ error: parsed.error, field: parsed.field });
+        return;
+      }
+      // Taken on the call, all optional: the same Addresses fields the job page saves -- billing
+      // address, ABN and GST answer, "job site same as billing" or a street of its own, and the site
+      // contact. Checked before anything is made, saved with the job straight after, by the job page's
+      // own save (so a street moves the job to its suburb, and the ABN is checked the same way).
+      // The business name is the job's own field and is read above, not here.
+      const addressFields = { ...(body as Record<string, unknown>) };
+      delete addressFields["businessName"];
+      const addresses = parseAddressesInput(addressFields);
+      if (!addresses.ok) {
+        res.status(addresses.status).json({ error: addresses.error, ...(addresses.field === undefined ? {} : { field: addresses.field }) });
+        return;
+      }
+      const created = await createJob(client, "phone", parsed.data);
+      if (!created.ok) {
+        res.status(400).json({ error: created.error, field: created.field });
+        return;
+      }
+      const given = addresses.data;
+      if (given.billing !== undefined || given.site !== undefined || given.siteContact !== undefined || given.abn !== undefined || given.gstRegistered !== undefined) {
+        const saved = await saveAddresses(client, created.job.id, given);
+        if (!saved.ok) {
+          res.status(saved.status).json({ error: saved.error, ...(saved.field === undefined ? {} : { field: saved.field }) });
+          return;
+        }
+      }
+      res.status(201).json({ reference: created.job.reference });
+    })().catch(failWith(res, "POST /api/jobs/phone"));
+  });
+
+  // Feature 4004: Mike corrects the request while the job is `new` (trade, description, date, window,
+  // suburb). Only the fields sent change; a dispatched job is locked (409); nothing is sent to anyone.
+  router.put("/:reference/request", requireRole(Role.ops), (req: WithReference, res: Response) => {
+    void (async () => {
+      const parsed = parseRequestEdit(req.body);
+      if (!parsed.ok) {
+        res.status(400).json({ error: parsed.error, field: parsed.field });
+        return;
+      }
+      const outcome = await editRequest(client, req.params.reference, parsed.data);
+      if (!outcome.ok) {
+        res.status(outcome.status).json({ error: outcome.error, ...(outcome.field === undefined ? {} : { field: outcome.field }) });
+        return;
+      }
+      const fresh = await loadJob(client, req.params.reference);
+      if (!fresh) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      res.json(await jobDetail(client, fresh, req.authUser?.id ?? ""));
+    })().catch(failWith(res, "PUT /api/jobs/:reference/request"));
+  });
+
+  // Feature 3010: after confirming on the call, Mike copies what she gave onto her record for every later
+  // job: the given phone, and the given business name when not empty. A changed business name keeps the
+  // ABN and GST answer (the addresses save's rule: only clearing the name clears them). The name and the
+  // email are never touched. Any job status. Nothing to copy -> 409. Ops-only; answers the fresh detail.
+  router.post("/:reference/customer/update-from-request", requireRole(Role.ops), (req: WithReference, res: Response) => {
+    void (async () => {
+      const job = await loadJob(client, req.params.reference);
+      if (!job) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      const given = givenDetails(asEnquiryContact(job.enquiryContact), job.customer);
+      if (!given.newDetails) {
+        res.status(409).json({ error: "There is nothing new to copy onto the customer." });
+        return;
+      }
+      await client.customer.update({
+        where: { id: job.customerId },
+        data: {
+          ...(given.phone !== null ? { phone: given.phone } : {}),
+          ...(given.businessName !== null ? { businessName: given.businessName } : {}),
+        },
+      });
+      const fresh = await loadJob(client, req.params.reference);
+      if (!fresh) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      res.json(await jobDetail(client, fresh, req.authUser?.id ?? ""));
+    })().catch(failWith(res, "POST /api/jobs/:reference/customer/update-from-request"));
   });
 
   router.get("/:reference", requireRole(Role.ops), (req: WithReference, res: Response) => {

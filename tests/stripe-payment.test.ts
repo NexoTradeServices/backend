@@ -553,10 +553,17 @@ describe("AC7 -- the receipt's wording", () => {
         "Questions about this bill? Call us on 08 0000 0000.",
         "",
         "-- Perth Trades & Services",
+        "",
+        // 3004: the shared account offer, since Sarah is a guest.
+        "Manage your jobs online",
+        "Create your account to view job updates, track upcoming bookings and manage your service history.",
+        "",
+        "Set your password and activate your account: https://idelta.com.au/set-password",
       ].join("\n"),
     );
     expect(receipt?.attachments ?? []).toHaveLength(0);
-    expect(receipt?.message.html).not.toContain("<a ");
+    // No button: the only link is the account offer's.
+    expect((receipt?.message.html ?? "").split("Manage your jobs online")[0]).not.toContain("<a ");
   });
 
   test("AC7: a PayTo receipt says PayTo; another method is named as Stripe names it", async () => {

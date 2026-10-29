@@ -99,7 +99,10 @@ export function buildAuth({ client, rateLimit }: BuildAuthOptions) {
           where: { userId: user.id, providerId: "credential" },
           select: { id: true },
         });
-        const type = hasCredential ? "password_reset" : "contractor_onboarding";
+        // Feature 3004: a customer with no password yet is being invited to set one -- never the
+        // contractor welcome. The role is read from the row (it is not on Better Auth's user shape).
+        const row = hasCredential ? null : await client.user.findUnique({ where: { id: user.id }, select: { role: true } });
+        const type = hasCredential ? "password_reset" : row?.role === "customer" ? "customer_set_password" : "contractor_onboarding";
         await sendNotification(
           {
             type,

@@ -31,6 +31,7 @@ import { CONSOLE_PROVIDER } from "./providers/console.js";
 import { resolveProvider } from "./providers/registry.js";
 import { blockedReason } from "./suppression.js";
 import { getTemplate } from "./templates/registry.js";
+import { withOfferFooter } from "./templates/footer.js";
 import type { EmailAttachment, Notification, NotificationContext, SendContext } from "./types.js";
 
 /**
@@ -264,7 +265,7 @@ export async function deliver(client: TransactionalDb, row: ClaimedRow): Promise
   }
 
   const channel = channelFor(row.channel);
-  const lookup = await channel.addressFor(context, row.recipientType, row.recipientId);
+  const lookup = await channel.addressFor(context, row.recipientType, row.recipientId, row.jobId);
   if ("reason" in lookup) {
     await giveUp(client, row.id, lookup.reason);
     return;
@@ -303,6 +304,13 @@ export async function deliver(client: TransactionalDb, row: ClaimedRow): Promise
   } catch (error: unknown) {
     // A template variable that is missing now is missing on every retry.
     await giveUp(client, row.id, `render failed: ${messageOf(error)}`);
+    return;
+  }
+  try {
+    // Feature 3004: the shared account offer, added here for the listed customer types only.
+    rendered = await withOfferFooter(client, row, renderContext, rendered);
+  } catch (error: unknown) {
+    await failAttempt(client, row, `footer failed: ${messageOf(error)}`);
     return;
   }
 
