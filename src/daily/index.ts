@@ -8,12 +8,13 @@
 // is simply the first tick after it starts again. One pass at a time. One failing step logs and
 // never stops the others.
 //
-// HOOKING ON. A later feature that wants the morning run (licence and insurance alerts, the
+// HOOKING ON. A later feature that wants the morning run (the
 // job-tomorrow reminder, the photo clean-up) adds a step to DAILY_STEPS below -- never a second timer.
 import type { PrismaClient } from "../db/client.js";
 import { getPrisma } from "../db/client.js";
 import { runInvoiceReminders } from "../invoices/reminders.js";
 import { runPayLinkSwitchOff } from "../invoices/void.js";
+import { runExpiryAlerts } from "../contractors/expiry-alerts.js";
 import { clockTimeIn, todayIn } from "../time/index.js";
 
 export const DAILY_LOOP_MS = 5 * 60 * 1000;
@@ -51,6 +52,13 @@ export const DAILY_STEPS: DailyStep[] = [
     name: "pay-link switch-off",
     async run({ client, now, label }) {
       await runPayLinkSwitchOff(client, now, label);
+    },
+  },
+  {
+    name: "licence and insurance alerts",
+    async run({ client, zone, today, label }) {
+      const made = await runExpiryAlerts(client, { zone, today, onlyLabel: label });
+      if (made.sent > 0) console.log(`daily: licence and insurance alerts -- ${String(made.sent)} emailed`);
     },
   },
 ];

@@ -49,6 +49,8 @@ import { reviewRequestEmail } from "./review-request.email.js";
 import { customerSetPasswordEmail } from "./customer-set-password.email.js";
 import { accountExistsEmail } from "./account-exists.email.js";
 import { emailBouncingEmail } from "./email-bouncing.email.js";
+import { licenceExpiringEmail } from "./licence-expiring.email.js";
+import { insuranceExpiringEmail } from "./insurance-expiring.email.js";
 
 /** Every template this build ships. Features append; nothing else registers. */
 const BUILT_IN: NotificationTemplate[] = [
@@ -95,6 +97,8 @@ const BUILT_IN: NotificationTemplate[] = [
   customerSetPasswordEmail,
   accountExistsEmail,
   emailBouncingEmail,
+  licenceExpiringEmail,
+  insuranceExpiringEmail,
 ];
 
 function key(type: string, channel: NotificationChannel): string {

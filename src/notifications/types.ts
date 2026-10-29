@@ -43,6 +43,11 @@ export interface RenderedMessage {
   /** the plain-text body -- the only part SMS has, and email's fallback part */
   text: string;
   html?: string;
+  /**
+   * Email only: where a reply goes, when not the sender (Feature 7002 -- a contractor's expiry
+   * alert is answered at the office inbox). Absent: the reply goes to the From address.
+   */
+  replyTo?: string;
 }
 
 /**

@@ -21,10 +21,11 @@ function consoleAdapter(channel: NotificationChannel): ProviderAdapter {
     send({ to, message, attachments }) {
       const heading = `[notification:${channel}] -> ${to}`;
       const subject = message.subject ? `\nsubject: ${message.subject}` : "";
+      const replyTo = message.replyTo ? `\nreply-to: ${message.replyTo}` : "";
       const files = (attachments ?? [])
         .map((file) => `\nattachment: ${file.fileName} (${String(file.content.byteLength)} bytes)`)
         .join("");
-      console.log(`${heading}${subject}${files}\n${message.text}\n`);
+      console.log(`${heading}${subject}${replyTo}${files}\n${message.text}\n`);
       return Promise.resolve({ providerMessageId: `console-${randomUUID()}` });
     },
   };

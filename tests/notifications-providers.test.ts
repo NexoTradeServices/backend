@@ -17,6 +17,7 @@ import {
   type CastIds,
 } from "./helpers/notifications.js";
 import { drainOnce, sendNotification, startNotifications } from "../src/notifications/index.js";
+import { mailjetEmail } from "../src/notifications/providers/mailjet.js";
 import { registerTemplate, resetTemplates } from "../src/notifications/templates/registry.js";
 import { registerProvider, resetProviders } from "../src/notifications/providers/registry.js";
 import type { PrismaClient } from "../src/db/client.js";
@@ -253,5 +254,41 @@ describe("AC9 -- credentials decide the environment", () => {
         else process.env[name] = value;
       });
     }
+  });
+});
+
+describe("Feature 7002 -- the reply address", () => {
+  test("7002 AC1: the Mailjet payload carries ReplyTo when the message has a replyTo, and none otherwise", async () => {
+    const mailjetEnv = ["MAILJET_API_KEY", "MAILJET_API_SECRET", "MAILJET_FROM_EMAIL"] as const;
+    const saved = mailjetEnv.map((name) => process.env[name]);
+    for (const name of mailjetEnv) process.env[name] = "test@idelta.com.au";
+    const fetched = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(() =>
+        Promise.resolve(new Response(JSON.stringify({ Messages: [{ Status: "success", To: [{ MessageUUID: "uuid-1" }] }] }), { status: 200 })),
+      );
+    try {
+      await mailjetEmail.send({ to: "bob@idelta.com.au", fromName: "x", message: { subject: "s", text: "t", replyTo: "ops@idelta.com.au" } });
+      await mailjetEmail.send({ to: "bob@idelta.com.au", fromName: "x", message: { subject: "s", text: "t" } });
+      const first = JSON.parse((fetched.mock.calls[0]?.[1] as { body: string }).body) as { Messages: object[] };
+      const second = JSON.parse((fetched.mock.calls[1]?.[1] as { body: string }).body) as { Messages: object[] };
+      expect(first.Messages[0]).toMatchObject({ ReplyTo: { Email: "ops@idelta.com.au" } });
+      expect(second.Messages[0]).not.toHaveProperty("ReplyTo");
+    } finally {
+      fetched.mockRestore();
+      mailjetEnv.forEach((name, index) => {
+        const value = saved[index];
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      });
+    }
+  });
+
+  test("7002 AC1: the console adapter shows the reply address", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { consoleEmail } = await import("../src/notifications/providers/console.js");
+    await consoleEmail.send({ to: "bob@idelta.com.au", fromName: "x", message: { subject: "s", text: "t", replyTo: "ops@idelta.com.au" } });
+    expect(String(log.mock.calls[0]?.[0])).toContain("reply-to: ops@idelta.com.au");
+    log.mockRestore();
   });
 });
