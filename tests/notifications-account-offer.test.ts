@@ -1,6 +1,6 @@
 // Feature 3004 AC9 -- the account offer on customer messages
 //
-// AC9  every listed customer email and text carries "Want to track all your jobs? Set a password"
+// AC9  every listed customer email carries "Manage your jobs online" with a Set your password button, every text the short link
 //      (link to /set-password) while the customer is a guest, and "Log in to see all your jobs"
 //      (link to /account) once she has a password; the site-contact wording, the enquiry
 //      confirmation, and ops, contractor and account mail carry neither.
@@ -89,7 +89,8 @@ describe("AC9 -- the footer by state", () => {
     expect(email.sent).toHaveLength(OFFER_FOOTER_TYPES.size);
     expect(sms.sent).toHaveLength(OFFER_FOOTER_TYPES.size);
     for (const sent of email.sent) {
-      expect(sent.message.text).toContain("Want to track all your jobs? Set a password: https://idelta.com.au/set-password");
+      expect(sent.message.text).toContain("Manage your jobs online")
+      expect(sent.message.text).toContain("Set your password and activate your account: https://idelta.com.au/set-password");
       expect(sent.message.html).toContain('href="https://idelta.com.au/set-password"');
     }
     for (const sent of sms.sent) {
@@ -104,7 +105,7 @@ describe("AC9 -- the footer by state", () => {
     await send("slot_confirmed", "sms", "customer");
     await drainOnce(db, 100);
     expect(email.sent[0]?.message.text).toContain("Log in to see all your jobs: https://idelta.com.au/account");
-    expect(email.sent[0]?.message.text).not.toContain("Set a password");
+    expect(email.sent[0]?.message.text).not.toContain("Set your password");
     expect(sms.sent[0]?.message.text).toContain("https://idelta.com.au/account");
   });
 
@@ -113,7 +114,7 @@ describe("AC9 -- the footer by state", () => {
     await db.customer.update({ where: { id: sarahId }, data: { userId: user.id } });
     await send("invoice", "email", "customer");
     await drainOnce(db, 100);
-    expect(email.sent[0]?.message.text).toContain("Set a password");
+    expect(email.sent[0]?.message.text).toContain("Set your password");
   });
 
   test("the enquiry confirmation and account mail carry neither offer", async () => {

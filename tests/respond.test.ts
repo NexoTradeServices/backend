@@ -477,10 +477,10 @@ describe("the slot confirmation", () => {
     // Reworded at 4006's UAT: no message states a price.
     expect(text).not.toContain("$");
     expect(html).not.toContain("$");
-    // 3004: the shared account offer ("Want to track all your jobs? Set a password") is the one link
+    // 3004: the shared account offer ("Manage your jobs online") is the one link
     // and the one "track" these messages now carry; the rest of the message is checked without it.
-    expect(text).toContain("Want to track all your jobs? Set a password: https://idelta.com.au/set-password");
-    for (const body of [text.split("Want to track all your jobs?")[0] ?? "", html.split("Want to track all your jobs?")[0] ?? ""]) {
+    expect(text).toContain("Set your password and activate your account: https://idelta.com.au/set-password");
+    for (const body of [text.split("Manage your jobs online")[0] ?? "", html.split("Manage your jobs online")[0] ?? ""]) {
       expect(body).not.toMatch(/track/i);
       expect(body).not.toMatch(/remind/i);
       expect(body).not.toContain("http");

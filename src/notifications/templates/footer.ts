@@ -2,8 +2,9 @@
 //
 // One shared piece, added by the module itself (never a copy per template) to
 // the customer-audience email and text of the types below. Read from the
-// customer at send time: no login yet -> "Want to track all your jobs? Set a
-// password"; has a password -> "Log in to see all your jobs". No amounts, per
+// customer at send time: no login yet -> "Manage your jobs online" with a Set
+// your password button (the text says "Set a password" on the shorter channels
+// and pages); has a password -> "Log in to see all your jobs". No amounts, per
 // the message rules. Never on the enquiry confirmation (its page carries the
 // offer), account mail, ops or contractor mail, or the site-contact wording.
 import type { NotificationDb, NotificationChannel, NotificationContext, RenderedMessage } from "../types.js";
@@ -39,12 +40,16 @@ export async function accountStateOf(db: NotificationDb, customerId: string): Pr
 }
 
 const EMAIL_TEXT: Record<AccountState, string> = {
-  guest: "Want to track all your jobs? Set a password: {{siteUrl}}/set-password",
+  guest: `Manage your jobs online
+Create your account to view job updates, track upcoming bookings and manage your service history.
+
+Set your password and activate your account: {{siteUrl}}/set-password`,
   has_login: "Log in to see all your jobs: {{siteUrl}}/account",
 };
 
 const EMAIL_HTML: Record<AccountState, string> = {
-  guest: `Want to track all your jobs? <a href="{{siteUrl}}/set-password">Set a password</a>`,
+  guest: `<strong>Manage your jobs online</strong><br>Create your account to view job updates, track upcoming bookings and manage your service history.</p>
+<p><a href="{{siteUrl}}/set-password" style="display:inline-block;padding:10px 18px;background:#1c2b3a;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold">Set your password and activate your account</a>`,
   has_login: `<a href="{{siteUrl}}/account">Log in to see all your jobs</a>`,
 };
 
