@@ -194,6 +194,19 @@ describe("AC4/AC5 -- invoices", () => {
     expect((await get(sarah, `/invoices/${paid.invoiceReference}`)).body).toMatchObject({ status: "Paid", payLink: null });
   });
 
+  test("AC4: the detail carries what the PDF prints -- the issuer, the title, the questions phone and Amount due", async () => {
+    const sarah = await giveLogin("CUS-1050");
+    const paid = await owedInvoice(db, { status: "paid" });
+    const open = await owedInvoice(db, { amount: 120_000 });
+    const settings = await db.platformSettings.findFirstOrThrow();
+
+    const detail = (await get(sarah, `/invoices/${open.invoiceReference}`)).body as Record<string, unknown>;
+    expect(detail).toMatchObject({ amountDue: 120_000, callbackOn: null, seller: { name: settings.legalEntityName } });
+    expect(["TAX INVOICE", "INVOICE"]).toContain(detail["title"]);
+    expect(typeof detail["accountsPhone"]).toBe("string");
+    expect((await get(sarah, `/invoices/${paid.invoiceReference}`)).body).toMatchObject({ amountDue: 0 });
+  });
+
   test("AC4: Download PDF gives the same bytes the email attaches", async () => {
     const sarah = await giveLogin("CUS-1050");
     const inv = await owedInvoice(db, { status: "paid" });
@@ -216,6 +229,17 @@ describe("AC4/AC5 -- invoices", () => {
     delete rest["id"];
     await db.invoice.create({ data: { ...rest, reference: "INV-9999", status: "sent", replacesInvoiceId: original.id, billedTo: original.billedTo as never } as never });
     expect((await get(sarah, `/invoices/${old.invoiceReference}`)).body).toMatchObject({ status: "Void", replacedBy: "INV-9999", payLink: null });
+  });
+
+  test("AC5: a void invoice's PDF carries the VOID stamp; the same invoice sent does not", async () => {
+    const sarah = await giveLogin("CUS-1050");
+    const inv = await owedInvoice(db, { status: "void" });
+    const bytes = async () => Buffer.from((await get(sarah, `/invoices/${inv.invoiceReference}/pdf`)).body as Buffer);
+    const voided = await bytes();
+    await db.invoice.update({ where: { id: inv.invoiceId }, data: { status: "sent" } });
+    const sent = await bytes();
+    expect(voided.equals(sent)).toBe(false);
+    expect(voided.length).toBeGreaterThan(sent.length);
   });
 });
 

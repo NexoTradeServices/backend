@@ -13,6 +13,9 @@ import type { Customer } from "../generated/prisma/client.js";
 import { Role } from "../generated/prisma/enums.js";
 import { requireRole } from "../auth/middleware.js";
 import { buildInvoicePdf } from "../invoices/pdf.js";
+import { formatAbn } from "../invoices/abn.js";
+import { billQuestionsPhone, isBusinessBilledTo } from "../invoices/billing.js";
+import { addressLine } from "../settings/address.js";
 import { buildCreditNotePdf } from "../refunds/credit-note.js";
 import { formatDate, formatPlainDate, formatSlotLabel } from "../time/index.js";
 import { WINDOW_LABELS, asAddress, type Address } from "../jobs/shared.js";
@@ -202,7 +205,7 @@ export function accountPortalRoutes(client: PrismaClient): Router {
     if (customer === null) return null;
     return client.invoice.findFirst({
       where: { reference: req.params.reference, customerId: customer.id },
-      include: { lines: { orderBy: { id: "asc" } }, job: { select: { reference: true, timezone: true } }, replacedBy: { select: { reference: true }, take: 1 } },
+      include: { lines: { orderBy: { id: "asc" } }, job: { select: { reference: true, timezone: true, parentJob: { select: { reference: true } } } }, replacedBy: { select: { reference: true }, take: 1 } },
     });
   }
 
@@ -214,11 +217,23 @@ export function accountPortalRoutes(client: PrismaClient): Router {
         return;
       }
       const billedTo = invoice.billedTo as { name: string; businessName?: string; abn?: string; address?: Address };
+      const settings = await client.platformSettings.findFirstOrThrow();
+      const sellerAbn = settings.businessAbn?.trim() ?? "";
       res.json({
+        // The PDF's own words, so the page and the PDF read alike (6010 UAT).
+        title: invoice.gstApplied ? "TAX INVOICE" : "INVOICE",
+        seller: {
+          name: settings.legalEntityName,
+          abn: sellerAbn === "" ? null : formatAbn(sellerAbn),
+          address: addressLine(settings.businessAddress) || null,
+        },
+        accountsPhone: billQuestionsPhone(settings),
+        callbackOn: invoice.job.parentJob?.reference ?? null,
+        amountDue: invoice.status === "paid" ? 0 : invoice.amount,
         reference: invoice.reference,
         jobReference: invoice.job.reference,
         status: INVOICE_STATUS_WORDS[invoice.status],
-        billedTo: { name: billedTo.name, businessName: billedTo.businessName ?? null, abn: billedTo.abn ?? null, address: oneLine(asAddress(billedTo.address)) },
+        billedTo: { name: billedTo.name, isBusiness: isBusinessBilledTo(billedTo), businessName: billedTo.businessName ?? null, abn: billedTo.abn ? formatAbn(billedTo.abn) : null, address: oneLine(asAddress(billedTo.address)) },
         issued: formatDate(invoice.job.timezone, invoice.sentAt ?? invoice.createdAt),
         due: formatDate(invoice.job.timezone, invoice.dueAt),
         lines: invoice.lines.map((line) => ({
