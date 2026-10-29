@@ -28,10 +28,8 @@ import type { PrismaClient } from "../db/client.js";
 import { requireRole } from "../auth/middleware.js";
 import { Role } from "../generated/prisma/enums.js";
 import { listQueue, parseQueueQuery } from "./queue.js";
-import { parseSiteContact } from "./site-contact.js";
-import type { Address } from "./shared.js";
 import { jobDetail, loadJob } from "./detail.js";
-import { parseAddressesInput, parsePick, saveAddresses } from "./addresses.js";
+import { parseAddressesInput, saveAddresses } from "./addresses.js";
 import { OPEN_VISIT_STATUSES, Refused, lockAssignment, lockedFailure, parseTimeEntries, writeEntries } from "./visit.js";
 import { hasPayableLink } from "../invoices/view.js";
 import { askInvoiceMessages } from "../invoices/messages.js";
@@ -104,26 +102,30 @@ export function jobRoutes(client: PrismaClient): Router {
         res.status(400).json({ error: parsed.error, field: parsed.field });
         return;
       }
-      // Taken on the call, both optional: the street (a full Places pick, as the job page's Addresses
-      // card takes it) and whoever lets the contractor in (name and phone together, email optional).
-      const rawBody = body as Record<string, unknown>;
-      let address: Address | null = null;
-      if (rawBody["siteAddress"] !== undefined && rawBody["siteAddress"] !== null) {
-        address = parsePick(rawBody["siteAddress"]);
-        if (address === null) {
-          res.status(400).json({ error: "siteAddress must be a picked address", field: "siteAddress" });
-          return;
-        }
-      }
-      const contact = parseSiteContact(rawBody["siteContact"]);
-      if (!contact.ok) {
-        res.status(contact.status).json({ error: contact.error, field: contact.field });
+      // Taken on the call, all optional: the same Addresses fields the job page saves -- billing
+      // address, ABN and GST answer, "job site same as billing" or a street of its own, and the site
+      // contact. Checked before anything is made, saved with the job straight after, by the job page's
+      // own save (so a street moves the job to its suburb, and the ABN is checked the same way).
+      // The business name is the job's own field and is read above, not here.
+      const addressFields = { ...(body as Record<string, unknown>) };
+      delete addressFields["businessName"];
+      const addresses = parseAddressesInput(addressFields);
+      if (!addresses.ok) {
+        res.status(addresses.status).json({ error: addresses.error, ...(addresses.field === undefined ? {} : { field: addresses.field }) });
         return;
       }
-      const created = await createJob(client, "phone", parsed.data, { address, contact: contact.data ?? null });
+      const created = await createJob(client, "phone", parsed.data);
       if (!created.ok) {
         res.status(400).json({ error: created.error, field: created.field });
         return;
+      }
+      const given = addresses.data;
+      if (given.billing !== undefined || given.site !== undefined || given.siteContact !== undefined || given.abn !== undefined || given.gstRegistered !== undefined) {
+        const saved = await saveAddresses(client, created.job.id, given);
+        if (!saved.ok) {
+          res.status(saved.status).json({ error: saved.error, ...(saved.field === undefined ? {} : { field: saved.field }) });
+          return;
+        }
       }
       res.status(201).json({ reference: created.job.reference });
     })().catch(failWith(res, "POST /api/jobs/phone"));

@@ -222,22 +222,44 @@ describe("3010 AC8 -- a phone job keeps what Mike keyed", () => {
   });
 });
 
-describe("UAT -- the street address and site contact taken on the call", () => {
-  const STREET = { street: "14 Mundaring Weir Road", suburb: "Kalamunda", state: "WA", country: "AU", postcode: "6076", lat: -31.9792, lng: 116.0488, placeId: "fixture-place-14-mundaring" };
+describe("UAT -- the addresses, ABN and site contact taken on the call", () => {
+  const HILTON_STREET = { street: "5 Carrington Street", suburb: "Hilton", state: "WA", country: "AU", postcode: "6163", lat: -32.0731, lng: 115.7797, placeId: "fixture-place-hilton-street" };
+  const KALAMUNDA_STREET = { street: "14 Mundaring Weir Road", ...KALAMUNDA, placeId: "fixture-place-14-mundaring" };
 
-  test("both are stored on the job; a street in another suburb moves the job to it", async () => {
+  test("billing, a site of its own, the ABN, GST and the contact are saved; the street moves the job to its suburb", async () => {
     const mike = await signIn("mike@idelta.com.au");
-    const other = { ...STREET, street: "5 Carrington Street", suburb: "Hilton", postcode: "6163", lat: -32.0731, lng: 115.7797, placeId: "fixture-place-hilton-street" };
-    const res = await phone(mike, body({ siteAddress: other, siteContact: { name: "Lena Park", phone: "0400 111 222", email: "lena@idelta.com.au" } }));
+    const res = await phone(
+      mike,
+      body({
+        email: "nina-phone@idelta.com.au",
+        businessName: "Rossi's Cafe",
+        abn: "51 824 753 556",
+        gstRegistered: "yes",
+        billingAddress: KALAMUNDA_STREET,
+        site: { sameAsBilling: false, address: HILTON_STREET },
+        siteContact: { name: "Lena Park", phone: "0400 111 222", email: "lena@idelta.com.au" },
+      }),
+    );
     expect(res.status).toBe(201);
-    const job = await db.job.findUniqueOrThrow({ where: { reference: (res.body as { reference: string }).reference } });
-    expect(job.siteAddress).toMatchObject({ street: "5 Carrington Street", suburb: "Hilton", postcode: "6163" });
+    const job = await db.job.findUniqueOrThrow({ where: { reference: (res.body as { reference: string }).reference }, include: { customer: true } });
+    expect(job.customer.billingAddress).toMatchObject({ street: "14 Mundaring Weir Road", postcode: "6076" });
+    expect(job.customer.abn).toBe("51824753556");
+    expect(job.customer.gstRegistered).toBe(true);
+    expect(job.siteAddress).toMatchObject({ street: "5 Carrington Street", suburb: "Hilton" });
     expect(job.siteContact).toEqual({ name: "Lena Park", phone: "0400 111 222", email: "lena@idelta.com.au" });
     expect(job.postcode).toBe("6163");
     expect(job.serviceLocation).toMatchObject({ suburb: "Hilton", placeId: "fixture-place-hilton-street" });
   });
 
-  test("neither is required: a job without them has none", async () => {
+  test("site same as billing copies the billing address onto the job", async () => {
+    const mike = await signIn("mike@idelta.com.au");
+    const res = await phone(mike, body({ billingAddress: KALAMUNDA_STREET, site: { sameAsBilling: true } }));
+    expect(res.status).toBe(201);
+    const job = await db.job.findUniqueOrThrow({ where: { reference: (res.body as { reference: string }).reference } });
+    expect(job.siteAddress).toMatchObject({ street: "14 Mundaring Weir Road", suburb: "Kalamunda" });
+  });
+
+  test("none of it is required: a job without it has no addresses and no contact", async () => {
     const mike = await signIn("mike@idelta.com.au");
     const res = await phone(mike, body());
     const job = await db.job.findUniqueOrThrow({ where: { reference: (res.body as { reference: string }).reference } });
@@ -246,15 +268,18 @@ describe("UAT -- the street address and site contact taken on the call", () => {
     expect(job.postcode).toBe("6076");
   });
 
-  test("a contact with a name and no phone, or a typed address, is a 400 on its own field and nothing is created", async () => {
+  test("a half-filled contact, a bad ABN or a typed address is a 400 on its own field and nothing is created", async () => {
     const mike = await signIn("mike@idelta.com.au");
     const before = await db.job.count();
     const half = await phone(mike, body({ siteContact: { name: "Lena Park", phone: "" } }));
     expect(half.status).toBe(400);
     expect(half.body).toMatchObject({ field: "siteContactPhone" });
-    const typed = await phone(mike, body({ siteAddress: { street: "14 Mundaring Weir Road" } }));
+    const abn = await phone(mike, body({ businessName: "Rossi's Cafe", abn: "12345" }));
+    expect(abn.status).toBe(400);
+    expect(abn.body).toMatchObject({ field: "abn" });
+    const typed = await phone(mike, body({ billingAddress: { street: "14 Mundaring Weir Road" } }));
     expect(typed.status).toBe(400);
-    expect(typed.body).toMatchObject({ field: "siteAddress" });
+    expect(typed.body).toMatchObject({ field: "billingAddress" });
     expect(await db.job.count()).toBe(before);
   });
 });

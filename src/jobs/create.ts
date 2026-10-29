@@ -15,8 +15,6 @@ import { zoneForState, isWeekend } from "../time/index.js";
 import { sendNotification } from "../notifications/index.js";
 import { formatDollars } from "../enquiries/money.js";
 import { enquiryContactOf } from "./enquiry-contact.js";
-import type { Address } from "./shared.js";
-import type { SiteContact } from "./site-contact.js";
 
 export const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export const PREFERRED_WINDOWS: readonly PreferredWindow[] = ["morning", "afternoon", "evening"];
@@ -195,39 +193,15 @@ export interface CreatedJob {
   suburb: string;
 }
 
-/**
- * Phone intake only: where the job is and who lets the contractor in, taken while the customer is on
- * the line. A street pick moves the job to the pick (the same rule as the job page's Addresses card
- * on a `new` job): its suburb, postcode and point become the job's.
- */
-export interface SiteDetails {
-  address: Address | null;
-  contact: SiteContact | null;
-}
-
 export type CreateResult = ({ ok: true } & CreatedJob) | { ok: false; error: string; field: string };
 
 export async function createJob(
   client: PrismaClient,
   source: "web" | "phone",
   input: JobFields & Partial<Pick<NewJobInput, "marketingEmail" | "marketingSms" | "photos">>,
-  site?: SiteDetails,
 ): Promise<CreateResult> {
-  const picked = await resolveLocation(client, input.location);
-  if (picked === null) return { ok: false, error: "location must be a picked suburb", field: "location" };
-  const siteAddress = site?.address ?? null;
-  const location: Location =
-    siteAddress === null
-      ? picked
-      : {
-          suburb: siteAddress.suburb,
-          state: siteAddress.state,
-          country: siteAddress.country,
-          postcode: siteAddress.postcode,
-          lat: siteAddress.lat,
-          lng: siteAddress.lng,
-          placeId: siteAddress.placeId,
-        };
+  const location = await resolveLocation(client, input.location);
+  if (location === null) return { ok: false, error: "location must be a picked suburb", field: "location" };
 
   const serviceType = await client.serviceType.findUnique({ where: { trade: input.trade } });
   if (serviceType === null) return { ok: false, error: `no such trade "${input.trade}"`, field: "trade" };
@@ -282,8 +256,6 @@ export async function createJob(
           ...(location.placeId === undefined ? {} : { placeId: location.placeId }),
         },
         enquiryContact: enquiryContactOf(input),
-        ...(siteAddress === null ? {} : { siteAddress }),
-        ...(site?.contact == null ? {} : { siteContact: site.contact }),
         timezone: zone,
         description: input.description,
         selectedOptions: input.selectedOptions,
