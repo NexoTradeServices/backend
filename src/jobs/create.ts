@@ -296,6 +296,8 @@ export async function createJob(
 
   // BKLG-020, AC39: the job's frozen base card is never what a message quotes -- the price for THIS
   // job's date (a message stating a price computes it the way the invoice will).
+  // A phone job's email is worded for a customer who has just spoken to Mike (no "we'll call you").
+  const settings = source === "phone" ? await client.platformSettings.findFirst({ select: { operatorPhone: true } }) : null;
   await sendNotification(
     {
       type: "enquiry_confirmation",
@@ -311,6 +313,7 @@ export async function createJob(
         jobReference: job.reference,
         calloutRate: formatDollars(displayCalloutRate),
         standardRate: formatDollars(displayStandardRate),
+        ...(source === "phone" ? { source: "phone", officePhone: settings?.operatorPhone ?? "" } : {}),
       },
     },
     client,

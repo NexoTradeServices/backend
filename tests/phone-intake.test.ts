@@ -142,6 +142,11 @@ describe("AC2/AC3 -- Tom rings", () => {
     expect(email.sent[0]?.to).toBe("tom@idelta.com.au");
     expect(email.sent[0]?.message.text).toContain(reference);
     expect(email.sent[0]?.message.text).toContain("$");
+    // The owner's phone wording: the customer has just spoken to Mike, so no "we'll call you".
+    expect(email.sent[0]?.message.text).toContain("Thanks for your call. Your request is booked in as " + reference + ".");
+    expect(email.sent[0]?.message.text).toContain("We'll send you the booking details shortly. If you need anything in the meantime, please ring the office on");
+    expect(email.sent[0]?.message.text).not.toContain("call you");
+    expect(email.sent[0]?.message.html).toContain("Thanks for your call.");
   });
 });
 
