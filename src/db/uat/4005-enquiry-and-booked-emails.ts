@@ -52,7 +52,7 @@ export async function topUp(client: PrismaClient): Promise<string[]> {
 
 /** The jobs the steps told the owner to key start "UAT 4005": label them so the sweep removes them. */
 export async function restoreCast(client: PrismaClient): Promise<void> {
-  await client.job.updateMany({ where: { description: { startsWith: MARKER }, testData: null }, data: { testData: LABEL } });
+  await client.job.updateMany({ where: { description: { startsWith: MARKER, mode: "insensitive" }, testData: null }, data: { testData: LABEL } });
   await sweepTestData(client, LABEL);
 }
 
