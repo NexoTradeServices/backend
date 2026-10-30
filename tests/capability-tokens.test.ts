@@ -12,7 +12,7 @@
 // 6003 an approve link is scoped to a settlement; burning keeps the row, spent
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { testClient, truncateAll } from "./helpers/database.js";
-import { backdate, recordingAdapter, seedCast, setProviders, type CastIds } from "./helpers/notifications.js";
+import { makeDue, recordingAdapter, seedCast, setProviders, type CastIds } from "./helpers/notifications.js";
 import {
   reviewLinkEmail,
   respondLinkSms,
@@ -355,7 +355,7 @@ describe("AC7 -- a retry mints a fresh token", () => {
 
     sms.failWith = null;
     const row = await db.notification.findFirstOrThrow();
-    await backdate(db, row.id, 2);
+    await makeDue(db, row.id);
     await drainOnce(db); // the retry -- mints token #2, delivers it
 
     expect(sms.sent).toHaveLength(1);

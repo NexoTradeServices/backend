@@ -74,6 +74,7 @@ export const mailjetEmail: ProviderAdapter = {
           {
             From: { Email: auth.fromEmail, Name: fromName },
             To: [{ Email: to }],
+            ...(message.replyTo ? { ReplyTo: { Email: message.replyTo } } : {}),
             Subject: message.subject,
             TextPart: message.text,
             ...(message.html ? { HTMLPart: message.html } : {}),

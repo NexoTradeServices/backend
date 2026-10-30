@@ -12,6 +12,10 @@ import { enquiryConfirmationEmail } from "./enquiry-confirmation.email.js";
 import { newJobRequestEmail } from "./new-job-request.email.js";
 import { jobDispatchedEmail } from "./job-dispatched.email.js";
 import { jobDispatchedSms } from "./job-dispatched.sms.js";
+import { onMyWayEmail } from "./on-my-way.email.js";
+import { onMyWaySms } from "./on-my-way.sms.js";
+import { jobTomorrowEmail } from "./job-tomorrow.email.js";
+import { jobTomorrowSms } from "./job-tomorrow.sms.js";
 import { slotConfirmedEmail } from "./slot-confirmed.email.js";
 import { slotConfirmedSms } from "./slot-confirmed.sms.js";
 import { contractorDeclinedEmail } from "./contractor-declined.email.js";
@@ -46,6 +50,9 @@ import { missedVisitSms } from "./missed-visit.sms.js";
 import { reviewRequestEmail } from "./review-request.email.js";
 import { customerSetPasswordEmail } from "./customer-set-password.email.js";
 import { accountExistsEmail } from "./account-exists.email.js";
+import { emailBouncingEmail } from "./email-bouncing.email.js";
+import { licenceExpiringEmail } from "./licence-expiring.email.js";
+import { insuranceExpiringEmail } from "./insurance-expiring.email.js";
 
 /** Every template this build ships. Features append; nothing else registers. */
 const BUILT_IN: NotificationTemplate[] = [
@@ -55,6 +62,10 @@ const BUILT_IN: NotificationTemplate[] = [
   newJobRequestEmail,
   jobDispatchedEmail,
   jobDispatchedSms,
+  onMyWayEmail,
+  onMyWaySms,
+  jobTomorrowEmail,
+  jobTomorrowSms,
   slotConfirmedEmail,
   slotConfirmedSms,
   contractorDeclinedEmail,
@@ -89,6 +100,9 @@ const BUILT_IN: NotificationTemplate[] = [
   reviewRequestEmail,
   customerSetPasswordEmail,
   accountExistsEmail,
+  emailBouncingEmail,
+  licenceExpiringEmail,
+  insuranceExpiringEmail,
 ];
 
 function key(type: string, channel: NotificationChannel): string {

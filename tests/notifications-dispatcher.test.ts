@@ -3,11 +3,18 @@
 // AC3  the dispatcher drains -- queued row -> sent, stamped
 // AC4  a throwing adapter retries, then gives up at the third failure
 // AC5  two loops over the same row cause exactly one provider call
+//
+// Feature 7003, the retry clock
+// 7003 AC1  a failed first send stamps nextAttemptAt ~1 minute ahead; nothing before it, a try after it, ~5 minutes on the next
+// 7003 AC2  the outage case: a row created two hours ago still waits its minute and its five
+// 7003 AC3  a row that sends first time never gets a stamp
+// 7003 AC4  a row queued before the stamp existed (null) is sent as before
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { testClient, truncateAll } from "./helpers/database.js";
 import {
   backdate,
   dispatchedSms,
+  makeDue,
   recordingAdapter,
   seedCast,
   setProviders,
@@ -110,12 +117,12 @@ describe("AC4 -- three attempts, then failed", () => {
     const id = await queueBobsDispatch();
     sms.failWith = "clicksend said no";
 
-    // The backoff is measured from createdAt, so winding that clock back is how
-    // three attempts happen in a test instead of over six real minutes.
+    // The retry clock is the row's nextAttemptAt, so making it due is how three
+    // attempts happen in a test instead of over six real minutes.
     await drainOnce(db);
-    await backdate(db, id, 2);
+    await makeDue(db, id);
     await drainOnce(db);
-    await backdate(db, id, 10);
+    await makeDue(db, id);
     await drainOnce(db);
 
     const row = await db.notification.findUniqueOrThrow({ where: { id } });
@@ -129,13 +136,13 @@ describe("AC4 -- three attempts, then failed", () => {
     sms.failWith = "clicksend said no";
 
     await drainOnce(db);
-    await backdate(db, id, 2);
+    await makeDue(db, id);
     await drainOnce(db);
-    await backdate(db, id, 10);
+    await makeDue(db, id);
     await drainOnce(db);
 
-    // Wound back far past any backoff: a failed row is finished, not merely resting.
-    await backdate(db, id, 600);
+    // Made due again: a failed row is finished, not merely resting.
+    await makeDue(db, id);
     expect(await drainOnce(db)).toBe(0);
 
     const row = await db.notification.findUniqueOrThrow({ where: { id } });
@@ -148,7 +155,7 @@ describe("AC4 -- three attempts, then failed", () => {
     await drainOnce(db);
 
     sms.failWith = null;
-    await backdate(db, id, 2);
+    await makeDue(db, id);
     await drainOnce(db);
 
     const row = await db.notification.findUniqueOrThrow({ where: { id } });
@@ -156,6 +163,75 @@ describe("AC4 -- three attempts, then failed", () => {
     expect(row.attempts).toBe(2);
     expect(row.error).toBeNull();
     expect(sms.sent).toHaveLength(1);
+  });
+});
+
+describe("7003 -- the retry clock is stamped on the row", () => {
+  const MINUTE = 60_000;
+  const aheadMinutes = (row: { nextAttemptAt: Date | null }) =>
+    ((row.nextAttemptAt as Date).getTime() - Date.now()) / MINUTE;
+
+  test("7003 AC1: a first failure stamps about a minute ahead; a pass before it does nothing; the next failure stamps about five; the third ends failed", async () => {
+    const id = await queueBobsDispatch();
+    sms.failWith = "clicksend said no";
+
+    await drainOnce(db);
+    let row = await db.notification.findUniqueOrThrow({ where: { id } });
+    expect(row.status).toBe("queued");
+    expect(aheadMinutes(row)).toBeGreaterThan(0.8);
+    expect(aheadMinutes(row)).toBeLessThanOrEqual(1);
+
+    expect(await drainOnce(db)).toBe(0);
+    expect((await db.notification.findUniqueOrThrow({ where: { id } })).attempts).toBe(1);
+
+    await makeDue(db, id);
+    await drainOnce(db);
+    row = await db.notification.findUniqueOrThrow({ where: { id } });
+    expect(row.attempts).toBe(2);
+    expect(aheadMinutes(row)).toBeGreaterThan(4.8);
+    expect(aheadMinutes(row)).toBeLessThanOrEqual(5);
+
+    await makeDue(db, id);
+    await drainOnce(db);
+    row = await db.notification.findUniqueOrThrow({ where: { id } });
+    expect(row.status).toBe("failed");
+    expect(row.error).toBe("clicksend said no");
+  });
+
+  test("7003 AC2: a row created two hours ago spends one attempt per wait, never three in a row", async () => {
+    const id = await queueBobsDispatch();
+    await backdate(db, id, 120);
+    sms.failWith = "clicksend said no";
+
+    await drainOnce(db);
+    await drainOnce(db);
+    await drainOnce(db);
+    let row = await db.notification.findUniqueOrThrow({ where: { id } });
+    expect(row.attempts).toBe(1);
+    expect(aheadMinutes(row)).toBeGreaterThan(0.8);
+
+    await makeDue(db, id);
+    await drainOnce(db);
+    await drainOnce(db);
+    await drainOnce(db);
+    row = await db.notification.findUniqueOrThrow({ where: { id } });
+    expect(row.attempts).toBe(2);
+    expect(aheadMinutes(row)).toBeGreaterThan(4.8);
+  });
+
+  test("7003 AC3: a row that sends first time never gets a nextAttemptAt", async () => {
+    const id = await queueBobsDispatch();
+    await drainOnce(db);
+    const row = await db.notification.findUniqueOrThrow({ where: { id } });
+    expect(row.status).toBe("sent");
+    expect(row.nextAttemptAt).toBeNull();
+  });
+
+  test("7003 AC4: a queued row with no stamp (queued before the migration) is sent at once", async () => {
+    const id = await queueBobsDispatch();
+    await db.notification.update({ where: { id }, data: { nextAttemptAt: null, attempts: 0 } });
+    expect(await drainOnce(db)).toBe(1);
+    expect((await db.notification.findUniqueOrThrow({ where: { id } })).status).toBe("sent");
   });
 });
 

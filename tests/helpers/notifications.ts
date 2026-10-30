@@ -152,16 +152,18 @@ export async function setProviders(
 }
 
 /**
- * Move a row's clock back so the next attempt is due now.
- *
- * The dispatcher measures backoff from `createdAt`, so this is how a test
- * watches three attempts and a give-up without waiting six real minutes.
+ * Make a failed row due now: its `nextAttemptAt` is moved into the past, so a
+ * test watches three attempts and a give-up without waiting six real minutes.
  */
-export async function backdate(
-  client: PrismaClient,
-  id: string,
-  minutes: number,
-): Promise<void> {
+export async function makeDue(client: PrismaClient, id: string): Promise<void> {
+  await client.notification.update({
+    where: { id },
+    data: { nextAttemptAt: new Date(Date.now() - 1000) },
+  });
+}
+
+/** Make a row look as if it was asked for `minutes` ago (an outage backlog). */
+export async function backdate(client: PrismaClient, id: string, minutes: number): Promise<void> {
   await client.notification.update({
     where: { id },
     data: { createdAt: new Date(Date.now() - minutes * 60_000) },

@@ -14,6 +14,7 @@ import type { AssignmentStatus, JobStatus } from "../generated/prisma/enums.js";
 import { formatSlotLabel } from "../time/index.js";
 import { currentAgreementLabel } from "../agreements/current.js";
 import { readyToDispatch, type ReadyInput } from "./ready.js";
+import { onMyWayOf, type OnMyWayView } from "./on-my-way.js";
 
 async function loadOwnContractor(client: PrismaClient, userId: string) {
   return client.contractor.findUnique({
@@ -75,6 +76,18 @@ function suburbOf(serviceLocation: unknown): string {
   return "";
 }
 
+interface DashboardJob {
+  reference: string;
+  jobStatus: JobStatus;
+  customerName: string;
+  trade: string;
+  suburb: string;
+  slotLabel: string | null;
+  opens: boolean;
+  awaitingPayment: boolean;
+  onMyWay: OnMyWayView;
+}
+
 export function contractorDashboardRoutes(client: PrismaClient): Router {
   const router = createRouter();
 
@@ -122,9 +135,10 @@ export function contractorDashboardRoutes(client: PrismaClient): Router {
         return aSlot.getTime() - bSlot.getTime();
       });
 
-      const jobs = sorted.map((assignment) => {
+      const jobs: DashboardJob[] = [];
+      for (const assignment of sorted) {
         const slot = slotFor(assignment, assignment.job.status);
-        return {
+        jobs.push({
           reference: assignment.job.reference,
           jobStatus: assignment.job.status,
           customerName: assignment.job.customer.name,
@@ -134,8 +148,14 @@ export function contractorDashboardRoutes(client: PrismaClient): Router {
           // Feature 5001: an accepted or in-progress card opens its job screen; an assigned one is answered from the link.
           opens: assignment.status !== "assigned",
           awaitingPayment: false,
-        };
-      });
+          // Feature 5004: null (no visit booked today) or whether On my way has gone for it.
+          onMyWay: await onMyWayOf(
+            client,
+            { id: assignment.id, jobStatus: assignment.job.status, assignmentStatus: assignment.status, timezone: assignment.job.timezone },
+            now,
+          ),
+        });
+      }
 
       // Feature 6007: a completed job stays on his dashboard as "Completed - awaiting payment" until its
       // invoice is paid -- the job's newest invoice is sent (not paid, not void, not $0).
@@ -147,7 +167,7 @@ export function contractorDashboardRoutes(client: PrismaClient): Router {
         },
         orderBy: { completedAt: "desc" },
       });
-      const awaiting: typeof jobs = [];
+      const awaiting: DashboardJob[] = [];
       for (const assignment of completed) {
         const newest = await client.invoice.findFirst({
           where: { jobId: assignment.jobId },
@@ -164,6 +184,7 @@ export function contractorDashboardRoutes(client: PrismaClient): Router {
           slotLabel: null,
           opens: true,
           awaitingPayment: true,
+          onMyWay: null,
         });
       }
 

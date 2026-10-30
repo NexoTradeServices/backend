@@ -201,6 +201,20 @@ describe("AC7 -- the unique constraints hold", () => {
     await expect(db.serviceAreaPage.create({ data: page })).rejects.toMatchObject({ code: "P2002" });
   });
 
+  test("7003: Notification.nextAttemptAt exists, nullable, with an index on (status, nextAttemptAt)", async () => {
+    const columns = await db.$queryRaw<{ is_nullable: string }[]>`
+      SELECT is_nullable FROM information_schema.columns
+       WHERE table_name = 'Notification' AND column_name = 'nextAttemptAt'
+    `;
+    expect(columns).toEqual([{ is_nullable: "YES" }]);
+    const indexes = await db.$queryRaw<{ indexdef: string }[]>`
+      SELECT indexdef FROM pg_indexes
+       WHERE tablename = 'Notification' AND indexname = 'Notification_status_nextAttemptAt_idx'
+    `;
+    expect(indexes).toHaveLength(1);
+    expect(indexes[0]?.indexdef).toContain('(status, "nextAttemptAt")');
+  });
+
   test("AC7: a duplicate Notification.idempotencyKey is rejected", async () => {
     const notification = {
       recipientType: "customer" as const,

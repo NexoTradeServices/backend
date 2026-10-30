@@ -5,6 +5,7 @@
 //      email + text with the old time off, the new time and an Accept link; Sarah gets nothing
 // AC2  Bob accepting the new time sends Sarah her slot confirmation with the new time and that date's
 //      price (a Saturday move states the weekend price); Lena gets her own wording
+//      (4005 AC6: the email states the new booking's rates; Sarah's text and Lena's copies none)
 // AC3  the dispatch guards run again without counting the job's own old block; a refusal leaves the old
 //      booking untouched
 // AC8  Bob's old link says "moved" - even one he had already answered
@@ -15,6 +16,7 @@ import type { Express } from "express";
 import request from "supertest";
 import { resetReferenceSequences, testClient } from "./helpers/database.js";
 import { recordingAdapter } from "./helpers/notifications.js";
+import { priceLine } from "../src/jobs/dispatch-level.js";
 import { drainOnce } from "../src/notifications/index.js";
 import { registerProvider, resetProviders } from "../src/notifications/providers/registry.js";
 import {
@@ -118,7 +120,7 @@ describe("AC1 -- the swap", () => {
 });
 
 describe("AC2 -- Bob accepts the new time", () => {
-  test("AC2: Sarah's slot confirmation states the new time (no message states a price); Lena gets her own wording", async () => {
+  test("AC2 / 4005 AC6: Sarah's slot confirmation states the new time and the new booking's weekend rates in her email only; Lena gets her own wording", async () => {
     const mike = await signIn(app, "mike@idelta.com.au");
     await acceptJob1042(db, app);
     await drainOnce(db);
@@ -133,14 +135,21 @@ describe("AC2 -- Bob accepts the new time", () => {
 
     const sarah = email.sent.find((m) => m.to === "sarah@idelta.com.au" && (m.message.subject ?? "").startsWith("Job booked"));
     expect(sarah?.message.text).toMatch(/Sat 20 Mar( 2027)?, 8:00am AWST/);
-    // Reworded at UAT: no message states a price.
-    expect(sarah?.message.text).not.toContain("$");
+    // 4005 AC6: the email is priced for the new booking's service level (the invoice's own sum).
+    const job = await db.job.findUniqueOrThrow({ where: { reference: "JOB-1042" }, include: { serviceType: true } });
+    const rateLine = priceLine(
+      { calloutRate: job.customerCalloutRate, standardRate: job.customerStandardRate },
+      job.serviceType.serviceLevelMultipliers as { normal: number; emergency: number; weekend: number },
+      "weekend",
+    );
+    expect(sarah?.message.text).toContain(`${rateLine}, billed in 15-minute blocks after the first hour.`);
     expect(sarah?.message.text).toContain("The site contact has been informed.");
     expect(sarah?.message.text).not.toContain("Lena");
 
     const lena = email.sent.find((m) => m.to === "lena@idelta.com.au");
     expect(lena?.message.text).toMatch(/Sat 20 Mar( 2027)?, 8:00am AWST/);
     expect(lena?.message.text).not.toContain("$");
+    expect(lena?.message.html).not.toContain("$");
   });
 });
 

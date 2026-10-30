@@ -10,10 +10,11 @@
 // AC8  accept: the calendar block is still there, on the same assignment
 // AC9  (BKLG-027) accept through one link: the other opens "Already answered" (accepted); an answer through it is refused
 // AC10 (BKLG-027) decline through one link: the other opens "Already answered" (declined)
-// AC11 Sarah's slot-confirmed email and text: Bob, address, day + start AWST, JOB-1042, Plumbing, the office number, no price (reworded at 4006 UAT); no Track button, no reminder line
+// AC11 Sarah's slot-confirmed email and text: Bob, address, day + start AWST, JOB-1042, Plumbing, the office number, no price (reworded at 4006 UAT); no Track button
 // AC12 a Saturday dispatch is stamped weekend; no message states a price (4006 UAT)
 // AC13 with Lena as site contact, Sarah's wording says the site contact has been informed, never naming Lena
 // AC14 with Lena as site contact, Lena's own text and email: Bob, address, day + start; no price, no link; site_contact rows named "Lena Park"
+// 7004 AC9 the Job booked email and text (Sarah's and Lena's) say "We'll send you a reminder the day before." for a slot two days out or tomorrow before 9:00am, and not for a same-day slot or tomorrow after 9:00am (fixed clock)
 // AC15 a site contact with no email gets the text only
 // AC16 no site contact: no site contact line in Sarah's wording, no site_contact row
 // AC17 an accept arriving twice (one after the other, and at once) creates no second set of messages
@@ -50,6 +51,7 @@ import { drainOnce } from "../src/notifications/index.js";
 import { registerProvider, resetProviders } from "../src/notifications/providers/registry.js";
 import { CapabilityTokenType, mintCapabilityLink } from "../src/capability-tokens/index.js";
 import { nextReference } from "../src/db/reference.js";
+import { priceLine } from "../src/jobs/dispatch-level.js";
 import { Prisma } from "../src/generated/prisma/client.js";
 import type { PrismaClient } from "../src/db/client.js";
 
@@ -152,6 +154,19 @@ async function textFor(reference: string, badge: string): Promise<DevTextRow | u
 
 function mailTo(address: string, subjectPart: string) {
   return email.sent.find((m) => m.to === address && (m.message.subject ?? "").includes(subjectPart));
+}
+
+/** 4005: the rate line the invoice would use for the job's own service level, as the email words it. */
+async function bookedRateLine(reference: string): Promise<string> {
+  const job = await db.job.findUniqueOrThrow({ where: { reference }, include: { serviceType: true } });
+  const multipliers = job.serviceType.serviceLevelMultipliers as { normal: number; emergency: number; weekend: number };
+  if (job.serviceLevel === null) throw new Error(`${reference} has no service level`);
+  const line = priceLine(
+    { calloutRate: job.customerCalloutRate, standardRate: job.customerStandardRate },
+    multipliers,
+    job.serviceLevel,
+  );
+  return `${line}, billed in 15-minute blocks after the first hour.`;
 }
 
 async function operatorPhone(): Promise<string> {
@@ -460,7 +475,7 @@ describe("accept", () => {
 // ---------------------------------------------------------------------------
 
 describe("the slot confirmation", () => {
-  test("AC11: Sarah's email and text carry Bob, the address, day and start in AWST, the job, the trade and the office number -- no price, no Track button, no reminder line", async () => {
+  test("AC11: Sarah's email and text carry Bob, the address, day and start in AWST, the job, the trade and the office number -- no price, no Track button", async () => {
     const { assignmentId } = await job1042();
     await accept(await link(assignmentId));
     await drainOnce(db);
@@ -474,15 +489,16 @@ describe("the slot confirmation", () => {
       expect(text).toContain(part);
     }
     expect(text).toMatch(/Thu \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am AWST/);
-    // Reworded at 4006's UAT: no message states a price.
-    expect(text).not.toContain("$");
-    expect(html).not.toContain("$");
+    // 4005 AC3: the email (and only it) states the booked visit's rates, as the invoice will price them.
+    const rateLine = await bookedRateLine("JOB-1042");
+    expect(rateLine).toMatch(/^First hour \(includes call-out\) \$\d+(\.\d\d)?, then \$\d+(\.\d\d)?\/h, billed in 15-minute blocks after the first hour\.$/);
+    expect(text).toContain(rateLine);
+    expect(html).toContain(rateLine);
     // 3004: the shared account offer ("Manage your jobs online") is the one link
     // and the one "track" these messages now carry; the rest of the message is checked without it.
     expect(text).toContain("Set your password and activate your account: https://idelta.com.au/set-password");
     for (const body of [text.split("Manage your jobs online")[0] ?? "", html.split("Manage your jobs online")[0] ?? ""]) {
       expect(body).not.toMatch(/track/i);
-      expect(body).not.toMatch(/remind/i);
       expect(body).not.toContain("http");
     }
 
@@ -491,14 +507,58 @@ describe("the slot confirmation", () => {
     for (const part of ["Bob", "12 Paget Street, Hilton", "JOB-1042", "Plumbing", office]) {
       expect(sms?.text).toContain(part);
     }
+    // 4005 AC5: her text stays money-free.
     expect(sms?.text).not.toContain("$");
     expect(sms?.text).toMatch(/Thu \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am AWST/);
     // 3004: the text ends with the short account offer; everything before it is checked as before.
     expect(sms?.text).toMatch(/\n\nSet up your account\nManage jobs and access your service history\.\nhttps:\/\/\S+\/set-password$/);
-    expect((sms?.text ?? "").split("\n\nSet up your account")[0]).not.toMatch(/track|remind|http/i);
+    expect((sms?.text ?? "").split("\n\nSet up your account")[0]).not.toMatch(/track|http/i);
   });
 
-  test("AC12: a job dispatched for a Saturday is stamped weekend, and no message states a price", async () => {
+  test("7004 AC9: the Job booked email and text (Sarah's and Lena's) say a reminder is coming for a slot two days out, or tomorrow before 9:00am -- and leave it out for a same-day slot and for tomorrow after 9:00am", async () => {
+    const { jobId, assignmentId } = await job1042();
+    const MORNING = new Date("2026-11-02T01:05:00.000Z"); // 9:05am Mon 2 Nov, Perth
+    const BEFORE_NINE = new Date("2026-11-02T00:55:00.000Z"); // 8:55am
+    const LINE = "We'll send you a reminder the day before.";
+    const cases: { name: string; slot: Date; now: Date; line: boolean }[] = [
+      { name: "two days out", slot: new Date("2026-11-04T01:00:00.000Z"), now: MORNING, line: true },
+      { name: "tomorrow, before 9:00am", slot: new Date("2026-11-03T01:00:00.000Z"), now: BEFORE_NINE, line: true },
+      { name: "same day", slot: new Date("2026-11-02T06:00:00.000Z"), now: BEFORE_NINE, line: false },
+      { name: "tomorrow, after 9:00am", slot: new Date("2026-11-03T01:00:00.000Z"), now: MORNING, line: false },
+    ];
+    for (const one of cases) {
+      await db.notification.deleteMany({ where: { jobId } });
+      email.reset();
+      await sendSlotConfirmed(
+        db,
+        {
+          assignmentId,
+          jobId,
+          jobReference: "JOB-1042",
+          jobTimezone: "Australia/Perth",
+          trade: "Plumbing",
+          contractorName: "Bob Reilly",
+          contractorCode: "CON-014",
+          proposedSlot: one.slot,
+          slotLabel: "",
+          note: null,
+        },
+        one.now,
+      );
+      await drainOnce(db);
+      const sarahs = mailTo("sarah@idelta.com.au", "Job booked");
+      const lenas = mailTo("lena@idelta.com.au", "Job booked");
+      const customerSms = await textFor("JOB-1042", "CUSTOMER SMS");
+      const siteSms = await textFor("JOB-1042", "SITE CONTACT SMS");
+      for (const body of [sarahs?.message.text, sarahs?.message.html, lenas?.message.text, lenas?.message.html, customerSms?.text, siteSms?.text]) {
+        expect(body, one.name).toBeDefined();
+        if (one.line) expect(body, one.name).toContain(LINE);
+        else expect(body, one.name).not.toContain("reminder");
+      }
+    }
+  });
+
+  test("AC12 / 4005 AC4: a job dispatched for a Saturday is stamped weekend, and Sarah's email shows the weekend rates", async () => {
     const mike = await signInCookie("mike@idelta.com.au");
     const job = await makeNewJob();
     const dispatched = await request(app)
@@ -510,11 +570,16 @@ describe("the slot confirmation", () => {
     await accept(await link(assignment.id));
     await drainOnce(db);
 
-    // The level is still stamped (the invoice prices it); the message just no longer says the rate.
     expect((await db.job.findUniqueOrThrow({ where: { id: job.id } })).serviceLevel).toBe("weekend");
     const mail = mailTo("sarah@idelta.com.au", job.reference);
     expect(mail).toBeDefined();
-    expect(mail?.message.text).not.toContain("$");
+    const rateLine = await bookedRateLine(job.reference);
+    expect(mail?.message.text).toContain(rateLine);
+    // The weekend card, not the normal one: the multiplier applied differs from the unmultiplied card.
+    const frozen = await db.job.findUniqueOrThrow({ where: { id: job.id } });
+    expect(rateLine).not.toContain(`$${frozen.customerCalloutRate / 100},`);
+    const text = await textFor(job.reference, "CUSTOMER SMS");
+    expect(text?.text).not.toContain("$");
   });
 
   test("AC13: with Lena as site contact, Sarah's wording says the site contact has been informed and never names Lena", async () => {

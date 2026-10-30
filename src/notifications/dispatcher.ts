@@ -86,47 +86,21 @@ const DEFAULT_BATCH = 25;
 const DEFAULT_INTERVAL_MS = 15_000;
 
 /**
- * How long after `createdAt` a row with this many spent attempts may be tried
- * again -- the backoffs, added up.
+ * WHEN A FAILED ROW MAY BE TRIED AGAIN is stamped on the row itself
+ * (`nextAttemptAt`, set by failAttempt), not worked out from `createdAt`. A row
+ * that has sat for an hour -- the dispatcher was down, or a deploy took a while --
+ * therefore still waits its full backoff after each failure instead of spending
+ * its three attempts back to back while the provider may still be recovering.
+ * A null stamp means due now: a row never tried, or queued before the stamp
+ * existed.
  *
- * The clock runs from `createdAt` rather than from the last attempt because the
- * row carries no last-attempt time: the design's Notification record is a
- * delivery log, and adding a column to it to hold a retry clock would be a
- * change to the data model for something derivable. The two only differ when
- * the first attempt is itself late, which on a 15-second poll it is not.
- *
- * IT IS ALSO WHY BACKOFF SPACING SURVIVES ONLY WHILE THE QUEUE IS KEPT UP WITH.
- * A row that has sat for an hour -- the dispatcher was down, or a deploy took a
- * while -- is past every one of its backoff steps the moment it is picked up, so
- * its three attempts land as fast as successive passes come round rather than
- * spread over six minutes. That is worst exactly when a provider is still
- * recovering. Fixing it properly needs a last-attempt (or next-attempt) time on
- * the row, which is a Data Model field and so the architect's call: parked as Q2
- * in this feature's change.md. What IS handled here is the sharp edge -- one pass
- * can only ever spend one attempt on a row (see drainOnce).
- *
- * AND THE COMPARISON IS MADE IN UTC ON BOTH SIDES. Prisma stores DateTime as
+ * THE COMPARISON IS MADE IN UTC ON BOTH SIDES. Prisma stores DateTime as
  * `timestamp without time zone` holding UTC, while bare now() is a timestamptz
  * that Postgres renders in the SESSION's zone. On the Perth dev box that is
  * eight hours ahead, so every backoff was instantly due; on Fly, which runs UTC,
  * the same code would have looked perfect. `now() AT TIME ZONE 'UTC'` puts both
  * sides in the frame the column is actually stored in.
  */
-export function dueOffsetMinutes(attempts: number): number {
-  let total = 0;
-  for (let i = 0; i < attempts && i < RETRY_BACKOFF_MINUTES.length; i += 1) {
-    total += RETRY_BACKOFF_MINUTES[i] ?? 0;
-  }
-  return total;
-}
-
-/** The backoff, as SQL, built from the same constant the code reads. */
-function dueOffsetSql(): string {
-  const arms = Array.from({ length: MAX_ATTEMPTS }, (_unused, attempts) =>
-    `WHEN ${String(attempts)} THEN ${String(dueOffsetMinutes(attempts))}`,
-  ).join(" ");
-  return `CASE c.attempts ${arms} ELSE 0 END`;
-}
 
 /** A row as raw SQL hands it back -- column names, not Prisma's relation shape. */
 type ClaimedRow = Notification;
@@ -165,9 +139,9 @@ async function claimAndSendOne(
           FROM "Notification" c
          WHERE c.status = 'queued'
            AND c.attempts < ${String(MAX_ATTEMPTS)}
-           AND c."createdAt" + make_interval(mins => ${dueOffsetSql()}) <= (now() AT TIME ZONE 'UTC')
+           AND (c."nextAttemptAt" IS NULL OR c."nextAttemptAt" <= (now() AT TIME ZONE 'UTC'))
            AND c.id <> ALL($1::text[])
-         ORDER BY c."createdAt"
+         ORDER BY COALESCE(c."nextAttemptAt", c."createdAt"), c."createdAt"
          LIMIT 1
          FOR UPDATE SKIP LOCKED
       `,
@@ -207,9 +181,14 @@ async function failAttempt(
   reason: string,
 ): Promise<void> {
   const spent = row.attempts; // already incremented by the claim
+  if (spent >= MAX_ATTEMPTS) {
+    await client.notification.update({ where: { id: row.id }, data: { status: "failed", error: reason } });
+    return;
+  }
+  const waitMinutes = RETRY_BACKOFF_MINUTES[spent - 1] ?? RETRY_BACKOFF_MINUTES[RETRY_BACKOFF_MINUTES.length - 1] ?? 0;
   await client.notification.update({
     where: { id: row.id },
-    data: { status: spent >= MAX_ATTEMPTS ? "failed" : "queued", error: reason },
+    data: { status: "queued", error: reason, nextAttemptAt: new Date(Date.now() + waitMinutes * 60_000) },
   });
 }
 
@@ -380,11 +359,9 @@ export async function deliver(client: TransactionalDb, row: ClaimedRow): Promise
  * provider call, and a batch that sent in parallel would hold `limit` of them.
  *
  * ONE ATTEMPT PER ROW PER PASS. A row this pass has already tried is excluded
- * from the rest of it, so a failing message cannot burn all three of its
- * attempts inside one loop -- which is exactly what happens otherwise to a row
- * that was already overdue when the pass began, because its next attempt is due
- * the moment the last one finishes. See the parked question Q2 in this feature's
- * change.md for the half of that problem this cannot fix.
+ * from the rest of it. A failure stamps the row's next attempt a minute or more
+ * ahead, so it would not come back within the pass anyway; the exclusion is the
+ * second guard, for a provider that is slow enough to outrun that stamp.
  */
 export async function drainOnce(
   client: PrismaClient = getPrisma(),

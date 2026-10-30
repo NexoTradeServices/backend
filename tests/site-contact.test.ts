@@ -331,9 +331,9 @@ describe("AC11-AC12 -- Bob's line", () => {
 });
 
 describe("AC13-AC16 -- the Messages list", () => {
-  // The queued site-contact row is "on_my_way": a visit message no feature has
-  // named yet, so AC16's fallback to the type's own words stays provable
-  // (it was slot_confirmed until 4003 gave that one a plain name).
+  // The queued site-contact row is "unnamed_probe": a type no feature names, so AC16's fallback
+  // to the type's own words stays provable (it was slot_confirmed until 4003 named that one,
+  // then on_my_way until 5004 named it).
   async function seedMessages(): Promise<void> {
     const job = await db.job.findUniqueOrThrow({ where: { reference: "JOB-1042" } });
     const other = await makeJob();
@@ -346,7 +346,7 @@ describe("AC13-AC16 -- the Messages list", () => {
         { ...base, idempotencyKey: "m1", recipientType: "customer", recipientId: sarah.id, channel: "email", type: "enquiry_confirmation", status: "delivered", sentAt: new Date("2026-09-29T01:00:00Z") },
         { ...base, idempotencyKey: "m2", recipientType: "ops", recipientId: job.id, channel: "email", type: "new_job_request", status: "sent", sentAt: new Date("2026-09-29T01:05:00Z") },
         { ...base, idempotencyKey: "m3", recipientType: "contractor", recipientId: bob.id, channel: "sms", type: "job_dispatched", status: "failed", error: "ClickSend: number unreachable", sentAt: new Date("2026-09-29T02:14:00Z") },
-        { ...base, idempotencyKey: "m4", recipientType: "site_contact", recipientId: job.id, channel: "sms", type: "on_my_way", status: "queued", context: { recipientName: "Lena Park" }, createdAt: new Date("2026-09-29T03:00:00Z") },
+        { ...base, idempotencyKey: "m4", recipientType: "site_contact", recipientId: job.id, channel: "sms", type: "unnamed_probe", status: "queued", context: { recipientName: "Lena Park" }, createdAt: new Date("2026-09-29T03:00:00Z") },
         { category: "transactional", jobId: other.id, idempotencyKey: "m5", recipientType: "ops", recipientId: other.id, channel: "email", type: "new_job_request", status: "sent", sentAt: new Date("2026-09-29T04:00:00Z") },
       ],
     });
@@ -355,7 +355,7 @@ describe("AC13-AC16 -- the Messages list", () => {
   test("AC13: JOB-1042's read lists every Notification with its jobId, newest first, none of another job's", async () => {
     await seedMessages();
     const { messages } = await detail(await mike(), "JOB-1042");
-    expect(messages.map((m) => m.what)).toEqual(["on my way", "Job dispatched", "New job request", "Enquiry received"]);
+    expect(messages.map((m) => m.what)).toEqual(["unnamed probe", "Job dispatched", "New job request", "Enquiry received"]);
   });
 
   test("AC14: each message names its recipient -- Sarah Chen, Bob Reilly, Office inbox, the site contact's recorded name", async () => {
@@ -377,7 +377,7 @@ describe("AC13-AC16 -- the Messages list", () => {
     expect(messages.map((m) => m.channel)).toEqual(["Text", "Text", "Email", "Email"]);
     // sentAt 02:14 UTC is 10:14am in Perth; the queued row shows createdAt, 03:00 UTC = 11:00am.
     expect(messages.map((m) => m.whenLabel)).toEqual(["29 Sep 2026, 11:00am", "29 Sep 2026, 10:14am", "29 Sep 2026, 9:05am", "29 Sep 2026, 9:00am"]);
-    expect(messages.map((m) => m.what)).toEqual(["on my way", "Job dispatched", "New job request", "Enquiry received"]);
+    expect(messages.map((m) => m.what)).toEqual(["unnamed probe", "Job dispatched", "New job request", "Enquiry received"]);
   });
 });
 

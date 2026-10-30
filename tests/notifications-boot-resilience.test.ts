@@ -13,7 +13,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { testClient, truncateAll } from "./helpers/database.js";
 import {
-  backdate,
+  makeDue,
   dispatchedSms,
   recordingAdapter,
   seedCast,
@@ -107,9 +107,9 @@ describe("AC2 -- an unconfigured channel fails its own row, on the normal retry 
     expect(row.attempts).toBe(1);
     expect(row.error).toBe("no configured sms provider (clicksend)");
 
-    await backdate(db, id, 2);
+    await makeDue(db, id);
     await drainOnce(db);
-    await backdate(db, id, 10);
+    await makeDue(db, id);
     await drainOnce(db);
 
     row = await db.notification.findUniqueOrThrow({ where: { id } });
@@ -155,7 +155,7 @@ describe("AC4 -- configuring the provider rescues a row still inside its retry w
     // row and the queue are untouched -- only whether isConfigured() is true.
     fakeClicksend.configured = true;
 
-    await backdate(db, id, 2);
+    await makeDue(db, id);
     await drainOnce(db);
 
     row = await db.notification.findUniqueOrThrow({ where: { id } });

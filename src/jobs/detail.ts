@@ -136,6 +136,8 @@ export interface JobDetail {
     given: { name: string | null; phone: string | null; businessName: string | null };
     /** Feature 3010: the phone or the business name differs (the name never counts). */
     newDetails: boolean;
+    /** Feature 7001: a hard bounce has listed her current email; Mike changes it from the Customer card. */
+    emailBouncing: boolean;
   };
   /** Feature 4010: who she is, worked out from her history on every read -- nothing stored. */
   customerRating: CustomerRating;
@@ -279,6 +281,15 @@ async function reviewViewOf(client: PrismaClient, jobId: string, zone: string): 
   };
 }
 
+/** Feature 7001: is her current email listed `bounced` on the email channel? Addresses are listed lower-cased. */
+async function emailIsBouncing(client: PrismaClient, address: string): Promise<boolean> {
+  const listed = await client.suppression.findFirst({
+    where: { channel: "email", address: address.trim().toLowerCase(), reason: "bounced" },
+    select: { id: true },
+  });
+  return listed !== null;
+}
+
 export async function jobDetail(
   client: PrismaClient,
   job: JobWithRelations,
@@ -337,6 +348,7 @@ export async function jobDetail(
       billingAddress,
       given: { name: given.name, phone: given.phone, businessName: given.businessName },
       newDetails: given.newDetails,
+      emailBouncing: await emailIsBouncing(client, job.customer.email),
     },
     customerRating: await customerRatingOf(client, job.customerId, job.id, settings?.timezone ?? job.timezone, now),
     siteAddress,

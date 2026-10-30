@@ -30,7 +30,7 @@
 // AC36 the fixture seed gives Dave Victoria Park, 25km, 6153/6163/6076 but not 6027; Ready to dispatch
 // AC37 the seeded dispatched jobs carry their holds, site copies and levels
 // AC38 (BKLG-020) a Saturday web enquiry for Plumbing stores the base rates, not multiplied
-// AC39 (BKLG-020) its confirmation email still reads the multiplied price
+// AC39 (BKLG-020) its confirmation email states no price at all (4005: the price for the day can change once Mike books)
 // AC40 (BKLG-020) the migration puts a provably multiplied weekend row back to the base
 // AC42 the dispatch, candidates and day endpoints refuse a contractor session
 // AC43 the interim page keeps only the latest 50 texts
@@ -960,7 +960,7 @@ describe("AC38, AC39 (BKLG-020) -- the enquiry stores the base rates", () => {
     expect(job.customerStandardRate).toBe(18_000);
   });
 
-  test("AC39: its confirmation email still reads the Saturday-multiplied price", async () => {
+  test("AC39 / 4005 AC1: its confirmation email states no price, neither the base nor the Saturday-multiplied one", async () => {
     const res = await request(app)
       .post("/api/enquiries")
       .send({
@@ -979,8 +979,9 @@ describe("AC38, AC39 (BKLG-020) -- the enquiry stores the base rates", () => {
     expect(res.status).toBe(201);
     await drainOnce(db);
     const mail = email.sent.find((m) => m.to === "karl@idelta.com.au");
-    expect(mail?.message.text).toContain("$375");
-    expect(mail?.message.text).toContain("$270/h");
+    expect(mail).toBeDefined();
+    expect(mail?.message.text).not.toContain("$");
+    expect(mail?.message.html).not.toContain("$");
   });
 });
 

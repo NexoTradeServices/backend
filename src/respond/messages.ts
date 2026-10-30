@@ -9,21 +9,25 @@ import { sendNotification } from "../notifications/index.js";
 import type { NotificationChannel, NotificationContext } from "../notifications/index.js";
 import { asSiteContact } from "../jobs/site-contact.js";
 import { effectiveAddress } from "../jobs/shared.js";
+import { isServiceLevelMultipliers, priceLine } from "../jobs/dispatch-level.js";
 import { formatSlotLabel } from "../time/index.js";
+import { DAILY_RUN_AT } from "../daily/index.js";
+import { reminderWillCome } from "../jobs/job-tomorrow.js";
 import type { AnswerFacts } from "./service.js";
 
 function firstNameOf(name: string): string {
   return name.split(" ")[0] ?? name;
 }
 
-export async function sendSlotConfirmed(client: PrismaClient, facts: AnswerFacts): Promise<void> {
+export async function sendSlotConfirmed(client: PrismaClient, facts: AnswerFacts, now: Date = new Date()): Promise<void> {
   const job = await client.job.findUniqueOrThrow({
     where: { id: facts.jobId },
     include: {
       customer: { select: { id: true, name: true, billingAddress: true } },
+      serviceType: { select: { serviceLevelMultipliers: true } },
     },
   });
-  const settings = await client.platformSettings.findFirst({ select: { operatorPhone: true } });
+  const settings = await client.platformSettings.findFirst({ select: { operatorPhone: true, timezone: true } });
   const address = effectiveAddress(job);
   if (address === null) throw new Error(`job ${job.reference} has no address to confirm`);
 
@@ -34,13 +38,33 @@ export async function sendSlotConfirmed(client: PrismaClient, facts: AnswerFacts
     trade: facts.trade,
     street: address.street,
     suburb: address.suburb,
-    slotLabel: formatSlotLabel(facts.jobTimezone, facts.proposedSlot, new Date()),
+    slotLabel: formatSlotLabel(facts.jobTimezone, facts.proposedSlot, now),
     officePhone: settings?.operatorPhone ?? "",
+    // Feature 7004: "We'll send you a reminder the day before." only when one will come (the morning run
+    // sends for a visit two or more days away, or tomorrow's while it is still before the run's time).
+    ...(settings !== null &&
+    reminderWillCome({ businessZone: settings.timezone, jobZone: facts.jobTimezone, slot: facts.proposedSlot, now, runAt: DAILY_RUN_AT })
+      ? { reminderComing: true }
+      : {}),
   } satisfies NotificationContext;
+
+  // Feature 4005: Sarah's EMAIL states the booked visit's rates, priced the way the invoice will be
+  // (the job's frozen card times the multiplier of the job's service level). Left out when the level
+  // is somehow empty -- never guess one. The text and the site contact's copy stay money-free.
+  const multipliers = job.serviceType.serviceLevelMultipliers;
+  const bookedRates =
+    job.serviceLevel !== null && isServiceLevelMultipliers(multipliers)
+      ? priceLine(
+          { calloutRate: job.customerCalloutRate, standardRate: job.customerStandardRate },
+          multipliers,
+          job.serviceLevel,
+        )
+      : null;
 
   const customerContext: NotificationContext = {
     ...common,
     audience: "customer",
+    ...(bookedRates === null ? {} : { priceLine: bookedRates }),
     firstName: firstNameOf(job.customer.name),
     // The customer's wording says the site contact has been told, and never who.
     ...(siteContact === null ? {} : { siteContactTold: true }),
@@ -112,4 +136,79 @@ export async function sendDeclinedNotice(client: PrismaClient, facts: AnswerFact
     },
     client,
   );
+}
+
+/**
+ * Feature 5004: "On my way" -- one message per booked visit (calendar block) to the customer
+ * (email + text) and the site contact (text, and email when given), each in their own wording.
+ * The key carries the calendar block, so a second tap, or a tap from the other place, is the
+ * same ask and lands on the same row; a return visit's block is its own key. No money, no link.
+ */
+export async function sendOnMyWay(client: PrismaClient, assignmentId: string, calendarEventId: string): Promise<void> {
+  const assignment = await client.assignment.findUniqueOrThrow({
+    where: { id: assignmentId },
+    include: {
+      contractor: { select: { name: true } },
+      specialty: { select: { trade: true } },
+      job: { include: { customer: { select: { id: true, name: true, billingAddress: true } } } },
+    },
+  });
+  const job = assignment.job;
+  const settings = await client.platformSettings.findFirst({ select: { operatorPhone: true } });
+  const address = effectiveAddress(job);
+  if (address === null) throw new Error(`job ${job.reference} has no address to tell`);
+
+  const siteContact = asSiteContact(job.siteContact);
+  const common = {
+    contractorFirstName: firstNameOf(assignment.contractor.name),
+    jobReference: job.reference,
+    trade: assignment.specialty.trade.toLowerCase(),
+    street: address.street,
+    suburb: address.suburb,
+    officePhone: settings?.operatorPhone ?? "",
+  } satisfies NotificationContext;
+
+  const ask = async (
+    channel: NotificationChannel,
+    audience: "customer" | "site_contact",
+    context: NotificationContext,
+  ): Promise<void> => {
+    await sendNotification(
+      {
+        type: "on_my_way",
+        channel,
+        recipientType: audience,
+        recipientId: audience === "customer" ? job.customer.id : job.id,
+        idempotencyKey: `on_my_way:assignment:${assignmentId}:${calendarEventId}:${audience}:${channel}`,
+        relatedType: "assignment",
+        relatedId: assignmentId,
+        jobId: job.id,
+        context,
+      },
+      client,
+    );
+  };
+
+  const customerContext: NotificationContext = {
+    ...common,
+    audience: "customer",
+    firstName: firstNameOf(job.customer.name),
+    ...(siteContact === null ? {} : { siteContactTold: true }),
+  };
+  for (const channel of ["email", "sms"] as const) {
+    await ask(channel, "customer", customerContext);
+  }
+
+  if (siteContact !== null) {
+    const siteContext: NotificationContext = {
+      ...common,
+      audience: "site_contact",
+      firstName: firstNameOf(siteContact.name),
+      recipientName: siteContact.name,
+    };
+    await ask("sms", "site_contact", siteContext);
+    if (siteContact.email !== null && siteContact.email.trim() !== "") {
+      await ask("email", "site_contact", siteContext);
+    }
+  }
 }

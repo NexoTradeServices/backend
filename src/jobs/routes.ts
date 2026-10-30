@@ -9,6 +9,7 @@
 //   POST /api/jobs/:reference/notes           add an operator note
 //   PUT  /api/jobs/:reference/notes/:noteId   the author fixes it, 10 minutes
 //   PUT  /api/jobs/:reference/time-entries    Feature 5001: ops fixes the time entries until Complete
+//   POST /api/jobs/:reference/customer/email  Feature 7001: change the customer's email (and her login's)
 //   POST /api/jobs/:reference/invoice/resend  Feature 6001: the invoice email and text, again
 //   POST /api/jobs/:reference/invoice/check-payment  Feature 6002: ask Stripe whether she has paid
 //   POST /api/jobs/:reference/invoice/void  Feature 6008: void an unpaid invoice, with a reason
@@ -56,6 +57,7 @@ import { parseCallbackInput, raiseCallback } from "./callbacks.js";
 import { markNoShow, parseNoShowInput } from "./no-show.js";
 import { createJob, parseJobFields } from "./create.js";
 import { asEnquiryContact, givenDetails } from "./enquiry-contact.js";
+import { EMAIL_PATTERN } from "../contractors/routes.js";
 import { editRequest, parseRequestEdit } from "./request-edit.js";
 
 type WithReference = Request<{ reference: string }>;
@@ -184,6 +186,62 @@ export function jobRoutes(client: PrismaClient): Router {
       }
       res.json(await jobDetail(client, fresh, req.authUser?.id ?? ""));
     })().catch(failWith(res, "POST /api/jobs/:reference/customer/update-from-request"));
+  });
+
+  // Feature 7001: Change email. Mike corrects the address the customer has just given him on the call
+  // (typically after the office's "Email bouncing" notice). Trimmed and lower-cased; refused when it is
+  // not an address, is already hers, or another customer or another login holds it. One transaction
+  // moves Customer.email and, when she has a login, User.email -- she signs in with the new one.
+  // Ops-only; answers the fresh detail. Errors name the field so the dialog can show them under it.
+  router.post("/:reference/customer/email", requireRole(Role.ops), (req: WithReference, res: Response) => {
+    void (async () => {
+      const job = await loadJob(client, req.params.reference);
+      if (!job) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      const raw: unknown = (req.body as { email?: unknown } | undefined)?.email;
+      const address = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+      const refuse = (status: number, error: string): void => {
+        res.status(status).json({ error, field: "email" });
+      };
+      if (!EMAIL_PATTERN.test(address)) {
+        refuse(400, "That does not look like an email address.");
+        return;
+      }
+      // The job read carries a slice of the customer; the login link and the id come off the record itself.
+      const customer = await client.customer.findUniqueOrThrow({
+        where: { id: job.customerId },
+        select: { id: true, name: true, email: true, userId: true },
+      });
+      if (address === customer.email.toLowerCase()) {
+        refuse(409, `That is already ${customer.name.trim().split(/\s+/)[0] ?? customer.name}'s email.`);
+        return;
+      }
+      const otherCustomer = await client.customer.findFirst({ where: { email: address, id: { not: customer.id } }, select: { code: true } });
+      if (otherCustomer !== null) {
+        refuse(409, `Another customer, ${otherCustomer.code}, already uses this email.`);
+        return;
+      }
+      const otherLogin = await client.user.findFirst({
+        where: { email: address, ...(customer.userId === null ? {} : { id: { not: customer.userId } }) },
+        select: { id: true },
+      });
+      if (otherLogin !== null) {
+        refuse(409, "Another login already uses this email.");
+        return;
+      }
+      await client.$transaction(async (tx) => {
+        await tx.customer.update({ where: { id: customer.id }, data: { email: address } });
+        if (customer.userId !== null) await tx.user.update({ where: { id: customer.userId }, data: { email: address } });
+      });
+      const fresh = await loadJob(client, req.params.reference);
+      if (!fresh) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      res.json(await jobDetail(client, fresh, req.authUser?.id ?? ""));
+    })().catch(failWith(res, "POST /api/jobs/:reference/customer/email"));
   });
 
   router.get("/:reference", requireRole(Role.ops), (req: WithReference, res: Response) => {
