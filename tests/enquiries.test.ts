@@ -96,7 +96,7 @@ function validBody(overrides: Record<string, unknown> = {}): Record<string, unkn
     selectedOptions: ["Where in the property is it?: Kitchen"],
     // A fixed Wednesday -- never a weekend, so AC1's normal-rate case is
     // never flaky against the day this suite happens to run.
-    preferredDate: "2026-09-09",
+    preferredDate: "2027-09-08",
     preferredWindow: "morning",
     description: "Kitchen tap won't stop dripping.",
     marketingEmail: false,
@@ -179,10 +179,10 @@ describe("AC1 -- Karl's enquiry, never contacted before", () => {
 
 describe("AC2 -- a Saturday date never bumps the job's own rate card (BKLG-020, superseded 4002-AC38)", () => {
   test("AC2: a Saturday enquiry stores the base rates unmultiplied -- the level and its multiplier are Feature 4002's, at dispatch", async () => {
-    // 2026-09-12 is a Saturday.
+    // 2027-09-11 is a Saturday.
     const res = await request(app)
       .post("/api/enquiries")
-      .send(validBody({ preferredDate: "2026-09-12" }));
+      .send(validBody({ preferredDate: "2027-09-11" }));
     expect(res.status).toBe(201);
 
     const job = await db.job.findUniqueOrThrow({ where: { reference: (res.body as EnquiryResponseBody).reference } });
@@ -230,7 +230,7 @@ describe("AC5 -- the confirmation email echoes the request and states no price (
     expect(text).toContain((res.body as EnquiryResponseBody).reference);
     expect(text).toContain("Trade: Plumbing");
     expect(text).toContain("Suburb: Joondalup");
-    expect(text).toMatch(/Preferred time: Wed 9 Sep( 2026)?, morning 7:00-12:00/);
+    expect(text).toMatch(/Preferred time: Wed 8 Sep( 2027)?, morning 7:00-12:00/);
     expect(text).toContain("Job description: Kitchen tap won't stop dripping.");
     expect(text).toContain("We'll call you shortly to confirm a time.");
     expect(text).toContain(`If it's urgent, ring us now on ${office}.`);

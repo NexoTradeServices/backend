@@ -23,6 +23,7 @@ import {
   findCapabilityToken,
 } from "../capability-tokens/index.js";
 import { formatDateLabel, formatDateTimeLabel, formatSlotLabel } from "../time/index.js";
+import { stateOfLocation } from "../calendar/rules.js";
 import { customerPhotosOf, type PhotoView } from "../photos/cloudinary.js";
 import { answersOf } from "../jobs/detail.js";
 import { readNotes } from "../jobs/notes.js";
@@ -257,6 +258,8 @@ export interface AnswerFacts {
   contractorCode: string;
   proposedSlot: Date;
   slotLabel: string;
+  /** Feature 1022: the same time for the OFFICE - it carries the job's state ("NSW time") */
+  officeSlotLabel?: string;
   /** Decline only: the trimmed note, null when none. */
   note: string | null;
 }
@@ -305,6 +308,7 @@ function factsOf(assignment: LoadedAssignment, note: string | null, now: Date): 
     contractorCode: assignment.contractor.code,
     proposedSlot: slot,
     slotLabel: formatSlotLabel(assignment.job.timezone, slot, now),
+    officeSlotLabel: formatSlotLabel(assignment.job.timezone, slot, now, stateOfLocation(assignment.job.serviceLocation) ?? undefined),
     note,
   };
 }

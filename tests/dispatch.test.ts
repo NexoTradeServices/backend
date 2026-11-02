@@ -416,7 +416,7 @@ describe("AC13 -- busy greys with the reason; a free slot does not", () => {
     const busy = await candidates(mike, job.reference, { date: MONDAY, startMinutes: "420", holdMinutes: "60" });
     const busyRow = (busy.body as CandidatesBody).serves.find((r) => r.code === "CON-014");
     expect(busyRow?.pickable).toBe(false);
-    expect(busyRow?.why).toBe(`Busy 7:00-8:00am AWST - ${busyJob.reference}, Kalamunda`);
+    expect(busyRow?.why).toBe(`Busy 7:00-8:00am WA time - ${busyJob.reference}, Kalamunda`);
 
     const free = await candidates(mike, job.reference, { date: MONDAY, startMinutes: "480", holdMinutes: "60" });
     const freeRow = (free.body as CandidatesBody).serves.find((r) => r.code === "CON-014");
@@ -439,7 +439,7 @@ describe("AC13 -- busy greys with the reason; a free slot does not", () => {
     const res = await candidates(mike, job.reference, { date: MONDAY, startMinutes: "420", holdMinutes: "60" });
     const row = (res.body as CandidatesBody).serves.find((r) => r.code === "CON-014");
     expect(row?.pickable).toBe(false);
-    expect(row?.why).toBe("Busy 7:00-8:00am AWST");
+    expect(row?.why).toBe("Busy 7:00-8:00am");
   });
 });
 
@@ -761,7 +761,7 @@ describe("AC30-AC33 -- the dispatch messages", () => {
     expect(mail).toBeDefined();
     expect(mail?.message.text).toContain(job.reference);
     expect(mail?.message.text).toContain("Plumbing");
-    expect(mail?.message.text).toContain("7:00am AWST");
+    expect(mail?.message.text).toContain("7:00am");
     expect(mail?.message.text).toMatch(/\/a\//);
     // Feature 4008 sweep: the line who to ask for -- no site contact, so the customer's name.
     expect(mail?.message.text).toContain("Site contact: Sarah Chen");

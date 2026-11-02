@@ -164,25 +164,35 @@ function zoneAbbreviation(zone: string, moment: Date): string {
 }
 
 /**
- * `moment` rendered for a person, in `zone`, labelled -- e.g. `8:00am AWST`.
- * Never the machine's zone or the browser's; always the job's or the
- * business's, passed in by the caller.
+ * Feature 1022: ONE rule for the label on a time. A time carries NO label for anyone but the office reading a
+ * BOOKED JOB's time, and there it is the job's state: `NSW time`. Customers, site contacts, contractors and
+ * every time that is not a booked job's (received, updated, paid, a Stripe check) read plain. Callers that are
+ * the office reading a booked time pass the job's `state`; everyone else leaves it out.
  */
-export function formatLabelled(zone: string, moment: Date): string {
-  return `${hourMinuteLabel(zone, moment)} ${zoneAbbreviation(zone, moment)}`;
+function stateSuffix(state: string | undefined): string {
+  return state === undefined || state === "" ? "" : ` ${state} time`;
 }
 
 /**
- * `start`-`end` rendered for a person, in `zone`, labelled once -- `7:00-8:00am AWST`.
+ * `moment` rendered for a person, in `zone` -- `8:00am`, or `8:00am NSW time` when the office reads a booked job's
+ * time and passes the job's `state`. Never the machine's zone or the browser's; always the job's or the
+ * business's, passed in by the caller.
+ */
+export function formatLabelled(zone: string, moment: Date, state?: string): string {
+  return `${hourMinuteLabel(zone, moment)}${stateSuffix(state)}`;
+}
+
+/**
+ * `start`-`end` rendered for a person, in `zone` -- `7:00-8:00am`, with `NSW time` after it for the office (Feature 1022).
  * A shared meridiem is dropped from the first time (Feature 4002, the
  * candidate row's Busy reason and the calendar day view's blocks); a range
- * crossing midday reads both in full, `11:30am-1:00pm AWST`.
+ * crossing midday reads both in full, `11:30am-1:00pm`.
  */
-export function formatTimeRangeLabel(zone: string, start: Date, end: Date): string {
+export function formatTimeRangeLabel(zone: string, start: Date, end: Date, state?: string): string {
   const a = hourMinuteLabel(zone, start);
   const b = hourMinuteLabel(zone, end);
   const merged = a.slice(-2) === b.slice(-2) ? `${a.slice(0, -2)}-${b}` : `${a}-${b}`;
-  return `${merged} ${zoneAbbreviation(zone, end)}`;
+  return `${merged}${stateSuffix(state)}`;
 }
 
 /**
@@ -221,7 +231,7 @@ export function nextWeekdayAt(
 //   formatDateWithDay     Wed 14 Oct   (this year, in the zone that decides)
 //                         Wed 14 Oct 2025   (any other year)
 //   formatDateTime        9 Sep 2026, 10:14am        (formatShortDateTime)
-//   formatSlotLabel       Today, 8:00am AWST / Thu 10 Sep, 8:00am AWST
+//   formatSlotLabel       Today, 8:00am / Thu 10 Sep, 8:00am   (the office adds NSW time)
 
 export const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
 
@@ -247,13 +257,13 @@ export function formatDateWithDay(zone: string, moment: Date, now: Date = new Da
 }
 
 /**
- * `moment` rendered for a dashboard card, in `zone` -- `Today, 1:00pm AWST`
- * on the same calendar day as `now`, otherwise `Thu 10 Sep, 8:00am AWST`
+ * `moment` rendered for a dashboard card, in `zone` -- `Today, 1:00pm`
+ * on the same calendar day as `now`, otherwise `Thu 10 Sep, 8:00am`
  * (Contractor Workflow step 3; Flow walkthrough "Contractor dashboard and
- * rates (2003)", state 1). Another year carries it: `Thu 10 Sep 2025, 8:00am AWST`.
+ * rates (2003)", state 1). Another year carries it: `Thu 10 Sep 2025, 8:00am`.
  */
-export function formatSlotLabel(zone: string, moment: Date, now: Date = new Date()): string {
-  const time = formatLabelled(zone, moment);
+export function formatSlotLabel(zone: string, moment: Date, now: Date = new Date(), state?: string): string {
+  const time = formatLabelled(zone, moment, state);
   if (todayIn(zone, moment) === todayIn(zone, now)) {
     return `Today, ${time}`;
   }
@@ -270,12 +280,12 @@ export function formatDateLabel(zone: string, moment: Date, now: Date = new Date
 }
 
 /**
- * `moment` as a dated time for a person, in `zone` -- `Today, 9:14am AWST`
- * on the same calendar day as `now`, otherwise `Tue 8 Sep, 3:20pm AWST`.
+ * `moment` as a dated time for a person, in `zone` -- `Today, 9:14am`
+ * on the same calendar day as `now`, otherwise `Tue 8 Sep, 3:20pm`.
  * When a job arrived, when a note was written (Feature 4001).
  */
-export function formatDateTimeLabel(zone: string, moment: Date, now: Date = new Date()): string {
-  return formatSlotLabel(zone, moment, now);
+export function formatDateTimeLabel(zone: string, moment: Date, now: Date = new Date(), state?: string): string {
+  return formatSlotLabel(zone, moment, now, state);
 }
 
 /**
@@ -291,7 +301,7 @@ export function formatShortDateTime(zone: string, moment: Date): string {
  * acceptance line).
  */
 export function formatDateTimeZoned(zone: string, moment: Date): string {
-  return `${formatDate(zone, moment)}, ${formatLabelled(zone, moment)}`;
+  return `${formatDate(zone, moment)}, ${hourMinuteLabel(zone, moment)} ${zoneAbbreviation(zone, moment)}`;
 }
 
 /**

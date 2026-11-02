@@ -2,7 +2,7 @@
 // Organisms / Lists and tables / Formats).
 //   AC1: "9 Sep 2026", month names fixed (September is "Sep", never "Sept"), no numbers.
 //   AC2: "Wed 14 Oct" in the current year, "Wed 14 Oct 2025" outside it -- decided in the zone.
-//   AC3: "9 Sep 2026, 10:14am"; "Today, 8:00am AWST" / "Thu 10 Sep, 8:00am AWST".
+//   AC3: "9 Sep 2026, 10:14am"; "Today, 8:00am" / "Thu 10 Sep, 8:00am".
 import { describe, expect, test } from "vitest";
 import { makeAcceptanceRecord } from "../src/agreements/pdf.js";
 import { makeInvoicePdf } from "../src/invoices/pdf.js";
@@ -82,10 +82,10 @@ describe("AC3 -- a date with a time", () => {
   });
 
   test("AC3: a slot is Today, or its weekday and date, with its zone", () => {
-    expect(formatSlotLabel(PERTH, new Date("2026-10-11T05:00:00.000Z"), NOW)).toBe("Today, 1:00pm AWST");
-    expect(formatSlotLabel(PERTH, new Date("2026-10-14T00:00:00.000Z"), NOW)).toBe("Wed 14 Oct, 8:00am AWST");
-    expect(formatSlotLabel(PERTH, new Date("2025-09-10T00:00:00.000Z"), NOW)).toBe("Wed 10 Sep 2025, 8:00am AWST");
-    expect(formatDateTimeLabel(PERTH, new Date("2026-09-08T07:20:00.000Z"), NOW)).toBe("Tue 8 Sep, 3:20pm AWST");
+    expect(formatSlotLabel(PERTH, new Date("2026-10-11T05:00:00.000Z"), NOW)).toBe("Today, 1:00pm");
+    expect(formatSlotLabel(PERTH, new Date("2026-10-14T00:00:00.000Z"), NOW)).toBe("Wed 14 Oct, 8:00am");
+    expect(formatSlotLabel(PERTH, new Date("2025-09-10T00:00:00.000Z"), NOW)).toBe("Wed 10 Sep 2025, 8:00am");
+    expect(formatDateTimeLabel(PERTH, new Date("2026-09-08T07:20:00.000Z"), NOW)).toBe("Tue 8 Sep, 3:20pm");
   });
 });
 

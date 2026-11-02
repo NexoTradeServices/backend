@@ -165,6 +165,8 @@ interface BusyRow {
   endTime: Date;
   jobReference: string | null;
   suburb: string | null;
+  /** Feature 1022: the clashing block's own job state, for the office label */
+  state: string | null;
 }
 
 /** Plan decision 5: any CalendarEvent overlapping [holdStart, holdEnd) -- declined/cancelled blocks are deleted, so no status filter is needed. */
@@ -180,7 +182,8 @@ async function busyFor(
     SELECT DISTINCT ON (ce."contractorId")
            ce."contractorId" AS "contractorId", ce."startTime", ce."endTime",
            j.reference AS "jobReference",
-           j."serviceLocation"->>'suburb' AS suburb
+           j."serviceLocation"->>'suburb' AS suburb,
+           j."serviceLocation"->>'state' AS state
       FROM "CalendarEvent" ce
       LEFT JOIN "Job" j ON j.id = ce."jobId"
      WHERE ce."contractorId" = ANY(${ids})
@@ -255,7 +258,7 @@ export async function loadCandidates(client: PrismaClient, input: CandidatesInpu
       const clash = busy.get(contractor.id);
       if (clash) {
         const where = clash.jobReference ? ` - ${clash.jobReference}, ${clash.suburb ?? ""}` : "";
-        why = `Busy ${formatTimeRangeLabel(input.zone, clash.startTime, clash.endTime)}${where}`;
+        why = `Busy ${formatTimeRangeLabel(input.zone, clash.startTime, clash.endTime, clash.state ?? undefined)}${where}`;
       }
     }
 

@@ -73,7 +73,7 @@ function enquiryBody(email: string): Record<string, unknown> {
     },
     trade: "Plumbing",
     selectedOptions: ["Where in the property is it?: Kitchen"],
-    preferredDate: "2026-09-09",
+    preferredDate: "2027-09-08",
     preferredWindow: "morning",
     description: "Kitchen tap won't stop dripping.",
     marketingEmail: false,

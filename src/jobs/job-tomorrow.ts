@@ -1,14 +1,16 @@
 // Job-tomorrow reminders -- Feature 7004.
 //
-// Customer Workflow (step 11); Notifications / Customer messages (Job tomorrow). A step of the daily
-// sweep (daily/index.ts). The morning run emails and texts the customer (and the site contact, when the
-// job has one) one reminder per booked visit, the day before it. Nobody presses anything.
+// Customer Workflow (step 11); Notifications / Customer messages (Job tomorrow). Runs on every tick of the
+// daily loop (daily/index.ts), NOT as one of the Perth-hour steps: Feature 1022 moved it to the JOB'S OWN
+// clock, so a Sydney job's reminder goes at 9:00am Sydney time, which is before 9:00am Perth. It emails and
+// texts the customer (and the site contact, when the job has one) one reminder per booked visit, the day
+// before it. Nobody presses anything.
 //
-//   - Which visits: the `job` calendar blocks that start TOMORROW (the job's zone) on an accepted or
-//     in-progress assignment of a scheduled job, whose assignment was confirmed before the morning run's
-//     time TODAY on the business clock. A block confirmed at or after that time is skipped for good: the
-//     Job booked message has only just told the customer. A visit booked for today is never "tomorrow",
-//     so it gets none ("On my way" covers it).
+//   - Which visits: the `job` calendar blocks that start TOMORROW on the job's clock, on an accepted or
+//     in-progress assignment of a scheduled job, when the job's clock is at or past the run time (9:00am),
+//     and whose assignment was confirmed before that morning's run time on the job's clock. A block
+//     confirmed at or after that time is skipped for good: the Job booked message has only just told the
+//     customer. A visit booked for today is never "tomorrow", so it gets none ("On my way" covers it).
 //   - Once per visit: the idempotency key carries the assignment, the calendar block, the audience and the
 //     channel, so a re-run all day, or both loops, asks for nothing twice.
 import type { PrismaClient } from "../db/client.js";
@@ -35,12 +37,12 @@ export function jobTomorrowKey(
 
 /**
  * Will a reminder come for a visit booked at `slot`? Yes when the visit is two or more days away, or
- * tomorrow while the business clock is still before the morning run's time. `runAt` is `HH:mm`.
+ * tomorrow while the JOB'S clock is still before the run's time. `runAt` is `HH:mm`.
  */
-export function reminderWillCome(input: { businessZone: string; jobZone: string; slot: Date; now: Date; runAt: string }): boolean {
-  const days = daysBetween(todayIn(input.businessZone, input.now), todayIn(input.jobZone, input.slot));
+export function reminderWillCome(input: { jobZone: string; slot: Date; now: Date; runAt: string }): boolean {
+  const days = daysBetween(todayIn(input.jobZone, input.now), todayIn(input.jobZone, input.slot));
   if (days >= 2) return true;
-  return days === 1 && clockTimeIn(input.businessZone, input.now) < input.runAt;
+  return days === 1 && clockTimeIn(input.jobZone, input.now) < input.runAt;
 }
 
 function firstNameOf(name: string): string {
@@ -54,23 +56,30 @@ export interface JobTomorrowRun {
 
 export async function runJobTomorrowReminders(
   client: PrismaClient,
-  options: { zone: string; now: Date; today: string; runAt: string; /** A browser test's run: only jobs carrying this label. */ onlyLabel?: string | null },
+  options: {
+    now: Date;
+    runAt: string;
+    /**
+     * Set by a direct run (a browser test, `runDailySteps`): run as this calendar day on every job's clock,
+     * whatever the hour. Left out by the daily loop's tick, where each job's own clock decides.
+     */
+    asDay?: string;
+    /** A browser test's run: only jobs carrying this label. */
+    onlyLabel?: string | null;
+  },
 ): Promise<JobTomorrowRun> {
-  const { zone, now, today } = options;
-  const tomorrow = nextDay(today);
-  // Confirmed before this instant = before the morning run's time, today, on the business clock.
+  const { now } = options;
   const [runHour, runMinute] = options.runAt.split(":").map(Number);
-  const confirmedBefore = zonedDateTimeToUtc(zone, today, runHour ?? 9, runMinute ?? 0);
   const label = options.onlyLabel ? { testData: options.onlyLabel } : {};
   const result: JobTomorrowRun = { visits: 0 };
 
   const settings = await client.platformSettings.findFirstOrThrow({ select: { operatorPhone: true } });
-  // A wide net in UTC; the exact day is decided on the job's own wall clock below.
+  // A wide net in UTC; the exact day and hour are decided on the job's own wall clock below.
   const blocks = await client.calendarEvent.findMany({
     where: {
       type: "job",
       startTime: { gte: new Date(now.getTime() - 2 * 86_400_000), lt: new Date(now.getTime() + 4 * 86_400_000) },
-      assignment: { status: { in: ["accepted", "in_progress"] }, acceptedAt: { lt: confirmedBefore } },
+      assignment: { status: { in: ["accepted", "in_progress"] } },
       job: { status: "scheduled", ...label },
     },
     orderBy: [{ startTime: "asc" }, { id: "asc" }],
@@ -83,7 +92,12 @@ export async function runJobTomorrowReminders(
   for (const block of blocks) {
     const { assignment, job } = block;
     if (assignment === null || job === null) continue;
-    if (todayIn(job.timezone, block.startTime) !== tomorrow) continue;
+    // The job's own clock: today, whether it has reached the run time, and what "before this morning's run" means.
+    const jobToday = options.asDay ?? todayIn(job.timezone, now);
+    if (options.asDay === undefined && clockTimeIn(job.timezone, now) < options.runAt) continue;
+    if (todayIn(job.timezone, block.startTime) !== nextDay(jobToday)) continue;
+    const confirmedBefore = zonedDateTimeToUtc(job.timezone, jobToday, runHour ?? 9, runMinute ?? 0);
+    if (assignment.acceptedAt === null || assignment.acceptedAt.getTime() >= confirmedBefore.getTime()) continue;
     const address = effectiveAddress(job);
     if (address === null) continue;
 

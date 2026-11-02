@@ -49,7 +49,7 @@ function body(overrides: Record<string, unknown> = {}): Record<string, unknown> 
     trade: "Plumbing",
     selectedOptions: [],
     // A fixed Wednesday, so the normal rate is never flaky against the day the suite runs.
-    preferredDate: "2026-09-09",
+    preferredDate: "2027-09-08",
     preferredWindow: "morning",
     description: "Burst pipe under the house.",
     ...overrides,

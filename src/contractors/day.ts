@@ -9,6 +9,7 @@
 import type { PrismaClient } from "../db/client.js";
 import { zonedDateTimeToUtc, formatTimeRangeLabel, dateOnlyAsUtcMidnight } from "../time/index.js";
 import { suburbOf } from "../jobs/shared.js";
+import { stateOfLocation } from "../calendar/rules.js";
 
 export interface DayBlock {
   startMinutes: number;
@@ -46,7 +47,7 @@ export async function loadContractorDay(
       ...(ignoreJobId === undefined ? {} : { NOT: { jobId: ignoreJobId } }),
     },
     orderBy: { startTime: "asc" },
-    include: { job: { select: { reference: true, serviceLocation: true } }, assignment: { select: { status: true } } },
+    include: { job: { select: { reference: true, serviceLocation: true, timezone: true } }, assignment: { select: { status: true } } },
   });
 
   return events.map((event) => {
@@ -56,7 +57,7 @@ export async function loadContractorDay(
     return {
       startMinutes,
       endMinutes,
-      timeLabel: formatTimeRangeLabel(zone, event.startTime, event.endTime),
+      timeLabel: formatTimeRangeLabel(zone, event.startTime, event.endTime, event.job ? (stateOfLocation(event.job.serviceLocation) ?? undefined) : undefined),
       jobReference: event.job?.reference ?? null,
       suburb: event.job ? suburbOf(event.job.serviceLocation) : null,
       kind,

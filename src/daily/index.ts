@@ -39,6 +39,20 @@ export interface DailyStep {
   run(context: DailyContext): Promise<void>;
 }
 
+/**
+ * Feature 1022: the job-tomorrow reminder is NOT one of the Perth-hour steps below. Each job decides on its own
+ * clock whether it is 9:00am yet, so a Sydney job's reminder goes at 9:00am Sydney, before 9:00am Perth. The
+ * daily loop runs it on EVERY tick (`dailyTick`); a direct run (`runDailySteps`, a browser test) runs it as
+ * the given day, whatever the hour.
+ */
+export const JOB_TOMORROW_STEP: DailyStep = {
+  name: "job-tomorrow reminders",
+  async run({ client, now, today, label }) {
+    const made = await runJobTomorrowReminders(client, { now, runAt: DAILY_RUN_AT, asDay: today, onlyLabel: label });
+    if (made.visits > 0) console.log(`daily: job-tomorrow reminders -- ${String(made.visits)} visits`);
+  },
+};
+
 /** Each step of the morning run, in order. Later features append. */
 export const DAILY_STEPS: DailyStep[] = [
   {
@@ -61,13 +75,6 @@ export const DAILY_STEPS: DailyStep[] = [
     async run({ client, zone, today, label }) {
       const made = await runExpiryAlerts(client, { zone, today, onlyLabel: label });
       if (made.sent > 0) console.log(`daily: licence and insurance alerts -- ${String(made.sent)} emailed`);
-    },
-  },
-  {
-    name: "job-tomorrow reminders",
-    async run({ client, zone, now, today, label }) {
-      const made = await runJobTomorrowReminders(client, { zone, now, today, runAt: DAILY_RUN_AT, onlyLabel: label });
-      if (made.visits > 0) console.log(`daily: job-tomorrow reminders -- ${String(made.visits)} visits`);
     },
   },
   {
@@ -98,7 +105,7 @@ export async function runDailySteps(
   const now = options.now ?? new Date();
   const context: DailyContext = { client, zone, now, today: options.today ?? todayIn(zone, now), label: options.label ?? null };
   const result: DailyResult = { ran: [], failed: [] };
-  for (const step of options.steps ?? DAILY_STEPS) {
+  for (const step of options.steps ?? [...DAILY_STEPS, JOB_TOMORROW_STEP]) {
     try {
       await step.run(context);
       result.ran.push(step.name);
@@ -110,11 +117,25 @@ export async function runDailySteps(
   return result;
 }
 
-/** One tick: the steps if the morning has come on the business clock; nothing before 9:00am. */
+/**
+ * One tick: the job-tomorrow reminders on every job's own clock, whatever the Perth hour (Feature 1022); then
+ * the morning steps if the morning has come on the business clock - nothing of those before 9:00am Perth.
+ * The result is the morning steps' (null before they are due), plus the reminder step's name when it ran.
+ */
 export async function dailyTick(client: PrismaClient, now: Date = new Date()): Promise<DailyResult | null> {
   const settings = await client.platformSettings.findFirst({ select: { timezone: true } });
-  if (settings === null || !dailyRunIsDue(settings.timezone, now)) return null;
-  return runDailySteps(client, { zone: settings.timezone, now });
+  if (settings === null) return null;
+  let reminderRan = false;
+  try {
+    await runJobTomorrowReminders(client, { now, runAt: DAILY_RUN_AT });
+    reminderRan = true;
+  } catch (error: unknown) {
+    console.error(`daily: the "${JOB_TOMORROW_STEP.name}" step failed -- it will be tried again`, error);
+  }
+  if (!dailyRunIsDue(settings.timezone, now)) return null;
+  const result = await runDailySteps(client, { zone: settings.timezone, now, steps: DAILY_STEPS });
+  if (reminderRan) result.ran.push(JOB_TOMORROW_STEP.name);
+  return result;
 }
 
 export interface DailyLoop {

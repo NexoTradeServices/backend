@@ -639,7 +639,7 @@ describe("2006 AC7 / AC14 -- the agreement on the ops list and record", () => {
     await publishAgreement("1");
     await new Promise((r) => setTimeout(r, 5));
     await publishAgreement("2");
-    const acceptedAt = new Date("2026-09-09T02:00:00Z");
+    const acceptedAt = new Date("2027-09-08T02:00:00Z");
     await db.contractor.update({ where: { code: "CON-014" }, data: { agreementVersion: "2", agreementAcceptedAt: acceptedAt } });
     const mike = await signInCookie("mike@idelta.com.au");
 

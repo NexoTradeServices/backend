@@ -4,6 +4,7 @@
 import type { Prisma } from "../generated/prisma/client.js";
 import type { AssignmentStatus, JobStatus, PreferredWindow } from "../generated/prisma/enums.js";
 import { formatDateLabel, formatSlotLabel } from "../time/index.js";
+import { stateOfLocation } from "../calendar/rules.js";
 
 /** Operations Admin Workflow / The job queue and the job page: open work only. */
 export const OPEN_STATUSES: readonly JobStatus[] = ["new", "assigned", "scheduled", "in_progress", "on_hold"];
@@ -102,10 +103,12 @@ export function contractorView(job: JobWithRelations, now: Date): ContractorView
   if (!assignment) return null;
   const firstName = assignment.contractor.name.split(" ")[0] ?? assignment.contractor.name;
   const zone = job.timezone;
+  // Feature 1022: this is the office reading a booked job's time, so it carries the job's state.
+  const state = stateOfLocation(job.serviceLocation) ?? undefined;
   let standing: string;
   if (assignment.status === "assigned") {
     standing = assignment.proposedSlot
-      ? `Waiting for ${firstName}'s answer - proposed ${formatSlotLabel(zone, assignment.proposedSlot, now)}`
+      ? `Waiting for ${firstName}'s answer - proposed ${formatSlotLabel(zone, assignment.proposedSlot, now, state)}`
       : `Waiting for ${firstName}'s answer`;
   } else if (assignment.status === "completed") {
     standing = assignment.completedAt ? `Completed ${formatDateLabel(zone, assignment.completedAt)}` : "Completed";
@@ -117,7 +120,7 @@ export function contractorView(job: JobWithRelations, now: Date): ContractorView
     standing = "On site - work underway";
   } else {
     const slot = assignment.confirmedSlot ?? assignment.proposedSlot;
-    standing = slot ? `Booked - ${formatSlotLabel(zone, slot, now)}` : "Booked";
+    standing = slot ? `Booked - ${formatSlotLabel(zone, slot, now, state)}` : "Booked";
   }
   return { name: assignment.contractor.name, code: assignment.contractor.code, standing };
 }

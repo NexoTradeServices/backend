@@ -43,7 +43,7 @@ export async function sendSlotConfirmed(client: PrismaClient, facts: AnswerFacts
     // Feature 7004: "We'll send you a reminder the day before." only when one will come (the morning run
     // sends for a visit two or more days away, or tomorrow's while it is still before the run's time).
     ...(settings !== null &&
-    reminderWillCome({ businessZone: settings.timezone, jobZone: facts.jobTimezone, slot: facts.proposedSlot, now, runAt: DAILY_RUN_AT })
+    reminderWillCome({ jobZone: facts.jobTimezone, slot: facts.proposedSlot, now, runAt: DAILY_RUN_AT })
       ? { reminderComing: true }
       : {}),
   } satisfies NotificationContext;
@@ -129,7 +129,7 @@ export async function sendDeclinedNotice(client: PrismaClient, facts: AnswerFact
         contractorName: facts.contractorName,
         contractorCode: facts.contractorCode,
         jobReference: facts.jobReference,
-        slotLabel: facts.slotLabel,
+        slotLabel: facts.officeSlotLabel ?? facts.slotLabel,
         ...(facts.note === null ? {} : { note: facts.note }),
         ...(webOrigin ? { jobUrl: `${webOrigin}/ops/jobs/${facts.jobReference}` } : {}),
       },

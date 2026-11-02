@@ -272,7 +272,7 @@ describe("the respond read", () => {
       contractorFirstName: "Bob",
       customerFirstName: "Sarah",
     });
-    expect(body.slotLabel).toMatch(/^Thu \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am AWST$/);
+    expect(body.slotLabel).toMatch(/^Thu \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am$/);
     // V3: the name only -- no phone and no email of the site contact anywhere in the read.
     const raw = JSON.stringify(res.body);
     expect(raw).not.toContain("0400 002 050");
@@ -422,7 +422,7 @@ describe("accept", () => {
     expect(read.status).toBe(410);
     const body = read.body as Read;
     expect(body).toMatchObject({ state: "answered", answer: "accepted", jobReference: "JOB-1042" });
-    expect(body.answeredAtLabel).toMatch(/AWST/);
+    expect(body.answeredAtLabel).not.toMatch(/AWST|WA time/); // plain: not a booked time
 
     const acceptAgain = await accept(textLink);
     expect(acceptAgain.status).toBe(410);
@@ -488,7 +488,7 @@ describe("the slot confirmation", () => {
     for (const part of ["Bob", "12 Paget Street, Hilton", "JOB-1042", "Plumbing", office]) {
       expect(text).toContain(part);
     }
-    expect(text).toMatch(/Thu \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am AWST/);
+    expect(text).toMatch(/Thu \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am/);
     // 4005 AC3: the email (and only it) states the booked visit's rates, as the invoice will price them.
     const rateLine = await bookedRateLine("JOB-1042");
     expect(rateLine).toMatch(/^First hour \(includes call-out\) \$\d+(\.\d\d)?, then \$\d+(\.\d\d)?\/h, billed in 15-minute blocks after the first hour\.$/);
@@ -509,7 +509,7 @@ describe("the slot confirmation", () => {
     }
     // 4005 AC5: her text stays money-free.
     expect(sms?.text).not.toContain("$");
-    expect(sms?.text).toMatch(/Thu \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am AWST/);
+    expect(sms?.text).toMatch(/Thu \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am/);
     // 3004: the text ends with the short account offer; everything before it is checked as before.
     expect(sms?.text).toMatch(/\n\nSet up your account\nManage jobs and access your service history\.\nhttps:\/\/\S+\/set-password$/);
     expect((sms?.text ?? "").split("\n\nSet up your account")[0]).not.toMatch(/track|http/i);
@@ -611,7 +611,7 @@ describe("the slot confirmation", () => {
     for (const body of [mail?.message.text ?? "", mail?.message.html ?? "", sms?.text ?? ""]) {
       expect(body).toContain("Bob");
       expect(body).toContain("12 Paget Street, Hilton");
-      expect(body).toMatch(/Thu \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am AWST/);
+      expect(body).toMatch(/Thu \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am/);
       expect(body).not.toContain("$");
       expect(body).not.toMatch(/http|track/i);
     }
@@ -761,7 +761,7 @@ describe("decline", () => {
     for (const part of ["Bob Reilly", "CON-014", "JOB-1042", KALAMUNDA_NOTE, "/ops/jobs/JOB-1042"]) {
       expect(text).toContain(part);
     }
-    expect(text).toMatch(/Thu \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am AWST/);
+    expect(text).toMatch(/Thu \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am/);
     expect(mails[0]?.message.html).toContain('href="');
     expect(await db.notification.count({ where: { jobId, type: "contractor_declined" } })).toBe(1);
     // Sarah is only ever told a confirmed slot.
@@ -831,8 +831,8 @@ describe("decline", () => {
       what: "Declined",
       note: KALAMUNDA_NOTE,
     });
-    expect(before.earlierBookings[0]?.whenLabel).toMatch(/AWST/);
-    expect(before.earlierBookings[0]?.slotLabel).toMatch(/Thu \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am AWST/);
+    expect(before.earlierBookings[0]?.whenLabel).not.toMatch(/AWST|WA time/); // plain: when it was answered, not a booked time
+    expect(before.earlierBookings[0]?.slotLabel).toMatch(/Thu \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am WA time/);
     expect(proposedSlot.getTime()).toBeGreaterThan(0);
 
     const redo = await request(app)

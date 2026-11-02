@@ -149,7 +149,7 @@ describe("AC3/AC10 -- a job's detail", () => {
       done: true,
       review: null,
     });
-    expect((res.body as { when: string }).when).toMatch(/AWST/);
+    expect((res.body as { when: string }).when).toMatch(/\d(am|pm)$/); // plain for the customer
   });
 
   test("AC3: her review shows once she has rated; a job not yet done carries no review and no tradie before it is booked", async () => {

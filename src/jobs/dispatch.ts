@@ -15,7 +15,7 @@ import { currentAgreementLabel } from "../agreements/current.js";
 import { loadCandidates, guardReason, readyInputOf, type CandidatesResult } from "./candidates.js";
 import { siteContactLine } from "./site-contact.js";
 import { cancelBooking } from "./booking.js";
-import { slotRefusal } from "../calendar/rules.js";
+import { slotRefusal, stateOfLocation } from "../calendar/rules.js";
 import { asAddress, suburbOf, effectiveAddress, NO_ADDRESS_REASON, type Address } from "./shared.js";
 
 const WINDOW_START_MINUTES: Record<string, number> = { morning: 420, afternoon: 720, evening: 1020 };
@@ -57,6 +57,8 @@ export interface DispatchFacts {
   /** Feature 4006: the job's real status, for the page's tag (it was hardcoded New). */
   status: string;
   defaults: { date: string; startMinutes: number; holdMinutes: number };
+  /** Feature 1022: "NSW time" - the label on every time the page shows (it replaced the hard-coded AWST) */
+  stateLabel: string;
   /** Feature 4006: "reschedule" fixes the contractor who holds the booking; absent at dispatch. */
   mode?: "reschedule";
   contractor?: { code: string; name: string; firstName: string };
@@ -74,6 +76,7 @@ export function dispatchFactsOf(job: DispatchJobRow): DispatchFacts {
     siteAddress: effectiveAddress(job),
     customerName: job.customer.name,
     status: job.status,
+    stateLabel: `${stateOfLocation(job.serviceLocation) ?? ""} time`.trim(),
     defaults: {
       date: job.preferredDate.toISOString().slice(0, 10),
       startMinutes: WINDOW_START_MINUTES[window] ?? 420,

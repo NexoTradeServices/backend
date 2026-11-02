@@ -46,9 +46,9 @@
 // Joondalup, ~26km -- genuinely out of reach, AC36).
 import "dotenv/config";
 import { Prisma } from "../../generated/prisma/client.js";
-import { reserveUpTo } from "../reference.js";
+import { nextReference, reserveUpTo } from "../reference.js";
 import { inRangeSuburbs } from "../../suburbs/in-range.js";
-import { zoneForState, nextWeekdayAt, todayAt } from "../../time/index.js";
+import { zoneForState, nextWeekdayAt, todayAt, todayIn } from "../../time/index.js";
 import { serviceLevelFor } from "../../jobs/dispatch-level.js";
 import { disconnectPrisma, getPrisma, type PrismaClient } from "../client.js";
 import { seedAuthFixtures } from "./auth.js";
@@ -607,11 +607,52 @@ export async function seedFixtures(
   return result;
 }
 
+/**
+ * Feature 1022 -- Hannah Lee (the Sydney happy path, a guest) and a new Newtown 2042 plumbing job for Liam to take. Dev and UAT
+ * only, and run by the fixtures COMMAND, not by `seedFixtures()`: the tests build their own Sydney job, and a second fixture
+ * job would move every test that counts jobs or reads the next reference. Create-if-missing, keyed on Hannah's email and
+ * the job's marker in its description.
+ */
+export async function seedSydneyJob(client: PrismaClient = getPrisma()): Promise<string | null> {
+  const plumbing = await client.serviceType.findUnique({ where: { trade: "Plumbing" } });
+  if (plumbing === null) return null;
+  const hannah =
+    (await client.customer.findUnique({ where: { email: "hannah@idelta.com.au" } })) ??
+    (await client.customer.create({
+      data: { code: await nextReference("CUS", client), name: "Hannah Lee", email: "hannah@idelta.com.au", phone: "0400 001 054" },
+    }));
+  const marker = "[fixture: Hannah's Newtown job]";
+  const existing = await client.job.findFirst({ where: { customerId: hannah.id, description: { contains: marker } } });
+  if (existing !== null) return existing.reference;
+  const when = nextWeekdayAt("Australia/Sydney", "wed", 8, 0, new Date());
+  const job = await client.job.create({
+    data: {
+      reference: await nextReference("JOB", client),
+      customerId: hannah.id,
+      serviceTypeId: plumbing.id,
+      customerCalloutRate: plumbing.customerCalloutRate,
+      customerStandardRate: plumbing.customerStandardRate,
+      postcode: "2042",
+      serviceLocation: { suburb: "Newtown", state: "NSW", country: "AU", lat: NEWTOWN.lat, lng: NEWTOWN.lng, placeId: NEWTOWN.placeId },
+      siteAddress: { street: "30 King Street", suburb: "Newtown", state: "NSW", country: "AU", postcode: "2042", lat: NEWTOWN.lat, lng: NEWTOWN.lng, placeId: NEWTOWN.placeId },
+      timezone: "Australia/Sydney",
+      description: `Blocked kitchen sink. ${marker}`,
+      selectedOptions: [],
+      source: "web",
+      preferredWindow: "morning",
+      preferredDate: new Date(`${todayIn("Australia/Sydney", when)}T00:00:00.000Z`),
+      status: "new",
+    },
+  });
+  return job.reference;
+}
+
 async function main(): Promise<void> {
   if (process.env["NODE_ENV"] === "production") {
     throw new Error("fixture seed is dev/test only -- refusing to run with NODE_ENV=production");
   }
   const result = await seedFixtures();
+  await seedSydneyJob();
   console.log(
     `fixture seed: contractors created: ${result.contractorsCreated.length ? result.contractorsCreated.join(", ") : "none (already present)"}; ` +
       `customers created: ${result.customersCreated.length ? result.customersCreated.join(", ") : "none (already present)"}; ` +

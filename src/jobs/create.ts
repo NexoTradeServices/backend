@@ -11,7 +11,7 @@ import type { PrismaClient } from "../db/client.js";
 import { Prisma } from "../generated/prisma/client.js";
 import type { PreferredWindow } from "../generated/prisma/enums.js";
 import { nextReference } from "../db/reference.js";
-import { zoneForState, formatPlainDate } from "../time/index.js";
+import { zoneForState, formatPlainDate, todayIn } from "../time/index.js";
 import { sendNotification } from "../notifications/index.js";
 import { enquiryContactOf } from "./enquiry-contact.js";
 import { WINDOW_LABELS } from "./shared.js";
@@ -225,6 +225,10 @@ export async function createJob(
   }
 
   const preferredDateValue = new Date(input.preferredDate);
+  // Feature 1022: "today" is the job's own day, not the business's: a Sydney suburb at 10pm in Perth is already tomorrow.
+  if (preferredDateValue.toISOString().slice(0, 10) < todayIn(zone)) {
+    return { ok: false, error: "That date has passed. Pick another date.", field: "preferredDate" };
+  }
   // Feature 1020: the business is closed on a public holiday of the job's state.
   const closed = await holidayRefusalForDate(client, location.state, preferredDateValue.toISOString().slice(0, 10));
   if (closed !== null) return { ok: false, error: closed, field: "preferredDate" };

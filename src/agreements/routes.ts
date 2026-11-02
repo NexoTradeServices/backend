@@ -336,7 +336,7 @@ export function agreementRoutes(client: PrismaClient, options: AgreementRouteOpt
       }
       const [current, settings] = await Promise.all([currentAgreement(client), client.platformSettings.findFirstOrThrow()]);
       if (!current) {
-        res.json({ published: false, version: null, accepted: false, acceptedAt: null, contractorCode: contractor.code });
+        res.json({ published: false, version: null, accepted: false, acceptedAt: null, timezone: settings.timezone, contractorCode: contractor.code });
         return;
       }
       const acceptance = await client.contractorAgreementAcceptance.findUnique({

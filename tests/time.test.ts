@@ -102,12 +102,13 @@ describe("AC4 -- labelled rendering, in the job's zone", () => {
   // 2026-01-15T00:00:00Z is 8:00am in Perth (UTC+8, no daylight saving).
   const moment = new Date("2026-01-15T00:00:00Z");
 
-  test("AC4: rendering JOB-1042's moment for Perth produces 8:00am AWST", () => {
-    expect(formatLabelled(zoneForState("WA"), moment)).toBe("8:00am AWST");
+  test("AC4: rendering JOB-1042's moment for Perth produces 8:00am - no label (Feature 1022)", () => {
+    expect(formatLabelled(zoneForState("WA"), moment)).toBe("8:00am");
   });
 
   test("AC4: the same instant labels differently in Sydney's zone -- proof it is zone-driven, not hardcoded", () => {
-    expect(formatLabelled(zoneForState("NSW"), moment)).toBe("11:00am AEDT");
+    expect(formatLabelled(zoneForState("NSW"), moment)).toBe("11:00am");
+    expect(formatLabelled(zoneForState("NSW"), moment, "NSW")).toBe("11:00am NSW time");
   });
 });
 

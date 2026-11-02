@@ -867,13 +867,20 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
           res.status(503).json({ error: "the day view is unavailable right now" });
           return;
         }
+        // Feature 1022: ?job=<reference> draws the day in THAT job's zone (a Sydney job: Sydney's midnight to midnight).
+        const jobRef = req.query["job"];
+        const forJob =
+          typeof jobRef === "string"
+            ? await client.job.findUnique({ where: { reference: jobRef }, select: { timezone: true } })
+            : null;
+        const dayZone = forJob?.timezone ?? settings.timezone;
         // Feature 4006: ?ignoreJob=<reference> leaves that job's own block off the day.
         const ignoreRef = req.query["ignoreJob"];
         const ignored =
           typeof ignoreRef === "string"
             ? await client.job.findUnique({ where: { reference: ignoreRef }, select: { id: true } })
             : null;
-        res.json({ blocks: await loadContractorDay(client, contractor.id, date, settings.timezone, ignored?.id) });
+        res.json({ blocks: await loadContractorDay(client, contractor.id, date, dayZone, ignored?.id) });
       })().catch((error: unknown) => {
         console.error("GET /api/contractors/:code/day failed", error);
         res.status(500).json({ error: "internal error" });

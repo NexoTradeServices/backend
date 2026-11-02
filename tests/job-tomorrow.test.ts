@@ -1,6 +1,6 @@
 // Feature 7004 -- the job-tomorrow reminder: the daily sweep's "job-tomorrow reminders" step
 //
-// AC1  the morning run on Mon 2 Nov sends Sarah a "Job tomorrow - JOB-1042, 9:00am AWST" email and a text for
+// AC1  the morning run on Mon 2 Nov sends Sarah a "Job tomorrow - JOB-1042, 9:00am" email and a text for
 //      Bob's Tue 3 Nov 9:00am visit, with the address and "let Bob in", no `$`, no link besides the account offer
 // AC2  with Lena as site contact she gets her own email and text; Sarah's copy says the site contact has been
 //      reminded too; Lena's carry no account offer
@@ -124,12 +124,12 @@ describe("AC1 and AC2 -- the reminder, in each person's wording", () => {
     await drainOnce(db);
 
     const mail = mailTo("sarah@idelta.com.au");
-    expect(mail?.message.subject).toBe("Job tomorrow - JOB-1042, 9:00am AWST");
+    expect(mail?.message.subject).toBe("Job tomorrow - JOB-1042, 9:00am");
     const text = mail?.message.text ?? "";
     const html = mail?.message.html ?? "";
     for (const body of [text, html.replace(/<[^>]+>/g, "")]) {
       expect(body).toContain("Hi Sarah,");
-      expect(body).toContain("A reminder: Bob will be at 12 Paget Street, Hilton tomorrow, Tue 3 Nov, at 9:00am AWST for your plumbing job");
+      expect(body).toContain("A reminder: Bob will be at 12 Paget Street, Hilton tomorrow, Tue 3 Nov, at 9:00am for your plumbing job");
       expect(body).toContain("JOB-1042");
       expect(body).toContain("Please make sure someone is there to let Bob in.");
     }
@@ -142,7 +142,7 @@ describe("AC1 and AC2 -- the reminder, in each person's wording", () => {
     const customerText = sms.sent.find((m) => m.message.text.includes("JOB-1042") && m.message.text.includes("let Bob in") && m.message.text.includes("someone"));
     expect(customerText).toBeDefined();
     const body = (customerText?.message.text ?? "").split("\n\nSet up your account")[0] ?? "";
-    expect(body).toMatch(/: reminder - Bob will be at 12 Paget Street, Hilton tomorrow, Tue 3 Nov, 9:00am AWST for your job JOB-1042\. Please make sure someone can let Bob in\. To change, ring \S+/);
+    expect(body).toMatch(/: reminder - Bob will be at 12 Paget Street, Hilton tomorrow, Tue 3 Nov, 9:00am for your job JOB-1042\. Please make sure someone can let Bob in\. To change, ring \S+/);
     expect(body).not.toContain("$");
     expect(body).not.toContain("http");
 
@@ -164,7 +164,7 @@ describe("AC1 and AC2 -- the reminder, in each person's wording", () => {
     expect(lenas).toBeDefined();
     const text = lenas?.message.text ?? "";
     expect(text).toContain("Hi Lena,");
-    expect(text).toContain("A reminder: Bob will be at 12 Paget Street, Hilton tomorrow, Tue 3 Nov, at 9:00am AWST for a plumbing job (JOB-1042).");
+    expect(text).toContain("A reminder: Bob will be at 12 Paget Street, Hilton tomorrow, Tue 3 Nov, at 9:00am for a plumbing job (JOB-1042).");
     expect(text).toContain("Please make sure you are there to let Bob in.");
     expect(text).toContain("If that time no longer suits, please ring the office on");
     expect(text).not.toContain("Sarah");

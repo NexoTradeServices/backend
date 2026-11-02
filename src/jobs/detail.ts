@@ -6,6 +6,7 @@
 import type { PrismaClient } from "../db/client.js";
 import type { JobStatus, PreferredWindow } from "../generated/prisma/enums.js";
 import { formatDate, formatDateTimeLabel, formatPlainDate, formatSlotLabel } from "../time/index.js";
+import { stateOfLocation } from "../calendar/rules.js";
 import { customerPhotosOf, type PhotoView } from "../photos/cloudinary.js";
 import { editableForSeconds, readNotes } from "./notes.js";
 import { jobMessages, type MessageView } from "./messages.js";
@@ -222,16 +223,16 @@ async function earlierBookingsOf(client: PrismaClient, job: JobWithRelations, no
       whenLabel: formatDateTimeLabel(job.timezone, at, now),
       slotLabel:
         row.status === "cancelled"
-          ? slotLabelOf(job.timezone, row.confirmedSlot ?? row.proposedSlot, now)
-          : slotLabelOf(job.timezone, row.proposedSlot, now),
+          ? slotLabelOf(job.timezone, row.confirmedSlot ?? row.proposedSlot, now, stateOfLocation(job.serviceLocation) ?? undefined)
+          : slotLabelOf(job.timezone, row.proposedSlot, now, stateOfLocation(job.serviceLocation) ?? undefined),
       note: row.status === "cancelled" ? null : row.declineNote,
     });
   }
   return result;
 }
 
-function slotLabelOf(zone: string, slot: Date | null, now: Date): string | null {
-  return slot === null ? null : formatSlotLabel(zone, slot, now);
+function slotLabelOf(zone: string, slot: Date | null, now: Date, state: string | undefined): string | null {
+  return slot === null ? null : formatSlotLabel(zone, slot, now, state);
 }
 
 async function cancelledFactsOf(client: PrismaClient, job: JobWithRelations): Promise<CancelledFacts | null> {
