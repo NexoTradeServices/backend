@@ -16,6 +16,7 @@ import { loadCandidates, guardReason, readyInputOf, type CandidatesResult } from
 import { siteContactLine } from "./site-contact.js";
 import { cancelBooking } from "./booking.js";
 import { slotRefusal, stateOfLocation } from "../calendar/rules.js";
+import { notAvailableIn } from "../availability/index.js";
 import { asAddress, suburbOf, effectiveAddress, NO_ADDRESS_REASON, type Address } from "./shared.js";
 
 const WINDOW_START_MINUTES: Record<string, number> = { morning: 420, afternoon: 720, evening: 1020 };
@@ -326,6 +327,13 @@ export async function dispatchJob(
       });
       if (clash) {
         throw new Refused({ ok: false, status: 409, error: "Busy at that time - pick another slot or another contractor." });
+      }
+
+      // Feature 2004: time switched off in his Availability is refused here too, on the server - dispatch and reschedule alike
+      // (Mike's page refreshes its list on this answer). Read under the contractor's lock, so a save a moment earlier counts.
+      const availability = (await notAvailableIn(tx, [contractor], { start, end })).get(contractor.id);
+      if (availability?.notAvailable === true) {
+        throw new Refused({ ok: false, status: 409, error: "Not available at that time - pick another slot or another contractor." });
       }
 
       const level = serviceLevelFor(job.timezone, start, slot.emergency);

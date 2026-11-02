@@ -20,6 +20,7 @@ import { settingsRoutes } from './settings/routes.js'
 import { holidayRoutes, publicHolidayRoutes } from './holidays/routes.js'
 import { needsAttentionRoutes } from './holidays/needs-attention.js'
 import { operatingStatesRoutes } from './holidays/operating-states.js'
+import { contractorAvailabilityRoutes, opsAvailabilityRoutes } from './availability/routes.js'
 import { identityRoutes } from './settings/identity-routes.js'
 import { serviceTypeRoutes } from './service-types/routes.js'
 import { contractorRoutes } from './contractors/routes.js'
@@ -119,6 +120,8 @@ app.use('/api/operating-states', operatingStatesRoutes(prisma))
 app.use('/api/service-types', serviceTypeRoutes(prisma))
 app.use('/api/contractors', contractorRoutes(prisma, auth))
 app.use('/api/contractor', contractorServiceAreaRoutes(prisma))
+app.use('/api/contractor', contractorAvailabilityRoutes(prisma))
+app.use('/api/contractors', opsAvailabilityRoutes(prisma))
 app.use('/api/contractor', contractorDashboardRoutes(prisma))
 app.use('/api/contractor/jobs', contractorJobRoutes(prisma))
 // Feature 6003: the contractor's own settlements.

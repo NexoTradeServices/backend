@@ -13,6 +13,7 @@ import type { PrismaClient } from "../db/client.js";
 import type { ContractorStatus } from "../generated/prisma/enums.js";
 import { currentAgreementLabel } from "../agreements/current.js";
 import { readyToDispatch, type ReadyInput } from "../contractors/ready.js";
+import { notAvailableIn } from "../availability/index.js";
 import { dateOnlyAsUtcMidnight, formatTimeRangeLabel, formatPlainDateShort } from "../time/index.js";
 
 export interface DispatchJob {
@@ -41,6 +42,12 @@ export interface CandidateRow {
   distanceKm: number | null;
   pay: { calloutRate: number; standardRate: number };
   rating: Rating | null;
+  /** Feature 2004: a half hour of the hold is switched off in his Availability */
+  notAvailable: boolean;
+  /** Feature 2004: Not available is the ONLY problem - Mike may open that time with the contractor's yes ("Change availability") */
+  linkable: boolean;
+  /** Feature 2004: he has never saved his Availability ("Availability not set") */
+  availabilityNotSet: boolean;
 }
 
 export interface CandidatesResult {
@@ -229,9 +236,10 @@ export async function loadCandidates(client: PrismaClient, input: CandidatesInpu
   const contractors = await loadContractorsForTrade(client, input.job.trade);
   const ids = contractors.map((c) => c.id);
   const agreementLabel = await currentAgreementLabel(client);
-  const [distances, busy] = await Promise.all([
+  const [distances, busy, availability] = await Promise.all([
     distancesFor(client, ids, input.job),
     busyFor(client, ids, input.holdStart, input.holdEnd, input.ignoreJobId ?? null),
+    notAvailableIn(client, contractors, { start: input.holdStart, end: input.holdEnd }),
   ]);
 
   // Plan decision 2: "run with now set to UTC midnight of the slot's local
@@ -254,11 +262,17 @@ export async function loadCandidates(client: PrismaClient, input: CandidatesInpu
       guardNow,
     );
     let why = guarded.why;
+    const slotAvailability = availability.get(contractor.id);
+    let onlyNotAvailable = false;
     if (why === null) {
       const clash = busy.get(contractor.id);
       if (clash) {
         const where = clash.jobReference ? ` - ${clash.jobReference}, ${clash.suburb ?? ""}` : "";
         why = `Busy ${formatTimeRangeLabel(input.zone, clash.startTime, clash.endTime, clash.state ?? undefined)}${where}`;
+      } else if (slotAvailability?.notAvailable === true) {
+        // Feature 2004: after the Busy check - a hold touching a switched-off half hour is greyed, "Not available".
+        why = "Not available";
+        onlyNotAvailable = guarded.ready;
       }
     }
 
@@ -272,6 +286,9 @@ export async function loadCandidates(client: PrismaClient, input: CandidatesInpu
       distanceKm: distances.has(contractor.id) ? Math.round(distances.get(contractor.id)! * 10) / 10 : null,
       pay: { calloutRate: specialty.contractorCalloutRate, standardRate: specialty.contractorStandardRate },
       rating: ratingOf(contractor),
+      notAvailable: slotAvailability?.notAvailable === true,
+      linkable: onlyNotAvailable,
+      availabilityNotSet: slotAvailability?.notSet === true,
     };
     (row.served ? serves : outside).push(row);
   }

@@ -240,6 +240,7 @@ model User {
   // audit-pair back-relations (who did the thing)
   gstStatusChanges        PlatformSettings[]           @relation("GstStatusChangedBy")
   operatingStateChanges   OperatingState[]            @relation("OperatingStateChangedBy")
+  availabilityChanges     ContractorAvailability[]    @relation("AvailabilityChangedBy")
   cancelledJobs           Job[]                        @relation("JobCancelledBy")
   cancelledAssignments    Assignment[]                 @relation("AssignmentCancelledBy")
   voidedInvoices          Invoice[]                    @relation("InvoiceVoidedBy")
@@ -554,6 +555,16 @@ model Customer {
 
 model Contractor {
   id                    String           @id @default(uuid(7))
+  /// the opening hours this contractor's Availability starts from (Calendar & Scheduling / Availability): a half hour
+  /// with no saved row is Available inside them and Not available outside. Stamped from the settings row when the
+  /// contractor is made; widening the business hours later leaves these as they were, so the new half hours start
+  /// Not available until the contractor switches them on. Feature 2004.
+  defaultOpening        String           @default("07:00")
+  defaultClosing        String           @default("19:00")
+  /// when the contractor (or Mike) first saved Availability; empty = never set (the dashboard says so)
+  availabilitySavedAt   DateTime?
+  /// when the contractor last saw the "new opening hours" notice on the dashboard
+  hoursNoticeSeenAt     DateTime?
   /// the state this contractor works in -- office-held (Managing the contractor record). Feature 1021.
   operatingState        String           @default("WA")
   /// human-readable CON-xxxx; system-generated, sequential
@@ -612,6 +623,7 @@ model Contractor {
   servedPostcodes      ContractorServedPostcode[]
   reviews              Review[]
   calendarEvents       CalendarEvent[]
+  availability         ContractorAvailability[]
   assignments          Assignment[]
   settlements          ContractorSettlement[]
   agreementAcceptances ContractorAgreementAcceptance[]
@@ -688,6 +700,27 @@ model Review {
 
 /// Availability + bookings. Block state is READ from the assignment -- there is
 /// deliberately no hold/confirmed field here.
+/// One half hour of one contractor's Availability that differs from "available inside the defaults" -- Feature 2004.
+/// Only changed half hours are written. `date` is the calendar day in the zone of the contractor's Operating state;
+/// `startTime` is the half hour's start, "HH:MM".
+model ContractorAvailability {
+  id              String   @id @default(uuid(7))
+  contractorId    String
+  date            DateTime @db.Date
+  startTime       String
+  available       Boolean
+  changedByUserId String?
+  changedAt       DateTime @default(now())
+
+  contractor Contractor @relation(fields: [contractorId], references: [id], onDelete: Cascade)
+  changedBy  User?      @relation("AvailabilityChangedBy", fields: [changedByUserId], references: [id])
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
+
+  @@unique([contractorId, date, startTime])
+}
+
 model CalendarEvent {
   id           String            @id @default(uuid(7))
   contractorId String

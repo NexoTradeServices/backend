@@ -554,6 +554,8 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
       // Decision 6: the User (role contractor, no usable password) is
       // created in the same transaction as the Contractor.
       const code = await nextReference("CON", client);
+      // Feature 2004: Availability starts from the business hours as they are today.
+      const hours = await client.platformSettings.findFirstOrThrow({ select: { openingTime: true, closingTime: true } });
       const created = await client.$transaction(async (tx) => {
         const user = await tx.user.create({
           data: { name: data.name, email: data.email, role: Role.contractor },
@@ -562,6 +564,8 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
           data: {
             code,
             operatingState: data.operatingState ?? "WA",
+            defaultOpening: hours.openingTime,
+            defaultClosing: hours.closingTime,
             userId: user.id,
             name: data.name,
             email: data.email,
