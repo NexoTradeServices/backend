@@ -20,6 +20,7 @@ import { Role } from "../generated/prisma/enums.js";
 import { nextReference } from "../db/reference.js";
 import { currentAgreementLabel } from "../agreements/current.js";
 import { readyToDispatch, type ReadyInput } from "./ready.js";
+import { isOpenState } from "../holidays/missing.js";
 import { parseServiceAreaInput, saveServiceArea, serviceAreaDtoOf } from "./service-area.js";
 import { loadContractorDay } from "./day.js";
 import { isValidAbn } from "../invoices/abn.js";
@@ -80,6 +81,8 @@ interface ContractorInput {
   payoutAccountNo: string | null;
   payoutAccountName: string | null;
   active: boolean; // Contractor.status === "active"
+  /** Feature 1021: undefined = the body did not carry it (an update leaves it alone; a create refuses) */
+  operatingState: string | undefined;
 }
 
 interface FieldError {
@@ -276,9 +279,16 @@ function parseContractorInput(body: unknown): ParseResult {
   const payoutAccountName = optionalString(b["payoutAccountName"]);
   if (payoutAccountName === undefined) return { ok: false, error: "invalid account name", field: "payoutAccountName" };
 
+  const stateRaw = b["operatingState"];
+  if (stateRaw !== undefined && stateRaw !== null && (typeof stateRaw !== "string" || stateRaw.trim() === "")) {
+    return { ok: false, error: "Required.", field: "operatingState" };
+  }
+  const operatingState = typeof stateRaw === "string" ? stateRaw.trim() : undefined;
+
   return {
     ok: true,
     data: {
+      operatingState,
       name,
       email: emailRaw,
       phone,
@@ -359,6 +369,8 @@ function readyInputOf(contractor: NonNullable<ContractorWithRelations>, currentA
     servedPostcodeCount: contractor._count.servedPostcodes,
     agreementVersion: contractor.agreementVersion,
     currentAgreementVersion,
+    operatingState: contractor.operatingState,
+    coreLocation: contractor.coreLocation,
   };
 }
 
@@ -382,6 +394,7 @@ async function toDto(client: PrismaClient, contractor: NonNullable<ContractorWit
 
   return {
     code: contractor.code,
+    operatingState: contractor.operatingState,
     name: contractor.name,
     email: contractor.email,
     phone: contractor.phone,
@@ -521,6 +534,17 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
         return;
       }
 
+      // Feature 1021: Operating state is required, and an open one. Refused before the login is made,
+      // so no invite goes.
+      if (data.operatingState === undefined) {
+        res.status(400).json({ error: "Required.", field: "operatingState" });
+        return;
+      }
+      if (!(await isOpenState(client, data.operatingState))) {
+        res.status(400).json({ error: `${data.operatingState} is not an operating state.`, field: "operatingState" });
+        return;
+      }
+
       const existingUser = await client.user.findUnique({ where: { email: data.email } });
       if (existingUser) {
         res.status(400).json({ error: "This email already has a login", field: "email" });
@@ -537,6 +561,7 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
         return tx.contractor.create({
           data: {
             code,
+            operatingState: data.operatingState ?? "WA",
             userId: user.id,
             name: data.name,
             email: data.email,
@@ -608,6 +633,16 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
         return;
       }
 
+      // Feature 1021: a new Operating state must be an open one; the contractor's current state may stay even if closed.
+      if (
+        data.operatingState !== undefined &&
+        data.operatingState !== existing.operatingState &&
+        !(await isOpenState(client, data.operatingState))
+      ) {
+        res.status(400).json({ error: `${data.operatingState} is not an operating state.`, field: "operatingState" });
+        return;
+      }
+
       const unknownTrade = await unknownTradeField(client, data.specialties);
       if (unknownTrade) {
         res.status(400).json(unknownTrade);
@@ -656,6 +691,7 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
         await tx.contractor.update({
           where: { id: existing.id },
           data: {
+            ...(data.operatingState === undefined ? {} : { operatingState: data.operatingState }),
             name: data.name,
             email: data.email,
             phone: data.phone,
@@ -784,7 +820,11 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
           res.status(400).json({ error: parsed.error, field: parsed.field });
           return;
         }
-        const saved = await saveServiceArea(client, contractor.id, parsed.data);
+        const saved = await saveServiceArea(client, contractor.id, parsed.data, {
+          operatingState: contractor.operatingState,
+          caller: "ops",
+          firstName: contractor.name.split(" ")[0] ?? contractor.name,
+        });
         if (!saved.ok) {
           res.status(400).json({ error: saved.error, field: saved.field });
           return;

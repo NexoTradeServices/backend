@@ -27,6 +27,8 @@ export interface SuburbPin {
 }
 
 export interface ServiceAreaDto {
+  /** Feature 1021: the state the pin must sit in */
+  operatingState: string;
   coreLocation: SuburbPin | null;
   radiusKm: number;
   postcodes: string[];
@@ -126,11 +128,13 @@ export function parseServiceAreaInput(body: unknown): ParseResult {
 }
 
 export function serviceAreaDtoOf(contractor: {
+  operatingState: string;
   coreLocation: unknown;
   lastRadiusKm: number | null;
   servedPostcodes: { postcode: string }[];
 }): ServiceAreaDto {
   return {
+    operatingState: contractor.operatingState,
     coreLocation: (contractor.coreLocation as SuburbPin | null) ?? null,
     radiusKm: contractor.lastRadiusKm ?? DEFAULT_RADIUS_KM,
     postcodes: contractor.servedPostcodes.map((row) => row.postcode),
@@ -149,10 +153,23 @@ export async function saveServiceArea(
   client: PrismaClient,
   contractorId: string,
   input: ServiceAreaInput,
+  /** Feature 1021: the contractor's Operating state and who is saving, for the refusal's wording. */
+  by: { operatingState: string; caller: "contractor" | "ops"; firstName: string },
 ): Promise<SaveResult> {
+  // Feature 1021: the pin stays inside the contractor's state; the old pin and area stay if it does not.
+  if (input.coreLocation.state !== by.operatingState) {
+    return {
+      ok: false,
+      error:
+        by.caller === "contractor"
+          ? `Your service area must be in ${by.operatingState}. Contact the office.`
+          : `${by.firstName}'s service area must be in ${by.operatingState}. Change ${by.firstName}'s Operating state first.`,
+      field: "coreLocation",
+    };
+  }
   const [existing, inRange] = await Promise.all([
     client.contractorServedPostcode.findMany({ where: { contractorId }, select: { postcode: true } }),
-    inRangeSuburbs(client, { lat: input.coreLocation.lat, lng: input.coreLocation.lng, km: input.radiusKm }),
+    inRangeSuburbs(client, { lat: input.coreLocation.lat, lng: input.coreLocation.lng, km: input.radiusKm, state: by.operatingState }),
   ]);
   const existingSet = new Set(existing.map((row) => row.postcode));
   const inRangeSet = new Set(inRange.map((row) => row.postcode));

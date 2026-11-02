@@ -298,7 +298,7 @@ describe("AC7 -- Sarah's Hilton plumbing job", () => {
     expect(res.status).toBe(200);
     const body = res.body as CandidatesBody;
     expect(body.serves.map((r) => r.code)).toEqual(["CON-014"]);
-    expect(body.outside).toEqual([]);
+    expect(body.outside.map((r) => r.code)).toEqual(["CON-037"]); // 1021: Liam, in NSW, is far outside a Hilton job
     const bob = body.serves[0];
     expect(bob?.served).toBe(true);
     expect(bob?.distanceKm).not.toBeNull();

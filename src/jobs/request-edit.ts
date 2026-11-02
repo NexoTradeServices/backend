@@ -10,6 +10,7 @@ import type { PrismaClient } from "../db/client.js";
 import { Prisma } from "../generated/prisma/client.js";
 import type { PreferredWindow } from "../generated/prisma/enums.js";
 import { holidayRefusalForDate, stateOfLocation } from "../calendar/rules.js";
+import { isOpenState } from "../holidays/missing.js";
 import { zoneForState } from "../time/index.js";
 import {
   PREFERRED_WINDOWS,
@@ -88,6 +89,10 @@ export async function editRequest(client: PrismaClient, reference: string, input
       zone = zoneForState(location.state);
     } catch {
       return { ok: false, status: 400, error: `no service zone for state "${location.state}"`, field: "location" };
+    }
+    // Feature 1021: a new suburb in a closed state is refused, unless it is the state the job is already in.
+    if (location.state !== stateOfLocation(job.serviceLocation) && !(await isOpenState(client, location.state))) {
+      return { ok: false, status: 400, error: `${location.state} is not an operating state.`, field: "location" };
     }
     data.postcode = location.postcode;
     data.timezone = zone;

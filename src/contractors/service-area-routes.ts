@@ -54,7 +54,11 @@ export function contractorServiceAreaRoutes(client: PrismaClient): Router {
         res.status(400).json({ error: parsed.error, field: parsed.field });
         return;
       }
-      const saved = await saveServiceArea(client, contractor.id, parsed.data);
+      const saved = await saveServiceArea(client, contractor.id, parsed.data, {
+        operatingState: contractor.operatingState,
+        caller: "contractor",
+        firstName: contractor.name.split(" ")[0] ?? contractor.name,
+      });
       if (!saved.ok) {
         res.status(400).json({ error: saved.error, field: saved.field });
         return;

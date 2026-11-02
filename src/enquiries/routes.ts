@@ -120,7 +120,7 @@ export function enquiryRoutes(client: PrismaClient, options: EnquiryRoutesOption
           res.status(404).json({ error: "no such suburb" });
           return;
         }
-        input = { postcode: location.postcode, lat: location.lat, lng: location.lng };
+        input = { state: location.state, postcode: location.postcode, lat: location.lat, lng: location.lng };
       } else {
         const postcode = q["postcode"];
         const lat = typeof q["lat"] === "string" && q["lat"].trim() !== "" ? Number(q["lat"]) : NaN;
@@ -129,7 +129,7 @@ export function enquiryRoutes(client: PrismaClient, options: EnquiryRoutesOption
           res.status(400).json({ error: "send suburbId, or postcode with lat and lng" });
           return;
         }
-        input = { postcode: postcode.trim(), lat, lng };
+        input = { ...(typeof q["state"] === "string" && q["state"].trim() !== "" ? { state: q["state"].trim() } : {}), postcode: postcode.trim(), lat, lng };
       }
       const { tier } = await coverageOf(client, input);
       res.json({ tier });

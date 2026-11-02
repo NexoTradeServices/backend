@@ -76,6 +76,8 @@ export interface ContractorForGuard {
   specialties: { status: ContractorStatus; licenceExpiry: Date }[];
   servedPostcodeCount: number;
   agreementVersion: string | null;
+  operatingState: string;
+  coreLocation: unknown;
 }
 
 /** Exported so the dispatch write path (a separate transaction, its own load shape) builds the same `ReadyInput` -- one derivation, never a second copy. */
@@ -98,6 +100,8 @@ export function readyInputOf(contractor: ContractorForGuard, currentAgreementVer
     servedPostcodeCount: contractor.servedPostcodeCount,
     agreementVersion: contractor.agreementVersion,
     currentAgreementVersion,
+    operatingState: contractor.operatingState,
+    coreLocation: contractor.coreLocation,
   };
 }
 

@@ -13,6 +13,8 @@ import { disconnectPrisma, getPrisma, type PrismaClient } from "../client.js";
 /** The one PlatformSettings row. A fixed id keeps the singleton a singleton. */
 export const PLATFORM_SETTINGS_ID = "00000000-0000-7000-8000-000000000001";
 
+const ALL_STATES = ["WA", "NSW", "VIC", "QLD", "SA", "TAS", "ACT", "NT"] as const;
+
 export interface SeedBaseResult {
   platformSettingsCreated: boolean;
   serviceTypesCreated: string[];
@@ -117,6 +119,14 @@ export async function seedBase(client: PrismaClient = getPrisma()): Promise<Seed
         data: { ...serviceType, serviceLevelMultipliers },
       });
       result.serviceTypesCreated.push(serviceType.trade);
+    }
+  }
+
+  // Feature 1021: one OperatingState row per state; WA open, the rest closed. Create-if-missing: the
+  // owner ticks states on Settings, and a second run leaves their choice alone.
+  for (const state of ALL_STATES) {
+    if ((await client.operatingState.findUnique({ where: { state } })) === null) {
+      await client.operatingState.create({ data: { state, open: state === "WA" } });
     }
   }
 

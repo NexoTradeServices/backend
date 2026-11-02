@@ -61,7 +61,8 @@ export function suburbRoutes(client: PrismaClient): Router {
         return;
       }
 
-      const postcodes = await inRangeSuburbs(client, { lat, lng, km: kmRaw });
+      const state = typeof req.query["state"] === "string" && req.query["state"].trim() !== "" ? req.query["state"].trim() : undefined;
+      const postcodes = await inRangeSuburbs(client, { lat, lng, km: kmRaw, ...(state === undefined ? {} : { state }) });
       res.json(postcodes);
     })().catch((error: unknown) => {
       console.error("GET /api/suburbs/in-range failed", error);

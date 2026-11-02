@@ -32,6 +32,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await freshWorld(db, email);
+  await db.publicHoliday.deleteMany(); // the fixtures load NSW's (1021); these tests start from none
 });
 
 const thisYear = (): number => Number(todayIn("Australia/Perth").slice(0, 4));

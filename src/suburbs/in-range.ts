@@ -28,13 +28,13 @@ interface InRangeRow {
 
 export async function inRangeSuburbs(
   client: PrismaClient,
-  { lat, lng, km }: { lat: number; lng: number; km: number },
+  { lat, lng, km, state }: { lat: number; lng: number; km: number; state?: string },
 ): Promise<InRangePostcode[]> {
   const rows = await client.$queryRaw<InRangeRow[]>`
     WITH qualifying AS (
       SELECT DISTINCT postcode
       FROM "Suburb"
-      WHERE ST_DWithin(
+      WHERE (${state ?? null}::text IS NULL OR "state" = ${state ?? null}::text) AND ST_DWithin(
         ST_MakePoint("centroidLng", "centroidLat")::geography,
         ST_MakePoint(${lng}::float8, ${lat}::float8)::geography,
         ${km}::float8 * 1000
@@ -48,6 +48,7 @@ export async function inRangeSuburbs(
            ) / 1000) AS "nearestKm"
     FROM "Suburb" s
     JOIN qualifying q ON q.postcode = s.postcode
+    WHERE (${state ?? null}::text IS NULL OR s."state" = ${state ?? null}::text)
     GROUP BY s.postcode
     ORDER BY "nearestKm" ASC
   `;

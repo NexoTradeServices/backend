@@ -87,7 +87,7 @@ describe("AC6 -- sequential, unique, independent", () => {
     const seededCustomerCodes = (await db.customer.findMany({ select: { code: true } })).map(
       (row) => row.code,
     );
-    expect(seededContractorCodes.sort()).toEqual(["CON-014", "CON-021", "CON-030"]);
+    expect(seededContractorCodes.sort()).toEqual(["CON-014", "CON-021", "CON-030", "CON-037"]);
     // CUS-1051 is deliberately skipped (Feature 2003) -- it is a real,
     // hand-inserted row outside this seed (project/setup/01-dev-environment.md,
     // section 7b), so Tom and Margaret take CUS-1052/1053 instead.

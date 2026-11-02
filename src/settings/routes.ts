@@ -20,6 +20,9 @@ import { invalidateIdentityCache } from "./identity-cache.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { parseStreetAddress } from "./address.js";
 import { isHalfHourClock, minutesOf } from "../calendar/rules.js";
+import { MINIMUM_HOLIDAYS } from "../holidays/missing.js";
+import { STATES } from "../holidays/routes.js";
+import { todayIn } from "../time/index.js";
 
 const DISPLAY_NAME_MAX_LENGTH = 80;
 
@@ -49,6 +52,8 @@ interface SettingsInput {
   /** Feature 1020: left out of a save = unchanged. */
   openingTime?: string;
   closingTime?: string;
+  /** Feature 1021: the states ticked open; left out of a save = unchanged. */
+  operatingStates?: string[];
   payoutCycle: PayoutCycle;
   payoutDay: PayoutDay | null;
   emailProvider: string;
@@ -204,6 +209,27 @@ function parseSettingsInput(body: unknown): ParseResult {
     closingTime = b["closingTime"];
   }
 
+  // Feature 1021: the open list.
+  let operatingStates: string[] | undefined;
+  if (b["operatingStates"] !== undefined) {
+    // The open list ("WA", "NSW") - or, so a caller can send back what GET gave it, the rows themselves.
+    const raw: unknown = b["operatingStates"];
+    const asCodes: unknown[] | null = Array.isArray(raw)
+      ? raw.map((x: unknown) =>
+          x !== null && typeof x === "object" && "state" in x && "open" in x
+            ? (x as { open: unknown }).open === true
+              ? (x as { state: unknown }).state
+              : null
+            : x,
+        )
+      : null;
+    const codes = asCodes?.filter((x) => x !== null) ?? null;
+    if (codes === null || !codes.every((x) => typeof x === "string" && (STATES as readonly string[]).includes(x))) {
+      return { ok: false, error: "operatingStates must be a list of state codes", field: "operatingStates" };
+    }
+    operatingStates = [...new Set(codes as string[])];
+  }
+
   const payoutCycle = b["payoutCycle"];
   if (typeof payoutCycle !== "string" || !Object.values(PayoutCycle).includes(payoutCycle as PayoutCycle)) {
     return { ok: false, error: "payoutCycle must be one of weekly, fortnightly", field: "payoutCycle" };
@@ -244,12 +270,22 @@ function parseSettingsInput(body: unknown): ParseResult {
       approvedPublicDomain,
       timezone,
       ...(openingTime === undefined || closingTime === undefined ? {} : { openingTime, closingTime }),
+      ...(operatingStates === undefined ? {} : { operatingStates }),
       payoutCycle: payoutCycle as PayoutCycle,
       payoutDay: (payoutDay ?? null) as PayoutDay | null,
       emailProvider,
       smsProvider,
     },
   };
+}
+
+/** The eight states with open or closed, and who changed each and when (Feature 1021). */
+async function operatingStatesDto(client: PrismaClient) {
+  const rows = await client.operatingState.findMany({ include: { changedBy: { select: { name: true } } } });
+  return STATES.map((state) => {
+    const row = rows.find((r) => r.state === state);
+    return { state, open: row?.open ?? false, changedAt: row?.changedAt ?? null, changedBy: row?.changedBy?.name ?? null };
+  });
 }
 
 export function settingsRoutes(client: PrismaClient): Router {
@@ -260,7 +296,7 @@ export function settingsRoutes(client: PrismaClient): Router {
       const settings = await client.platformSettings.findFirstOrThrow({
         include: { gstStatusChangedBy: { select: { id: true, name: true } } },
       });
-      res.json({ ...settings, gstRatePercent: settings.gstRatePercent.toString() });
+      res.json({ ...settings, gstRatePercent: settings.gstRatePercent.toString(), operatingStates: await operatingStatesDto(client) });
     })().catch((error: unknown) => {
       console.error("GET /api/settings failed", error);
       res.status(500).json({ error: "internal error" });
@@ -292,6 +328,30 @@ export function settingsRoutes(client: PrismaClient): Router {
         // requireRole already refused; unreachable, kept for the type narrow.
         res.status(401).json({ error: "not authenticated" });
         return;
+      }
+
+      // Feature 1021: a state newly opened needs this year's holidays entered (the business clock). The
+      // whole Save is refused; closing has no check.
+      const now = new Date();
+      if (input.operatingStates !== undefined) {
+        const currentlyOpen = new Set(
+          (await client.operatingState.findMany({ where: { open: true }, select: { state: true } })).map((r) => r.state),
+        );
+        const year = Number(todayIn(current.timezone, now).slice(0, 4));
+        for (const state of input.operatingStates) {
+          if (currentlyOpen.has(state)) continue;
+          const count = await client.publicHoliday.count({
+            where: { state, date: { gte: new Date(`${String(year)}-01-01T00:00:00.000Z`), lt: new Date(`${String(year + 1)}-01-01T00:00:00.000Z`) } },
+          });
+          if (count < MINIMUM_HOLIDAYS) {
+            res.status(400).json({
+              error: `Can't open ${state} until its public holidays are entered.`,
+              field: "operatingStates",
+              state,
+            });
+            return;
+          }
+        }
       }
 
       // Feature 1020: a WIDENING (earlier opening or later closing) is stamped; narrowing is not.
@@ -335,11 +395,22 @@ export function settingsRoutes(client: PrismaClient): Router {
         include: { gstStatusChangedBy: { select: { id: true, name: true } } },
       });
 
+      if (input.operatingStates !== undefined) {
+        const wanted = new Set(input.operatingStates);
+        for (const row of await client.operatingState.findMany()) {
+          if (row.open === wanted.has(row.state)) continue;
+          await client.operatingState.update({
+            where: { state: row.state },
+            data: { open: wanted.has(row.state), changedAt: now, changedByUserId: owner.id },
+          });
+        }
+      }
+
       // Decision 4: the settings PUT is the primary invalidation path -- the
       // 60-second TTL in identity-cache.ts is only the backstop.
       invalidateIdentityCache();
 
-      res.json({ ...updated, gstRatePercent: updated.gstRatePercent.toString() });
+      res.json({ ...updated, gstRatePercent: updated.gstRatePercent.toString(), operatingStates: await operatingStatesDto(client) });
     })().catch((error: unknown) => {
       console.error("PUT /api/settings failed", error);
       res.status(500).json({ error: "internal error" });

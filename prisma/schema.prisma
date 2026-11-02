@@ -239,6 +239,7 @@ model User {
 
   // audit-pair back-relations (who did the thing)
   gstStatusChanges        PlatformSettings[]           @relation("GstStatusChangedBy")
+  operatingStateChanges   OperatingState[]            @relation("OperatingStateChangedBy")
   cancelledJobs           Job[]                        @relation("JobCancelledBy")
   cancelledAssignments    Assignment[]                 @relation("AssignmentCancelledBy")
   voidedInvoices          Invoice[]                    @relation("InvoiceVoidedBy")
@@ -395,6 +396,23 @@ model PlatformSettings {
   testData String?
 }
 
+/// One row per Australian state: is the business operating there? -- Feature 1021
+/// (Calendar & Scheduling / Operating states). WA open at launch; the owner ticks the others on
+/// Settings, and a state opens only with this year's holidays entered.
+model OperatingState {
+  id              String   @id @default(uuid(7))
+  /// the state code, as Job.serviceLocation.state carries it ("WA", "NSW", ...)
+  state           String   @unique
+  open            Boolean  @default(false)
+  changedAt       DateTime?
+  changedByUserId String?
+
+  changedBy User? @relation("OperatingStateChangedBy", fields: [changedByUserId], references: [id])
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
+}
+
 /// One public holiday of one state -- Feature 1020 (Calendar & Scheduling /
 /// Public holidays). The business is closed that day in that state: nothing is
 /// dispatched or rescheduled, and the forms refuse it as a wanted date.
@@ -536,6 +554,8 @@ model Customer {
 
 model Contractor {
   id                    String           @id @default(uuid(7))
+  /// the state this contractor works in -- office-held (Managing the contractor record). Feature 1021.
+  operatingState        String           @default("WA")
   /// human-readable CON-xxxx; system-generated, sequential
   code                  String           @unique
   userId                String           @unique

@@ -19,6 +19,7 @@ import { contractorLoginRoutes } from './auth/login-routes.js'
 import { settingsRoutes } from './settings/routes.js'
 import { holidayRoutes, publicHolidayRoutes } from './holidays/routes.js'
 import { needsAttentionRoutes } from './holidays/needs-attention.js'
+import { operatingStatesRoutes } from './holidays/operating-states.js'
 import { identityRoutes } from './settings/identity-routes.js'
 import { serviceTypeRoutes } from './service-types/routes.js'
 import { contractorRoutes } from './contractors/routes.js'
@@ -114,6 +115,7 @@ app.use('/api/settings', settingsRoutes(prisma))
 app.use('/api/holidays', holidayRoutes(prisma))
 app.use('/api/public-holidays', publicHolidayRoutes(prisma))
 app.use('/api/needs-attention', needsAttentionRoutes(prisma))
+app.use('/api/operating-states', operatingStatesRoutes(prisma))
 app.use('/api/service-types', serviceTypeRoutes(prisma))
 app.use('/api/contractors', contractorRoutes(prisma, auth))
 app.use('/api/contractor', contractorServiceAreaRoutes(prisma))

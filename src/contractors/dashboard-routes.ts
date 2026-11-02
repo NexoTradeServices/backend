@@ -45,6 +45,8 @@ function readyInputOf(
     servedPostcodeCount: contractor._count.servedPostcodes,
     agreementVersion: contractor.agreementVersion,
     currentAgreementVersion,
+    operatingState: contractor.operatingState,
+    coreLocation: contractor.coreLocation,
   };
 }
 

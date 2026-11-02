@@ -136,6 +136,7 @@ beforeEach(async () => {
 
 describe("AC3-AC5 -- save, reopen, widen the radius, move the pin", () => {
   test("the pin/radius/postcode lifecycle, one contractor throughout", async () => {
+    await db.contractor.updateMany({ where: { code: { in: ["CON-021", "CON-030"] } }, data: { operatingState: "ZZ" } }); // 1021: the pins live in "ZZ"
     const cookie = await signInCookie("mike@idelta.com.au");
 
     // AC3: keep 30km, cross off Gamma (7003) -- served = Alpha + Beta only.
@@ -239,6 +240,7 @@ describe("AC6 -- refused, nothing written", () => {
   });
 
   test("AC6: a postcode neither in range nor already served is refused, nothing written", async () => {
+    await db.contractor.updateMany({ where: { code: "CON-021" }, data: { operatingState: "ZZ" } }); // 1021: the pin lives in "ZZ"
     const cookie = await signInCookie("mike@idelta.com.au");
     const before = await currentState(cookie);
     const res = await request(app)

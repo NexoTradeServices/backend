@@ -8,9 +8,16 @@ import type { PrismaClient } from "../db/client.js";
 /** Fewer holidays than this in a state and year and the list counts as short. */
 export const MINIMUM_HOLIDAYS = 7;
 
-/** The states the business is open in. WA only until 1021 adds operating states. */
-export function openStates(): Promise<string[]> {
-  return Promise.resolve(["WA"]);
+/** The states the business is open in (Feature 1021: the OperatingState rows ticked on Settings). */
+export async function openStates(client: Pick<PrismaClient, "operatingState">): Promise<string[]> {
+  const rows = await client.operatingState.findMany({ where: { open: true }, orderBy: { state: "asc" }, select: { state: true } });
+  return rows.map((row) => row.state);
+}
+
+/** Is the business operating in `state`? Feature 1021. */
+export async function isOpenState(client: Pick<PrismaClient, "operatingState">, state: string): Promise<boolean> {
+  const row = await client.operatingState.findUnique({ where: { state }, select: { open: true } });
+  return row?.open === true;
 }
 
 export interface MissingHolidays {
@@ -29,11 +36,11 @@ export function watchedYears(today: string): number[] {
 }
 
 export async function missingHolidays(
-  client: Pick<PrismaClient, "publicHoliday" | "platformSettings">,
+  client: Pick<PrismaClient, "publicHoliday" | "operatingState">,
   today: string,
 ): Promise<MissingHolidays[]> {
   const found: MissingHolidays[] = [];
-  for (const state of await openStates()) {
+  for (const state of await openStates(client)) {
     for (const year of watchedYears(today)) {
       const count = await client.publicHoliday.count({
         where: { state, date: { gte: new Date(`${String(year)}-01-01T00:00:00.000Z`), lt: new Date(`${String(year + 1)}-01-01T00:00:00.000Z`) } },

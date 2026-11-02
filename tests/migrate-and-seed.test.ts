@@ -253,6 +253,7 @@ describe("AC5 -- the fixture seed mirrors the cast", () => {
       { code: "CON-014", gstRegistered: true },
       { code: "CON-021", gstRegistered: false },
       { code: "CON-030", gstRegistered: null },
+      { code: "CON-037", gstRegistered: true },
     ]);
   });
 
@@ -260,7 +261,7 @@ describe("AC5 -- the fixture seed mirrors the cast", () => {
     await db.contractor.updateMany({ data: { gstRegistered: null } });
     await seedFixtures(db);
     const answers = await db.contractor.findMany({ select: { code: true, gstRegistered: true }, orderBy: { code: "asc" } });
-    expect(answers.map((row) => row.gstRegistered)).toEqual([true, false, null]);
+    expect(answers.map((row) => row.gstRegistered)).toEqual([true, false, null, true]);
   });
 
   test("AC5: Sarah Chen is CUS-1050 in Hilton 6163 and is a GUEST -- no userId", async () => {
@@ -272,7 +273,7 @@ describe("AC5 -- the fixture seed mirrors the cast", () => {
 
   test("AC5: every seeded contractor has a login; the guest customer does not", async () => {
     const contractorUsers = await db.user.findMany({ where: { role: "contractor" } });
-    expect(contractorUsers).toHaveLength(3);
+    expect(contractorUsers).toHaveLength(4); // Bob, Dave, Priya, Liam
     expect(await db.user.count({ where: { role: "customer" } })).toBe(0);
   });
 

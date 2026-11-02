@@ -102,6 +102,7 @@ function validTradeRow(overrides: Record<string, unknown> = {}): Record<string, 
 
 function validBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
+    operatingState: "WA",
     name: "New Contractor",
     email: "newbie@idelta.com.au",
     phone: "0412 345 678",
@@ -146,7 +147,7 @@ describe("AC1 -- the seeded list, ops+owner, Bob refused", () => {
     const res = await request(app).get("/api/contractors").set("Cookie", cookie);
     expect(res.status).toBe(200);
     const rows = res.body as { code: string; status: string; ready: boolean; missing: string[] }[];
-    expect(rows).toHaveLength(3);
+    expect(rows).toHaveLength(4); // Bob, Dave, Priya and (1021) Liam in NSW
 
     for (const row of rows) {
       expect(row.status).toBe("active");
@@ -168,7 +169,7 @@ describe("AC1 -- the seeded list, ops+owner, Bob refused", () => {
     const cookie = await signInCookie("owner@idelta.com.au");
     const res = await request(app).get("/api/contractors").set("Cookie", cookie);
     expect(res.status).toBe(200);
-    expect((res.body as unknown[]).length).toBe(3);
+    expect((res.body as unknown[]).length).toBe(4);
   });
 
   test("AC1: Bob (contractor) gets 403 from every endpoint", async () => {
@@ -772,7 +773,7 @@ describe("6003 AC1 -- GST registration is a three-way answer", () => {
     await db.contractor.update({ where: { code: "CON-021" }, data: { gstRegistered: false } });
     await db.$executeRawUnsafe(statement ?? "");
     const answers = await db.contractor.findMany({ select: { code: true, gstRegistered: true }, orderBy: { code: "asc" } });
-    expect(answers.map((row) => row.gstRegistered)).toEqual([true, null, null]);
+    expect(answers.map((row) => row.gstRegistered)).toEqual([true, null, null, true]); // Bob, Dave, Priya, Liam
   });
 });
 

@@ -8,7 +8,7 @@
 // out_of_reach. Trade-blind, and only active contractors count.
 import type { PrismaClient } from "../db/client.js";
 
-export type CoverageTier = "covered" | "near_miss" | "out_of_reach";
+export type CoverageTier = "state_not_open" | "covered" | "near_miss" | "out_of_reach";
 
 export interface Coverage {
   tier: CoverageTier;
@@ -17,6 +17,12 @@ export interface Coverage {
 }
 
 export interface CoverageInput {
+  /**
+   * Feature 1021: the pick's state. When given and the state is closed the answer is `state_not_open`,
+   * checked first. The ops queue leaves it out: a job already in a closed state is honoured, so its tag
+   * stays the distance tier.
+   */
+  state?: string;
   postcode: string;
   lat: number;
   lng: number;
@@ -30,6 +36,10 @@ interface NearestRow {
 /** The batch form: one answer per input, in the same order, from a fixed number of queries. */
 export async function coverageFor(client: PrismaClient, inputs: CoverageInput[]): Promise<Coverage[]> {
   if (inputs.length === 0) return [];
+  const statesAsked = [...new Set(inputs.flatMap((input) => (input.state === undefined ? [] : [input.state])))];
+  const openStateRows = await client.operatingState.findMany({ where: { state: { in: statesAsked }, open: true }, select: { state: true } });
+  const openSet = new Set(openStateRows.map((row) => row.state));
+  const isClosed = (input: CoverageInput): boolean => input.state !== undefined && !openSet.has(input.state);
   const settings = await client.platformSettings.findFirst({ select: { serviceReachKm: true } });
   const reachKm = settings?.serviceReachKm ?? 25;
 
@@ -41,7 +51,7 @@ export async function coverageFor(client: PrismaClient, inputs: CoverageInput[])
   });
   const servedSet = new Set(served.map((row) => row.postcode));
 
-  const open = inputs.map((input, idx) => ({ ...input, idx })).filter((input) => !servedSet.has(input.postcode));
+  const open = inputs.map((input, idx) => ({ ...input, idx })).filter((input) => !isClosed(input) && !servedSet.has(input.postcode));
   const nearest = new Map<number, number | null>();
   if (open.length > 0) {
     const idxs = open.map((input) => input.idx);
@@ -61,6 +71,7 @@ export async function coverageFor(client: PrismaClient, inputs: CoverageInput[])
   }
 
   return inputs.map((input, idx): Coverage => {
+    if (isClosed(input)) return { tier: "state_not_open", nearestKm: null };
     if (servedSet.has(input.postcode)) return { tier: "covered", nearestKm: null };
     const nearestKm = nearest.get(idx) ?? null;
     if (nearestKm !== null && nearestKm <= reachKm) return { tier: "near_miss", nearestKm };

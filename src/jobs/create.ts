@@ -16,6 +16,7 @@ import { sendNotification } from "../notifications/index.js";
 import { enquiryContactOf } from "./enquiry-contact.js";
 import { WINDOW_LABELS } from "./shared.js";
 import { holidayRefusalForDate } from "../calendar/rules.js";
+import { isOpenState } from "../holidays/missing.js";
 
 export const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export const PREFERRED_WINDOWS: readonly PreferredWindow[] = ["morning", "afternoon", "evening"];
@@ -212,6 +213,15 @@ export async function createJob(
     zone = zoneForState(location.state);
   } catch {
     return { ok: false, error: `no service zone for state "${location.state}"`, field: "location" };
+  }
+
+  // Feature 1021: a closed state stops new work at this door.
+  if (!(await isOpenState(client, location.state))) {
+    return {
+      ok: false,
+      error: source === "web" ? `Sorry, we don't currently operate or service in ${location.state}.` : `${location.state} is not an operating state.`,
+      field: "location",
+    };
   }
 
   const preferredDateValue = new Date(input.preferredDate);
