@@ -16,6 +16,7 @@ import { runInvoiceReminders } from "../invoices/reminders.js";
 import { runPayLinkSwitchOff } from "../invoices/void.js";
 import { runExpiryAlerts } from "../contractors/expiry-alerts.js";
 import { runJobTomorrowReminders } from "../jobs/job-tomorrow.js";
+import { runPublicHolidaysMissing } from "../holidays/missing-step.js";
 import { clockTimeIn, todayIn } from "../time/index.js";
 
 export const DAILY_LOOP_MS = 5 * 60 * 1000;
@@ -67,6 +68,13 @@ export const DAILY_STEPS: DailyStep[] = [
     async run({ client, zone, now, today, label }) {
       const made = await runJobTomorrowReminders(client, { zone, now, today, runAt: DAILY_RUN_AT, onlyLabel: label });
       if (made.visits > 0) console.log(`daily: job-tomorrow reminders -- ${String(made.visits)} visits`);
+    },
+  },
+  {
+    name: "public holidays missing",
+    async run({ client, today, label }) {
+      const made = await runPublicHolidaysMissing(client, { today, onlyLabel: label });
+      if (made.sent > 0) console.log(`daily: public holidays missing -- ${String(made.sent)} emailed`);
     },
   },
 ];

@@ -11,6 +11,7 @@
 // Fixed clock: the step is called directly with a business day (`today`). No test reaches Mailjet; the email adapter records.
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { resetReferenceSequences, testClient, truncateAll } from "./helpers/database.js";
+import { seedWaHolidays } from "./helpers/holidays.js";
 import { recordingAdapter, setProviders } from "./helpers/notifications.js";
 import { seedBase } from "../src/db/seed/base.js";
 import { seedFixtures } from "../src/db/seed/fixtures.js";
@@ -47,6 +48,7 @@ beforeEach(async () => {
   await truncateAll(db);
   await resetReferenceSequences(db);
   await seedBase(db);
+  await seedWaHolidays(db); // 1020: keeps the "public holidays missing" step quiet
   await seedFixtures(db);
   await seedAuthFixtures(db);
   await setProviders(db, { emailProvider: email.name, providerOverrides: null });
@@ -83,7 +85,7 @@ describe("the step arithmetic", () => {
   });
 
   test("the morning run carries the step, after the two invoice steps (7004 appends its own after it)", () => {
-    expect(DAILY_STEPS.map((step) => step.name)).toEqual(["invoice reminders", "pay-link switch-off", "licence and insurance alerts", "job-tomorrow reminders"]);
+    expect(DAILY_STEPS.map((step) => step.name)).toEqual(["invoice reminders", "pay-link switch-off", "licence and insurance alerts", "job-tomorrow reminders", "public holidays missing"]);
   });
 });
 

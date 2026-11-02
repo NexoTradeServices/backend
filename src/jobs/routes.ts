@@ -575,7 +575,8 @@ export function jobRoutes(client: PrismaClient): Router {
         res.status(404).json({ error: "not found" });
         return;
       }
-      const facts = dispatchFactsOf(job);
+      const hours = await client.platformSettings.findFirstOrThrow({ select: { openingTime: true, closingTime: true } });
+      const facts = { ...dispatchFactsOf(job), openingTime: hours.openingTime, closingTime: hours.closingTime };
       if (req.query["mode"] !== "reschedule") {
         res.json(facts);
         return;

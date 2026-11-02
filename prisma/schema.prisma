@@ -361,6 +361,13 @@ model PlatformSettings {
   /// stamped onto each new Job -- see Data Model / Time. Backfilled onto the
   /// existing row by this column's own migration (Feature 1008).
   timezone                  String      @default("Australia/Perth")
+  /// the business opens / closes at these clock times, "HH:MM" on the half hour,
+  /// the same every day (Calendar & Scheduling / Opening hours). Feature 1020.
+  openingTime               String      @default("07:00")
+  closingTime               String      @default("19:00")
+  /// stamped when a save WIDENS the hours (earlier opening or later closing);
+  /// feature 2004 reads it for the contractor's one-time message. Feature 1020.
+  openingHoursChangedAt     DateTime?
   /// the brand's display name -- screens, email sender name, template
   /// signatures all read THIS, never a literal (Foundations / Brand
   /// identity; ADR 0005). Backfilled onto the existing row by this column's
@@ -386,6 +393,23 @@ model PlatformSettings {
 
   /// Test-data label (design: Data Model, Test data). Empty on every real record.
   testData String?
+}
+
+/// One public holiday of one state -- Feature 1020 (Calendar & Scheduling /
+/// Public holidays). The business is closed that day in that state: nothing is
+/// dispatched or rescheduled, and the forms refuse it as a wanted date.
+model PublicHoliday {
+  id    String   @id @default(uuid(7))
+  /// the state code, as Job.serviceLocation.state carries it ("WA", "NSW", ...)
+  state String
+  /// the calendar day, plain date (no time, no zone)
+  date  DateTime @db.Date
+  name  String
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
+
+  @@unique([state, date])
 }
 
 /// One published contractor agreement -- Feature 2006. A never-changed file;

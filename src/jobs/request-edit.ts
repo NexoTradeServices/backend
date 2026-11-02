@@ -9,6 +9,7 @@
 import type { PrismaClient } from "../db/client.js";
 import { Prisma } from "../generated/prisma/client.js";
 import type { PreferredWindow } from "../generated/prisma/enums.js";
+import { holidayRefusalForDate, stateOfLocation } from "../calendar/rules.js";
 import { zoneForState } from "../time/index.js";
 import {
   PREFERRED_WINDOWS,
@@ -112,6 +113,15 @@ export async function editRequest(client: PrismaClient, reference: string, input
     const zone = typeof data.timezone === "string" ? data.timezone : job.timezone;
     if (input.preferredDate.toISOString().slice(0, 10) < todayIn(zone)) {
       return { ok: false, status: 400, error: "preferredDate must not be before today", field: "preferredDate" };
+    }
+    // Feature 1020: not on a public holiday of the job's state (the new suburb's, when it changes too).
+    const state =
+      input.location !== undefined && data.serviceLocation !== undefined
+        ? stateOfLocation(data.serviceLocation)
+        : stateOfLocation(job.serviceLocation);
+    if (state !== null) {
+      const closed = await holidayRefusalForDate(client, state, input.preferredDate.toISOString().slice(0, 10));
+      if (closed !== null) return { ok: false, status: 400, error: closed, field: "preferredDate" };
     }
     data.preferredDate = input.preferredDate;
   }

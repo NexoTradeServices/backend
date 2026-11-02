@@ -17,6 +17,8 @@ import { attachSession } from './auth/middleware.js'
 import { authRoutes } from './auth/routes.js'
 import { contractorLoginRoutes } from './auth/login-routes.js'
 import { settingsRoutes } from './settings/routes.js'
+import { holidayRoutes, publicHolidayRoutes } from './holidays/routes.js'
+import { needsAttentionRoutes } from './holidays/needs-attention.js'
 import { identityRoutes } from './settings/identity-routes.js'
 import { serviceTypeRoutes } from './service-types/routes.js'
 import { contractorRoutes } from './contractors/routes.js'
@@ -109,6 +111,9 @@ app.use(express.json())
 // Feature 9002: the sweep route exists only outside production -- absent there.
 mountTestDataRoutes(app, prisma)
 app.use('/api/settings', settingsRoutes(prisma))
+app.use('/api/holidays', holidayRoutes(prisma))
+app.use('/api/public-holidays', publicHolidayRoutes(prisma))
+app.use('/api/needs-attention', needsAttentionRoutes(prisma))
 app.use('/api/service-types', serviceTypeRoutes(prisma))
 app.use('/api/contractors', contractorRoutes(prisma, auth))
 app.use('/api/contractor', contractorServiceAreaRoutes(prisma))

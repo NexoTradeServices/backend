@@ -19,6 +19,7 @@ import { findProvider } from "../notifications/providers/registry.js";
 import { invalidateIdentityCache } from "./identity-cache.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { parseStreetAddress } from "./address.js";
+import { isHalfHourClock, minutesOf } from "../calendar/rules.js";
 
 const DISPLAY_NAME_MAX_LENGTH = 80;
 
@@ -45,6 +46,9 @@ interface SettingsInput {
   displayName: string;
   approvedPublicDomain: string | null;
   timezone: string;
+  /** Feature 1020: left out of a save = unchanged. */
+  openingTime?: string;
+  closingTime?: string;
   payoutCycle: PayoutCycle;
   payoutDay: PayoutDay | null;
   emailProvider: string;
@@ -183,6 +187,23 @@ function parseSettingsInput(body: unknown): ParseResult {
     return { ok: false, error: "timezone must be a valid IANA timezone name", field: "timezone" };
   }
 
+  // Feature 1020: opening hours, half-hour steps, closing after opening. Both or neither.
+  let openingTime: string | undefined;
+  let closingTime: string | undefined;
+  if (b["openingTime"] !== undefined || b["closingTime"] !== undefined) {
+    if (!isHalfHourClock(b["openingTime"])) {
+      return { ok: false, error: "openingTime must be a time on the half hour, like 07:00", field: "openingTime" };
+    }
+    if (!isHalfHourClock(b["closingTime"])) {
+      return { ok: false, error: "closingTime must be a time on the half hour, like 19:00", field: "closingTime" };
+    }
+    if (minutesOf(b["closingTime"]) <= minutesOf(b["openingTime"])) {
+      return { ok: false, error: "Closing time must be after opening time.", field: "closingTime" };
+    }
+    openingTime = b["openingTime"];
+    closingTime = b["closingTime"];
+  }
+
   const payoutCycle = b["payoutCycle"];
   if (typeof payoutCycle !== "string" || !Object.values(PayoutCycle).includes(payoutCycle as PayoutCycle)) {
     return { ok: false, error: "payoutCycle must be one of weekly, fortnightly", field: "payoutCycle" };
@@ -222,6 +243,7 @@ function parseSettingsInput(body: unknown): ParseResult {
       displayName,
       approvedPublicDomain,
       timezone,
+      ...(openingTime === undefined || closingTime === undefined ? {} : { openingTime, closingTime }),
       payoutCycle: payoutCycle as PayoutCycle,
       payoutDay: (payoutDay ?? null) as PayoutDay | null,
       emailProvider,
@@ -272,6 +294,13 @@ export function settingsRoutes(client: PrismaClient): Router {
         return;
       }
 
+      // Feature 1020: a WIDENING (earlier opening or later closing) is stamped; narrowing is not.
+      const widened =
+        input.openingTime !== undefined &&
+        input.closingTime !== undefined &&
+        (minutesOf(input.openingTime) < minutesOf(current.openingTime) ||
+          minutesOf(input.closingTime) > minutesOf(current.closingTime));
+
       const updated = await client.platformSettings.update({
         where: { id: current.id },
         data: {
@@ -291,6 +320,10 @@ export function settingsRoutes(client: PrismaClient): Router {
           displayName: input.displayName,
           approvedPublicDomain: input.approvedPublicDomain,
           timezone: input.timezone,
+          ...(input.openingTime === undefined || input.closingTime === undefined
+            ? {}
+            : { openingTime: input.openingTime, closingTime: input.closingTime }),
+          ...(widened ? { openingHoursChangedAt: new Date() } : {}),
           payoutCycle: input.payoutCycle,
           payoutDay: input.payoutDay,
           emailProvider: input.emailProvider,

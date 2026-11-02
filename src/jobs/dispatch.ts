@@ -15,6 +15,7 @@ import { currentAgreementLabel } from "../agreements/current.js";
 import { loadCandidates, guardReason, readyInputOf, type CandidatesResult } from "./candidates.js";
 import { siteContactLine } from "./site-contact.js";
 import { cancelBooking } from "./booking.js";
+import { slotRefusal } from "../calendar/rules.js";
 import { asAddress, suburbOf, effectiveAddress, NO_ADDRESS_REASON, type Address } from "./shared.js";
 
 const WINDOW_START_MINUTES: Record<string, number> = { morning: 420, afternoon: 720, evening: 1020 };
@@ -246,6 +247,13 @@ export async function dispatchJob(
       const { start, end } = slotInstants(job.timezone, slot);
       if (start.getTime() < now.getTime()) {
         throw new Refused({ ok: false, status: 400, error: "A slot in the past cannot be dispatched.", field: "startMinutes" });
+      }
+
+      // Feature 1020: a holiday in the job's state, or a slot outside opening hours, is refused --
+      // an emergency included.
+      const refusal = await slotRefusal(tx, job, slot);
+      if (refusal !== null) {
+        throw new Refused({ ok: false, status: 400, error: refusal, field: "startMinutes" });
       }
 
       // Lock the Job row (must still be `new`) -- 4001's pattern.
