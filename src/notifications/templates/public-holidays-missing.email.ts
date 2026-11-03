@@ -15,7 +15,7 @@ export const publicHolidaysMissingEmail: NotificationTemplate = {
     const first = incomplete
       ? "{{year}} public holidays look incomplete for {{state}}."
       : "{{year}} public holidays are missing for {{state}}.";
-    const second = "Jobs can be booked on those days until they are added.";
+    const second = "Until they are added, jobs can still be booked on public holidays.";
     const third = "The owner adds them on Settings.";
     const url = context["buttonUrl"];
     const button = typeof url === "string" && url.trim() !== "";
