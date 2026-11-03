@@ -90,7 +90,7 @@ describe("AC6 -- holidays on dispatch and reschedule", () => {
     for (const emergency of [false, true]) {
       const res = await dispatch(mike, job.reference, slot({ emergency }));
       expect(res.status).toBe(400);
-      expect((res.body as { error: string }).error).toBe("Closed for Christmas Day. Pick another time.");
+      expect((res.body as { error: string }).error).toBe("Closed for Christmas Day. Pick another day.");
     }
     expect(await db.assignment.count({ where: { jobId: job.id } })).toBe(0);
     await db.publicHoliday.deleteMany({});
@@ -104,7 +104,7 @@ describe("AC6 -- holidays on dispatch and reschedule", () => {
     await db.publicHoliday.create({ data: { state: "WA", date: new Date(`${MONDAY}T00:00:00.000Z`), name: "Christmas Day" } });
     const res = await request(app).post("/api/jobs/JOB-1042/reschedule").set("Cookie", mike).send({ date: MONDAY, startMinutes: 420, holdMinutes: 60, emergency: false });
     expect(res.status).toBe(400);
-    expect((res.body as { error: string }).error).toBe("Closed for Christmas Day. Pick another time.");
+    expect((res.body as { error: string }).error).toBe("Closed for Christmas Day. Pick another day.");
   });
 });
 

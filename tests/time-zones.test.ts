@@ -238,7 +238,7 @@ describe("AC8, AC9 -- dispatch for a Sydney job", () => {
     const sydney = await makeSydneyJob("2027-06-14");
     const refused = await dispatch(mike, sydney.reference, { date: "2027-06-14" });
     expect(refused.status).toBe(400);
-    expect(refused.body).toMatchObject({ error: "Closed for King's Birthday. Pick another time." });
+    expect(refused.body).toMatchObject({ error: "Closed for King's Birthday. Pick another day." });
     // the same day for a Perth job is an ordinary working Monday
     const perth = await makeNewJob(db);
     const waDispatch = await request(app).post(`/api/jobs/${perth.reference}/dispatch`).set("Cookie", mike).send({ contractorCode: "CON-014", date: "2027-06-14", startMinutes: 480, holdMinutes: 60, emergency: false });

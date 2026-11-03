@@ -52,9 +52,9 @@ export async function holidayOn(
   });
 }
 
-/** "Closed for Christmas Day. Pick another time." -- the dispatch and reschedule words. */
+/** "Closed for Christmas Day. Pick another day." -- the dispatch and reschedule words. */
 export function holidaySlotWords(name: string): string {
-  return `Closed for ${name}. Pick another time.`;
+  return `Closed for ${name}. Pick another day.`;
 }
 
 /** "We're closed on Christmas Day. Please pick another date." -- the wanted-date words. */
