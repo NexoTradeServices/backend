@@ -115,6 +115,21 @@ describe("AC8 -- a holiday on a booked day", () => {
   });
 });
 
+describe("1020 -- past years are cleaned up, never added to", () => {
+  test("adding to a past year is refused; removing one row of it works; the current year still takes an add", async () => {
+    const owner = await signIn(app, "owner@idelta.com.au");
+    const past = thisYear() - 1;
+    const refused = await request(app).post("/api/holidays").set("Cookie", owner).send({ state: "NSW", date: `${String(past)}-03-01`, name: "Too late" });
+    expect(refused.status).toBe(409);
+    expect(refused.body).toMatchObject({ error: "Past years can't be added to.", field: "date" });
+    expect(await db.publicHoliday.count({ where: { state: "NSW" } })).toBe(0);
+    const old = await db.publicHoliday.create({ data: { state: "NSW", date: new Date(`${String(past)}-03-01`), name: "Old row" } });
+    expect((await request(app).delete(`/api/holidays/${old.id}`).set("Cookie", owner)).status).toBe(204);
+    const now = await request(app).post("/api/holidays").set("Cookie", owner).send({ state: "NSW", date: `${String(thisYear())}-12-30`, name: "This year" });
+    expect(now.status).toBe(201);
+  });
+});
+
 describe("AC9 -- Remove all", () => {
   test("AC9: a finished year goes in one call, other years and states stay; this year and next are refused", async () => {
     const owner = await signIn(app, "owner@idelta.com.au");

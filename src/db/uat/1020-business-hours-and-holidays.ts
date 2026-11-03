@@ -35,18 +35,35 @@ export async function restoreCast(client: PrismaClient): Promise<void> {
       OR: [
         { state: { not: "WA" } },
         { state: "WA", date: { gte: new Date("2028-01-01T00:00:00.000Z"), lt: new Date("2029-01-01T00:00:00.000Z") } },
+        { state: "WA", date: { lt: new Date(`${thisYear()}-01-01T00:00:00.000Z`) } },
       ],
     },
   });
 }
 
+function thisYear(): string {
+  return todayIn(ZONE).slice(0, 4);
+}
+
+/** A past year with one row in it, so the owner can try Remove all (a past year cannot be added to). */
+async function ensurePastYearRow(client: PrismaClient): Promise<void> {
+  const date = new Date(`${String(Number(thisYear()) - 1)}-01-01T00:00:00.000Z`);
+  await client.publicHoliday.upsert({
+    where: { state_date: { state: "WA", date } },
+    update: {},
+    create: { state: "WA", date, name: "New Year's Day" },
+  });
+}
+
 export async function make(client: PrismaClient): Promise<string[]> {
   await restoreCast(client);
+  await ensurePastYearRow(client);
   return makeRecords(client, new Set(KEYS));
 }
 
 /** Top up, never wipe: remake a job that is gone, or a booked one that was cancelled or moved. */
 export async function topUp(client: PrismaClient): Promise<string[]> {
+  await ensurePastYearRow(client);
   const need = new Set<Key>();
   for (const key of KEYS) {
     const job = await client.job.findFirst({ where: { testData: LABEL, description: { contains: markerOf(key) } }, orderBy: { createdAt: "desc" } });

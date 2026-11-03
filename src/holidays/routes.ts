@@ -107,6 +107,11 @@ export function holidayRoutes(client: PrismaClient): Router {
         return;
       }
       const day = isoDay(date);
+      const settings = await client.platformSettings.findFirstOrThrow({ select: { timezone: true } });
+      if (Number(day.slice(0, 4)) < Number(todayIn(settings.timezone).slice(0, 4))) {
+        res.status(409).json({ error: "Past years can't be added to.", field: "date" });
+        return;
+      }
       const existing = await client.publicHoliday.findUnique({ where: { state_date: { state, date } }, select: { id: true } });
       if (existing !== null) {
         res.status(409).json({ error: `${state} already has a holiday on that date.`, field: "date" });
