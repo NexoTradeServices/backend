@@ -21,16 +21,24 @@ export async function needsAttention(client: PrismaClient, role: Role, onDay?: s
   const settings = await client.platformSettings.findFirstOrThrow({ select: { timezone: true } });
   const today = onDay ?? todayIn(settings.timezone);
   const items: NeedsAttentionItem[] = [];
+  // One line per state: years of the same state with the same kind of gap read as one ("NSW 2026 and 2027").
+  const groups: { state: string; none: boolean; years: number[] }[] = [];
   for (const gap of await missingHolidays(client, today)) {
-    const text = gap.none
-      ? `No holidays entered for ${gap.state} ${String(gap.year)}.`
-      : `${gap.state} ${String(gap.year)} has fewer than ${String(MINIMUM_HOLIDAYS)} holidays.`;
+    const group = groups.find((g) => g.state === gap.state && g.none === gap.none);
+    if (group) group.years.push(gap.year);
+    else groups.push({ state: gap.state, none: gap.none, years: [gap.year] });
+  }
+  for (const group of groups) {
+    const years = group.years.map(String).join(" and ");
+    const text = group.none
+      ? `No holidays entered for ${group.state} ${years}.`
+      : `${group.state} ${years} ${group.years.length > 1 ? "have" : "has"} fewer than ${String(MINIMUM_HOLIDAYS)} holidays.`;
     items.push({
-      key: `holidays:${gap.state}:${String(gap.year)}`,
+      key: `holidays:${group.state}:${group.years.map(String).join("-")}`,
       text: role === Role.owner ? text : `${text} ${CONTACT_ADMIN_WORDS}`,
       action:
         role === Role.owner
-          ? { label: "Add holidays", href: `/ops/settings/holidays?holidayState=${gap.state}&holidayYear=${String(gap.year)}` }
+          ? { label: "Add holidays", href: `/ops/settings/holidays?holidayState=${group.state}&holidayYear=${String(group.years[0])}` }
           : null,
     });
   }

@@ -104,6 +104,17 @@ describe("AC11 -- the morning run", () => {
 });
 
 describe("AC12 -- the Needs attention list", () => {
+  test("two years of one state with the same gap read as one line", async () => {
+    const lines = await needsAttention(db, "owner", "2027-10-04");
+    expect(lines.map((l) => l.text)).toEqual(["No holidays entered for WA 2027 and 2028."]);
+    expect(lines[0]?.action?.href).toContain("holidayYear=2027");
+    await enter("WA", 2027, 3);
+    await enter("WA", 2028, 3);
+    expect((await needsAttention(db, "ops", "2027-10-04")).map((l) => l.text)).toEqual([
+      "WA 2027 and 2028 have fewer than 7 holidays. Contact platform administrator.",
+    ]);
+  });
+
   test("AC12: owner sees an Add holidays link; Mike's line ends 'Contact platform administrator.'; it goes at the seventh holiday and returns if the count falls", async () => {
     const today = "2027-03-10";
     const owner = (await needsAttention(db, "owner", today))[0];
