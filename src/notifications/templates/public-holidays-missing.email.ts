@@ -15,15 +15,16 @@ export const publicHolidaysMissingEmail: NotificationTemplate = {
     const first = incomplete
       ? "{{year}} public holidays look incomplete for {{state}}."
       : "{{year}} public holidays are missing for {{state}}.";
-    const second = "Until they are added, jobs can still be booked on public holidays.";
-    const third = "The owner adds them on Settings.";
+    const second = incomplete
+      ? "Please ask the platform administrator to add the missing ones, so jobs can't be booked on those days."
+      : "Please ask the platform administrator to add them, so jobs can't be booked on those days.";
     const url = context["buttonUrl"];
     const button = typeof url === "string" && url.trim() !== "";
     return {
       subject: fill(subject, context),
-      text: fill(`${first} ${second}\n\n${third}${button ? "\n\nOpen Settings: {{buttonUrl}}" : ""}\n\n-- {{platformName}}`, context),
+      text: fill(`${first} ${second}${button ? "\n\nOpen Settings: {{buttonUrl}}" : ""}\n\n-- {{platformName}}`, context),
       html: fillHtml(
-        `<p>${first} ${second}</p>\n<p>${third}</p>${button ? '\n<p><a href="{{buttonUrl}}">Open Settings</a></p>' : ""}\n<p>-- {{platformName}}</p>`,
+        `<p>${first} ${second}</p>${button ? '\n<p><a href="{{buttonUrl}}">Open Settings</a></p>' : ""}\n<p>-- {{platformName}}</p>`,
         context,
       ),
     };

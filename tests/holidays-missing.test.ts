@@ -69,8 +69,9 @@ describe("AC11 -- the morning run", () => {
     await runPublicHolidaysMissing(db, { today: "2027-12-01" });
     await drainOnce(db);
     expect(email.sent).toHaveLength(1);
-    expect(email.sent[0]?.message.text).toContain("2028 public holidays are missing for WA. Until they are added, jobs can still be booked on public holidays.");
-    expect(email.sent[0]?.message.text).toContain("The owner adds them on Settings.");
+    expect(email.sent[0]?.message.text).toContain(
+      "2028 public holidays are missing for WA. Please ask the platform administrator to add them, so jobs can't be booked on those days.",
+    );
   });
 
   test("AC11: 1 to 6 entered counts as short and uses the 'look incomplete' wording; 7 entered sends nothing", async () => {
