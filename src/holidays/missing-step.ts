@@ -49,7 +49,7 @@ export async function runPublicHolidaysMissing(
             state: gap.state,
             year: String(gap.year),
             short: !gap.none && gap.count < MINIMUM_HOLIDAYS,
-            ...(webOrigin ? { buttonUrl: `${webOrigin}/ops/settings#public-holidays` } : {}),
+            ...(webOrigin ? { buttonUrl: `${webOrigin}/ops/settings/holidays` } : {}),
           },
         },
         client,

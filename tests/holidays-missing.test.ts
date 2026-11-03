@@ -109,7 +109,7 @@ describe("AC12 -- the Needs attention list", () => {
     const owner = (await needsAttention(db, "owner", today))[0];
     expect(owner?.text).toBe("No holidays entered for WA 2027.");
     expect(owner?.action?.label).toBe("Add holidays");
-    expect(owner?.action?.href).toContain("#public-holidays");
+    expect(owner?.action?.href).toContain("/ops/settings/holidays");
     const ops = (await needsAttention(db, "ops", today))[0];
     expect(ops?.text).toBe("No holidays entered for WA 2027. Contact platform administrator.");
     expect(ops?.action).toBeNull();

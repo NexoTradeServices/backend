@@ -30,7 +30,7 @@ export async function needsAttention(client: PrismaClient, role: Role, onDay?: s
       text: role === Role.owner ? text : `${text} ${CONTACT_ADMIN_WORDS}`,
       action:
         role === Role.owner
-          ? { label: "Add holidays", href: `/ops/settings?holidayState=${gap.state}&holidayYear=${String(gap.year)}#public-holidays` }
+          ? { label: "Add holidays", href: `/ops/settings/holidays?holidayState=${gap.state}&holidayYear=${String(gap.year)}` }
           : null,
     });
   }
