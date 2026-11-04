@@ -111,6 +111,8 @@ export interface JobDetail {
   source: "web" | "phone";
   trade: string;
   suburb: string;
+  /** Feature 1021: the state the job is in, so the edit card knows its own state */
+  state: string | null;
   postcode: string;
   wantedDate: string;
   windowLabel: string;
@@ -329,6 +331,7 @@ export async function jobDetail(
     source: job.source,
     trade: job.serviceType.trade,
     suburb: suburbOf(job.serviceLocation),
+    state: stateOfLocation(job.serviceLocation),
     postcode: job.postcode,
     wantedDate: formatPlainDate(job.preferredDate),
     windowLabel: WINDOW_LABELS[job.preferredWindow],

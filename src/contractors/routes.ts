@@ -545,6 +545,12 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
         return;
       }
 
+      // Feature 1021: the address cannot sit in another state than the Operating state.
+      if (data.address !== null && data.address.state !== data.operatingState) {
+        res.status(400).json({ error: `The address must be in ${data.operatingState} or change the Operating state first.`, field: "address" });
+        return;
+      }
+
       const existingUser = await client.user.findUnique({ where: { email: data.email } });
       if (existingUser) {
         res.status(400).json({ error: "This email already has a login", field: "email" });
@@ -644,6 +650,16 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
         !(await isOpenState(client, data.operatingState))
       ) {
         res.status(400).json({ error: `${data.operatingState} is not an operating state.`, field: "operatingState" });
+        return;
+      }
+
+      // Feature 1021: a newly picked address cannot sit in another state than the Operating state; an address
+      // already on file stays, so a contractor who is moved to a new state can be saved before the address is.
+      const stateAfter = data.operatingState ?? existing.operatingState;
+      const onFile = existing.address as { placeId?: string; street?: string } | null;
+      const addressPicked = data.address !== null && (onFile === null || onFile.placeId !== data.address.placeId || onFile.street !== data.address.street);
+      if (data.address !== null && addressPicked && data.address.state !== stateAfter) {
+        res.status(400).json({ error: `The address must be in ${stateAfter} or change the Operating state first.`, field: "address" });
         return;
       }
 

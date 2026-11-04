@@ -121,7 +121,7 @@ describe("AC2 -- a state opens only with its holidays in", () => {
     const owner = await signIn(app, "owner@idelta.com.au");
     const res = await put(owner, { operatingStates: ["WA", "NSW", "VIC"], displayName: "Changed Name" });
     expect(res.status).toBe(400);
-    expect(res.body).toMatchObject({ error: "Can't open VIC until its public holidays are entered.", field: "operatingStates", state: "VIC" });
+    expect(res.body).toMatchObject({ error: "Can't open VIC yet. Add its public holidays first.", field: "operatingStates", state: "VIC" });
     expect((await db.operatingState.findUniqueOrThrow({ where: { state: "VIC" } })).open).toBe(false);
     expect((await db.platformSettings.findFirstOrThrow()).displayName).toBe("Perth Trades & Services");
   });
@@ -278,7 +278,7 @@ describe("AC9, AC10 -- the service area stays inside the state", () => {
     expect(refused.body).toMatchObject({ error: "Your service area must be in NSW. Contact the office.", field: "coreLocation" });
     const mike = await signIn(app, "mike@idelta.com.au");
     const byMike = await request(app).put("/api/contractors/CON-037/service-area").set("Cookie", mike).send({ coreLocation: waPin, radiusKm: 30, postcodes: ["2042"] });
-    expect(byMike.body).toMatchObject({ error: "Liam's service area must be in NSW. Change Liam's Operating state first.", field: "coreLocation" });
+    expect(byMike.body).toMatchObject({ error: "Liam's service area must be in NSW or change Liam's Operating state first.", field: "coreLocation" });
     const after = await db.contractor.findUniqueOrThrow({ where: { code: "CON-037" }, include: { servedPostcodes: true } });
     expect(after.coreLocation).toMatchObject({ suburb: "Newtown", state: "NSW" });
     expect(after.servedPostcodes.map((p) => p.postcode)).toEqual(["2042"]);

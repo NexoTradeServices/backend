@@ -345,7 +345,7 @@ export function settingsRoutes(client: PrismaClient): Router {
           });
           if (count < MINIMUM_HOLIDAYS) {
             res.status(400).json({
-              error: `Can't open ${state} until its public holidays are entered.`,
+              error: `Can't open ${state} yet. Add its public holidays first.`,
               field: "operatingStates",
               state,
             });

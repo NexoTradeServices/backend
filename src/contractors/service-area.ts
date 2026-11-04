@@ -163,7 +163,7 @@ export async function saveServiceArea(
       error:
         by.caller === "contractor"
           ? `Your service area must be in ${by.operatingState}. Contact the office.`
-          : `${by.firstName}'s service area must be in ${by.operatingState}. Change ${by.firstName}'s Operating state first.`,
+          : `${by.firstName}'s service area must be in ${by.operatingState} or change ${by.firstName}'s Operating state first.`,
       field: "coreLocation",
     };
   }

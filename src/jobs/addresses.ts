@@ -16,6 +16,8 @@
 // so no job already out ever moves (4001-V8, review finding RVW1.1).
 import type { PrismaClient } from "../db/client.js";
 import { Prisma } from "../generated/prisma/client.js";
+import { stateOfLocation } from "../calendar/rules.js";
+import { isOpenState } from "../holidays/missing.js";
 import { ABN_ERROR, isValidAbn } from "../invoices/abn.js";
 import { asAddress, sameAddress, suburbOf, type Address } from "./shared.js";
 import {
@@ -196,6 +198,15 @@ export async function saveAddresses(
           ok: false,
           status: 409,
           error: "The job site is locked once the job is dispatched.",
+          field: "siteAddress",
+        });
+      }
+      // Feature 1021: the job site moves the job, so it cannot move to a closed state (its own state may stay).
+      if (siteChanges && siteAfter !== null && siteAfter.state !== stateOfLocation(job.serviceLocation) && !(await isOpenState(client, siteAfter.state))) {
+        throw new Refused({
+          ok: false,
+          status: 400,
+          error: `${siteAfter.state} is not an operating state.`,
           field: "siteAddress",
         });
       }
