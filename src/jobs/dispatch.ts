@@ -171,7 +171,7 @@ export async function candidatesAndPriceFor(
   const base: TierRates = { calloutRate: job.customerCalloutRate, standardRate: job.customerStandardRate };
   const price = priceFor(base, multipliers, level);
   const candidates = await loadCandidates(client, {
-    job: { trade: job.serviceType.trade, postcode: job.postcode, lat: location.lat, lng: location.lng },
+    job: { trade: job.serviceType.trade, postcode: job.postcode, lat: location.lat, lng: location.lng, state: stateOfLocation(job.serviceLocation) },
     zone: job.timezone,
     date: slot.date,
     holdStart: start,

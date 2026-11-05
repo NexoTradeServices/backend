@@ -21,6 +21,8 @@ export interface DispatchJob {
   postcode: string;
   lat: number;
   lng: number;
+  /** Feature 1021: the state the job is in; contractors of another Operating state are not candidates. */
+  state?: string | null;
 }
 
 export interface Rating {
@@ -254,6 +256,8 @@ export async function loadCandidates(client: PrismaClient, input: CandidatesInpu
   for (const contractor of contractors) {
     const specialty = contractor.specialties.find((s) => s.trade === input.job.trade);
     if (!specialty) continue; // not a candidate at all
+    // Feature 1021: a contractor works in their own Operating state only; a job in another state never lists them.
+    if (input.job.state && contractor.operatingState !== input.job.state) continue;
 
     const guarded = guardReason(
       readyInputOf({ ...contractor, servedPostcodeCount: contractor.servedPostcodes.length }, agreementLabel),
