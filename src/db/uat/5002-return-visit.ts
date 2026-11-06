@@ -53,21 +53,41 @@ export async function make(client: PrismaClient): Promise<string[]> {
   return lines;
 }
 
-/** JOB-1042: in progress with Bob, his visit begun this morning, nothing typed on the screen (AC1 to AC6). */
+/** JOB-1042: Bob's visit is today, On my way already sent (no message goes out), I've arrived still to press, nothing typed (AC1 to AC6). */
 async function setUpJob1042(client: PrismaClient): Promise<string[]> {
-  const job = await client.job.findUniqueOrThrow({ where: { reference: "JOB-1042" } });
+  const job = await client.job.findUniqueOrThrow({ where: { reference: "JOB-1042" }, include: { customer: true } });
   const assignment = await client.assignment.findFirstOrThrow({ where: { jobId: job.id }, orderBy: { dispatchedAt: "desc" } });
-  const began = todayAt(PERTH, 8, 0, new Date());
+  const start = todayAt(PERTH, 8, 0, new Date());
+  await client.returnReason.deleteMany({ where: { jobId: job.id } });
+  await client.assignmentTimeLog.deleteMany({ where: { assignmentId: assignment.id } });
   await client.calendarEvent.deleteMany({ where: { assignmentId: assignment.id } });
+  await client.notification.deleteMany({ where: { type: "on_my_way", relatedId: assignment.id } });
   await client.assignment.update({
     where: { id: assignment.id },
-    data: { status: "in_progress", proposedSlot: began, confirmedSlot: began, acceptedAt: new Date(Date.now() - 24 * 3_600_000) },
+    data: { status: "accepted", proposedSlot: start, confirmedSlot: start, acceptedAt: new Date(Date.now() - 24 * 3_600_000), completionNotes: null },
   });
-  await client.job.update({ where: { id: job.id }, data: { status: "in_progress", serviceLevel: "normal" } });
-  await client.calendarEvent.create({
-    data: { contractorId: assignment.contractorId, type: "job", jobId: job.id, assignmentId: assignment.id, startTime: began, endTime: new Date(began.getTime() + 3_600_000) },
+  await client.job.update({ where: { id: job.id }, data: { status: "scheduled", serviceLevel: "normal" } });
+  const block = await client.calendarEvent.create({
+    data: { contractorId: assignment.contractorId, type: "job", jobId: job.id, assignmentId: assignment.id, startTime: start, endTime: new Date(start.getTime() + 3_600_000) },
   });
-  return ["JOB-1042 - Sarah's mixer tap, in progress with Bob, no time entered today (AC1 to AC6)"];
+  // "On my way" already sent: the row the screen reads (the customer's email for this visit). Written straight in -- nothing is sent.
+  await client.notification.create({
+    data: {
+      type: "on_my_way",
+      channel: "email",
+      category: "transactional",
+      recipientType: "customer",
+      recipientId: job.customer.id,
+      relatedType: "assignment",
+      relatedId: assignment.id,
+      jobId: job.id,
+      status: "sent",
+      sentAt: new Date(),
+      idempotencyKey: `on_my_way:assignment:${assignment.id}:${block.id}:customer:email`,
+      testData: LABEL,
+    },
+  });
+  return ["JOB-1042 - Sarah's mixer tap, booked with Bob today, On my way already sent, I've arrived still to press, no time entered (AC1 to AC6)"];
 }
 
 /** Top up: remake a record that is gone or no longer in its starting state; JOB-1042 only when it has left in progress. */
@@ -80,7 +100,7 @@ export async function topUp(client: PrismaClient): Promise<string[]> {
   }
   const lines = await makeRecords(client, need);
   const job1042 = await client.job.findUniqueOrThrow({ where: { reference: "JOB-1042" } });
-  if (job1042.status !== "in_progress") {
+  if (job1042.status !== "scheduled" || (await client.assignmentTimeLog.count({ where: { assignment: { jobId: job1042.id } } })) > 0) {
     await restoreCast(client);
     lines.push(...(await setUpJob1042(client)));
   }
