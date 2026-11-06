@@ -102,7 +102,7 @@ export async function topUp(client: PrismaClient): Promise<string[]> {
   const lines = await makeRecords(client, need);
   const job1042 = await client.job.findUniqueOrThrow({ where: { reference: "JOB-1042" } });
   if (job1042.status !== "scheduled" || (await client.assignmentTimeLog.count({ where: { assignment: { jobId: job1042.id } } })) > 0) {
-    await restoreCast(client);
+    // setUpJob1042 puts the job back itself; restoreCast would also take Bob's switched-off Thursday time away.
     lines.push(...(await setUpJob1042(client)));
   }
   return lines;
