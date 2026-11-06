@@ -4,6 +4,7 @@
 // puts it back as the seed has it (waiting on Bob's answer next Thursday 8:00am). Fresh jobs, labelled uat-5002:
 //   a. Sarah's job ON HOLD with Bob, a Reason and a note for the office saved, and a work summary written (AC11, AC12)
 //   b. Sarah's job SCHEDULED with a booked time three days ahead and Lena Park as the site contact (AC10)
+//   d. Sarah's job IN PROGRESS with Bob today, Lena Park the site contact, no time entered -- for Put on hold from Bob's screen (steps 9)
 //   c. A job of Sarah's booked with Bob at 1:00pm next Thursday, with Bob's time from 4:00pm that day switched off (AC7, AC8)
 // WA holiday in view for AC7: the next WA public holiday on the calendar is printed with the records.
 //
@@ -19,7 +20,7 @@ import { nextWeekdayAt, todayAt, todayIn } from "../../time/index.js";
 const PERTH = "Australia/Perth";
 const LABEL = "uat-5002";
 const HILTON = { suburb: "Hilton", state: "WA", country: "AU", lat: -32.0731, lng: 115.7797, placeId: "fixture-place-hilton" };
-const KEYS = ["onhold", "scheduled", "booked"] as const;
+const KEYS = ["onhold", "scheduled", "booked", "today"] as const;
 type Key = (typeof KEYS)[number];
 const markerOf = (key: Key): string => `[${LABEL}:${key}]`;
 
@@ -71,7 +72,7 @@ async function setUpJob1042(client: PrismaClient): Promise<string[]> {
 
 /** Top up: remake a record that is gone or no longer in its starting state; JOB-1042 only when it has left in progress. */
 export async function topUp(client: PrismaClient): Promise<string[]> {
-  const want: Record<Key, string> = { onhold: "on_hold", scheduled: "scheduled", booked: "scheduled" };
+  const want: Record<Key, string> = { onhold: "on_hold", scheduled: "scheduled", booked: "scheduled", today: "in_progress" };
   const need = new Set<Key>();
   for (const key of KEYS) {
     const job = await client.job.findFirst({ where: { testData: LABEL, description: { contains: markerOf(key) } }, orderBy: { createdAt: "desc" } });
@@ -96,7 +97,7 @@ async function makeRecords(client: PrismaClient, which: Set<Key>): Promise<strin
   const now = new Date();
   const lines: string[] = [];
 
-  async function makeJob(key: Key, status: "scheduled" | "on_hold", description: string, day: string, siteContact: boolean) {
+  async function makeJob(key: Key, status: "scheduled" | "on_hold" | "in_progress", description: string, day: string, siteContact: boolean) {
     return client.job.create({
       data: {
         reference: await nextReference("JOB", client),
@@ -120,7 +121,7 @@ async function makeRecords(client: PrismaClient, which: Set<Key>): Promise<strin
     });
   }
 
-  async function bookWith(jobId: string, slot: Date | null, status: "accepted"): Promise<{ id: string }> {
+  async function bookWith(jobId: string, slot: Date | null, status: "accepted" | "in_progress"): Promise<{ id: string }> {
     const assignment = await client.assignment.create({
       data: {
         jobId,
@@ -156,6 +157,12 @@ async function makeRecords(client: PrismaClient, which: Set<Key>): Promise<strin
     const job = await makeJob("scheduled", "scheduled", "Dripping tap, booked.", todayIn(PERTH, slot), true);
     await bookWith(job.id, slot, "accepted");
     lines.push(`${job.reference} - Sarah's dripping-tap job, SCHEDULED for ${todayIn(PERTH, slot)} at 10:00am with Bob, Lena Park the site contact (AC10)`);
+  }
+  if (which.has("today")) {
+    const began = todayAt(PERTH, 8, 0, now);
+    const job = await makeJob("today", "in_progress", "Dripping tap, under way.", todayIn(PERTH, now), true);
+    await bookWith(job.id, began, "in_progress");
+    lines.push(`${job.reference} - Sarah's dripping-tap job, in progress with Bob today, Lena Park the site contact, no time entered (step 9)`);
   }
   if (which.has("booked")) {
     let thursday = nextWeekdayAt(PERTH, "thu", 13, 0, new Date(now.getTime() + 86_400_000));

@@ -275,7 +275,7 @@ describe("A second visit row needs a booked return", () => {
   test("a second row is refused until a return is booked; then it saves", async () => {
     const { bob, assignmentId } = await visitUnderWay();
     const second = { date: RETURN_DAY, start: "09:00", end: "10:00", note: "" };
-    const view = async () => (await request(app).get("/api/contractor/jobs/JOB-1042").set("Cookie", bob)).body as { visitsAllowed: number };
+    const view = async () => (await request(app).get("/api/contractor/jobs/JOB-1042").set("Cookie", bob)).body as { visitsAllowed: number; canOnSite: boolean; assignmentStatus: string };
     expect((await view()).visitsAllowed).toBe(1);
 
     const save = (rows: unknown[]) => request(app).put("/api/contractor/jobs/JOB-1042").set("Cookie", bob).send({ timeEntries: rows, completionNotes: "", parts: [] });
@@ -288,7 +288,22 @@ describe("A second visit row needs a booked return", () => {
 
     expect((await book(bob)).status).toBe(200);
     expect((await view()).visitsAllowed).toBe(2);
+    // the return is days away: no "I've arrived" yet, and the visit is not open for work
+    expect(await view()).toMatchObject({ canOnSite: false, assignmentStatus: "accepted" });
     expect((await save([...entries(), second])).status).toBe(200);
     expect(await db.assignmentTimeLog.count({ where: { assignmentId } })).toBe(2);
+  });
+});
+
+describe("I've arrived is for the visit that is due", () => {
+  test("it is offered on the visit's day and not before", async () => {
+    const { assignmentId, bob } = await visitUnderWay();
+    await db.assignment.update({ where: { id: assignmentId }, data: { status: "accepted" } });
+    await db.job.update({ where: { id: (await db.assignment.findUniqueOrThrow({ where: { id: assignmentId } })).jobId }, data: { status: "scheduled" } });
+    const canOnSite = async () => ((await request(app).get("/api/contractor/jobs/JOB-1042").set("Cookie", bob)).body as { canOnSite: boolean }).canOnSite;
+    expect(await canOnSite()).toBe(true); // the block is today
+    const later = new Date(Date.now() + 5 * 86_400_000);
+    await db.calendarEvent.updateMany({ where: { assignmentId }, data: { startTime: later, endTime: new Date(later.getTime() + 3_600_000) } });
+    expect(await canOnSite()).toBe(false); // five days away
   });
 });

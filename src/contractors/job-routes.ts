@@ -113,6 +113,22 @@ async function holdVisitLimit(tx: Prisma.TransactionClient, assignmentId: string
   }
 }
 
+/**
+ * Feature 5002: "I've arrived" is for the visit that is due -- the next booked block not yet worked
+ * (blocks in order, one per saved visit row) -- on its day or after it. Days before it, the screen
+ * only says when the next visit is.
+ */
+async function visitDueBy(db: Pick<PrismaClient, "calendarEvent">, assignmentId: string, worked: number, zone: string, now: Date): Promise<boolean> {
+  const blocks = await db.calendarEvent.findMany({
+    where: { assignmentId, type: "job" },
+    orderBy: [{ startTime: "asc" }, { id: "asc" }],
+    select: { startTime: true },
+  });
+  const next = blocks[worked];
+  if (next === undefined) return blocks.length === 0; // no block at all (an old record): nothing to wait for
+  return todayIn(zone, next.startTime) <= todayIn(zone, now);
+}
+
 export interface ContractorJobView extends JobFacts {
   reference: string;
   jobStatus: string;
@@ -267,7 +283,7 @@ async function viewOf(client: PrismaClient, assignment: OwnAssignment, now: Date
     returnVisitMinimumMinutes: minimum,
     maxContractorPartAmount: settings?.maxContractorPartAmount ?? 15_000,
     frozen: assignment.status === "completed",
-    canOnSite: assignment.status === "accepted",
+    canOnSite: assignment.status === "accepted" && job.status === "scheduled" && (await visitDueBy(client, assignment.id, logs.length, zone, now)),
     visitsAllowed: await visitsAllowedOf(client, assignment.id, logs.length),
     canBookReturn: (job.status === "scheduled" || job.status === "in_progress") && (assignment.status === "accepted" || assignment.status === "in_progress"),
     onMyWay: await onMyWayOf(
