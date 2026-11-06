@@ -113,9 +113,9 @@ describe("AC1 -- the swap", () => {
   test("AC5: the job page offers Reschedule, Take off and Cancel while the job is booked", async () => {
     const mike = await signIn(app, "mike@idelta.com.au");
     const detail = (await request(app).get("/api/jobs/JOB-1042").set("Cookie", mike)).body as {
-      actions: { reschedule: boolean; takeOff: boolean; cancel: boolean };
+      actions: { reschedule: boolean; takeOff: boolean; cancel: boolean; hold: boolean; bookReturn: boolean };
     };
-    expect(detail.actions).toEqual({ reschedule: true, takeOff: true, cancel: true });
+    expect(detail.actions).toEqual({ reschedule: true, takeOff: true, cancel: true, hold: false, bookReturn: false });
   });
 });
 

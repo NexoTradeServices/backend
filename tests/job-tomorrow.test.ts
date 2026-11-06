@@ -90,6 +90,8 @@ async function book(slots: Date[], acceptedAt: Date = YESTERDAY_4PM): Promise<Bo
         assignmentId: assignment.id,
         startTime: slot,
         endTime: new Date(slot.getTime() + 60 * 60_000),
+        // Made when the booking was accepted (Feature 5002 reads a LATER block on the same booking as a return visit).
+        createdAt: acceptedAt,
       },
     });
     blockIds.push(block.id);

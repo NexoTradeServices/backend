@@ -17,7 +17,12 @@ import type { Request, Response } from "express";
 import type { PrismaClient } from "../db/client.js";
 import { requireRole } from "../auth/middleware.js";
 import { Role } from "../generated/prisma/enums.js";
-import { formatSlotLabel } from "../time/index.js";
+import { dateOnlyAsUtcMidnight, formatSlotLabel, todayIn, zonedDateTimeToUtc } from "../time/index.js";
+import { holidayOn, stateOfLocation } from "../calendar/rules.js";
+import { notAvailableRunsOn } from "../availability/index.js";
+import { loadContractorDay } from "./day.js";
+import { parseSlotInput } from "../jobs/dispatch.js";
+import { bookReturnIn, parseReason, putOnHoldIn, sendHeldUpdate, sendReturnBooked, type BookedReturn, type HeldJob } from "../jobs/return-visit.js";
 import { suburbOf } from "../jobs/shared.js";
 import { billedHours } from "../jobs/billed-hours.js";
 import { issueInvoice } from "../invoices/issue.js";
@@ -116,6 +121,8 @@ export interface ContractorJobView extends JobFacts {
   frozen: boolean;
   /** "On site" is offered only while the visit is accepted. */
   canOnSite: boolean;
+  /** Feature 5002: Book a return visit is offered on a scheduled or in-progress job whose visit is still open. */
+  canBookReturn: boolean;
   /** Feature 5004: null (no visit booked today), or whether On my way has gone for today's visit. */
   onMyWay: OnMyWayView;
   timezone: string;
@@ -240,6 +247,7 @@ async function viewOf(client: PrismaClient, assignment: OwnAssignment, now: Date
     maxContractorPartAmount: settings?.maxContractorPartAmount ?? 15_000,
     frozen: assignment.status === "completed",
     canOnSite: assignment.status === "accepted",
+    canBookReturn: (job.status === "scheduled" || job.status === "in_progress") && (assignment.status === "accepted" || assignment.status === "in_progress"),
     onMyWay: await onMyWayOf(
       client,
       { id: assignment.id, jobStatus: job.status, assignmentStatus: assignment.status, timezone: zone },
@@ -459,6 +467,107 @@ export function contractorJobRoutes(client: PrismaClient, options: ContractorJob
     }
     res.json(await viewOf(client, fresh, new Date()));
   }
+
+  // Feature 5002: Book a return visit (or Not yet). Saves the screen's times, notes and parts with the booking in ONE
+  // transaction -- a refused booking saves nothing. Needs a time entry dated today in the job's zone.
+  router.post("/:reference/return-visit", requireRole(Role.contractor), (req: WithReference, res: Response) => {
+    void (async () => {
+      const assignment = await own(req, res);
+      if (assignment === null) return;
+      const zone = assignment.job.timezone;
+      const settings = await client.platformSettings.findFirst({ select: { maxContractorPartAmount: true } });
+      const parsed = parseVisit(req.body, zone, settings?.maxContractorPartAmount ?? 15_000);
+      if (!parsed.ok) {
+        send(res, parsed);
+        return;
+      }
+      const body = req.body !== null && typeof req.body === "object" ? (req.body as Record<string, unknown>) : {};
+      const reason = parseReason(body);
+      if (!reason.ok) {
+        send(res, reason);
+        return;
+      }
+      const notYet = body["notYet"] === true;
+      let slot: ReturnType<typeof parseSlotInput> | null = null;
+      if (!notYet) {
+        slot = parseSlotInput(body["slot"] !== null && typeof body["slot"] === "object" ? (body["slot"] as Record<string, unknown>) : {});
+        if (!slot.ok) {
+          send(res, { ok: false, status: slot.status, error: slot.error, field: slot.field ?? "slot" });
+          return;
+        }
+      }
+      const now = new Date();
+      const today = todayIn(zone, now);
+      if (!parsed.input.entries.some((entry) => todayIn(zone, entry.startedAt) === today)) {
+        send(res, { ok: false, status: 400, error: "Enter today's time on site first.", field: "timeEntries" });
+        return;
+      }
+      let booked: BookedReturn | null = null;
+      let held: HeldJob | null = null;
+      try {
+        await client.$transaction(async (tx) => {
+          const locked = await lockAssignment(tx, assignment.jobId, assignment.id);
+          if (!(OPEN_VISIT_STATUSES as readonly string[]).includes(locked.status)) throw new Refused(lockedFailure(locked.status));
+          await writeEntries(tx, locked.id, parsed.input.entries);
+          await writeParts(tx, locked.id, parsed.input.parts);
+          await tx.assignment.update({ where: { id: locked.id }, data: { completionNotes: parsed.input.notes } });
+          const actor = { kind: "contractor" as const, userId: req.authUser?.id ?? "" };
+          if (notYet) {
+            held = await putOnHoldIn(tx, { jobId: locked.jobId, assignmentId: locked.id, actor, reason: reason.data, now });
+          } else if (slot?.ok) {
+            booked = await bookReturnIn(tx, { jobId: locked.jobId, assignmentId: locked.id, actor, reason: reason.data, slot: slot.data, now });
+          }
+        });
+      } catch (error: unknown) {
+        if (error instanceof Refused) {
+          send(res, error.failure);
+          return;
+        }
+        throw error;
+      }
+      if (booked !== null) await sendReturnBooked(client, booked, now);
+      if (held !== null) await sendHeldUpdate(client, held, now);
+      const fresh = await loadOwn(client, req.authUser?.id ?? "", req.params.reference);
+      if (fresh === null) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      res.json({ ...(await viewOf(client, fresh, new Date())), returnBooked: booked === null ? null : { label: (booked as BookedReturn).bannerLabel } });
+    })().catch(failWith(res, "POST /api/contractor/jobs/:reference/return-visit"));
+  });
+
+  // Feature 5002: the return picker's day -- his own calendar for the date, in the job's zone, the hours he has switched
+  // off (he may still book them), and whether the date is a holiday.
+  router.get("/:reference/day", requireRole(Role.contractor), (req: WithReference, res: Response) => {
+    void (async () => {
+      const assignment = await own(req, res);
+      if (assignment === null) return;
+      const date = req.query["date"];
+      if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        res.status(400).json({ error: "date must be a YYYY-MM-DD date" });
+        return;
+      }
+      const zone = assignment.job.timezone;
+      const contractor = await client.contractor.findUniqueOrThrow({
+        where: { id: assignment.contractorId },
+        select: { id: true, operatingState: true, defaultOpening: true, defaultClosing: true },
+      });
+      const hours = await client.platformSettings.findFirstOrThrow({ select: { openingTime: true, closingTime: true } });
+      const dayStart = zonedDateTimeToUtc(zone, date, 0, 0);
+      const next = new Date(dateOnlyAsUtcMidnight(date).getTime() + 86_400_000).toISOString().slice(0, 10);
+      const dayEnd = zonedDateTimeToUtc(zone, next, 0, 0);
+      const state = stateOfLocation(assignment.job.serviceLocation);
+      const holiday = state === null ? null : await holidayOn(client, state, date);
+      res.json({
+        blocks: await loadContractorDay(client, contractor.id, date, zone),
+        notAvailable: await notAvailableRunsOn(client, contractor, dayStart, dayEnd),
+        closed: holiday?.name ?? null,
+        openingTime: hours.openingTime,
+        closingTime: hours.closingTime,
+        timezone: zone,
+      });
+    })().catch(failWith(res, "GET /api/contractor/jobs/:reference/day"));
+  });
 
   router.put("/:reference", requireRole(Role.contractor), (req: WithReference, res: Response) => {
     void saveVisit(req, res, false).catch(failWith(res, "PUT /api/contractor/jobs/:reference"));

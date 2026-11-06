@@ -262,6 +262,8 @@ export interface AnswerFacts {
   officeSlotLabel?: string;
   /** Decline only: the trimmed note, null when none. */
   note: string | null;
+  /** Feature 5002: set when the confirmation is for a return visit's block, so each visit sends its own. */
+  calendarEventId?: string;
 }
 
 export type AnswerResult =

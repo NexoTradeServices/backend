@@ -97,7 +97,15 @@ export async function runJobTomorrowReminders(
     if (options.asDay === undefined && clockTimeIn(job.timezone, now) < options.runAt) continue;
     if (todayIn(job.timezone, block.startTime) !== nextDay(jobToday)) continue;
     const confirmedBefore = zonedDateTimeToUtc(job.timezone, jobToday, runHour ?? 9, runMinute ?? 0);
-    if (assignment.acceptedAt === null || assignment.acceptedAt.getTime() >= confirmedBefore.getTime()) continue;
+    // A return visit (a later block on the same booking) is confirmed when its block was made, not when the first booking
+    // was accepted (Feature 5002).
+    if (assignment.acceptedAt === null) continue;
+    const earlier = await client.calendarEvent.findFirst({
+      where: { assignmentId: assignment.id, id: { not: block.id }, createdAt: { lt: block.createdAt } },
+      select: { id: true },
+    });
+    const confirmedAt = earlier === null ? assignment.acceptedAt : block.createdAt;
+    if (confirmedAt.getTime() >= confirmedBefore.getTime()) continue;
     const address = effectiveAddress(job);
     if (address === null) continue;
 

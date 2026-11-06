@@ -38,7 +38,7 @@ import { checkPaymentWithStripe } from "../payments/check.js";
 import { VOID_REFUSALS, parseVoidReason, voidInvoice } from "../invoices/void.js";
 import { REFUND_AMOUNT_ERROR, makeRefund } from "../refunds/service.js";
 import { correctAndReissue, correctionForm, previewCorrection } from "../invoices/correct.js";
-import { formatLabelled } from "../time/index.js";
+import { formatLabelled, todayIn } from "../time/index.js";
 import { addNote, editNote, parseEditedNote, parseNewNote } from "./notes.js";
 import {
   candidatesAndPriceFor,
@@ -52,6 +52,7 @@ import {
   sendDispatchNotifications,
   sendRescheduleNotifications,
 } from "./dispatch.js";
+import { holdJobByOps, bookReturnByOps, parseReason } from "./return-visit.js";
 import { cancelJob, parseCancelInput, takeOffJob } from "./changes.js";
 import { parseCallbackInput, raiseCallback } from "./callbacks.js";
 import { markNoShow, parseNoShowInput } from "./no-show.js";
@@ -577,6 +578,31 @@ export function jobRoutes(client: PrismaClient): Router {
       }
       const hours = await client.platformSettings.findFirstOrThrow({ select: { openingTime: true, closingTime: true } });
       const facts = { ...dispatchFactsOf(job), openingTime: hours.openingTime, closingTime: hours.closingTime };
+      if (req.query["mode"] === "return") {
+        // Feature 5002: Mike books the return of an on-hold job -- the contractor on the open booking is fixed.
+        const open = await client.assignment.findFirst({
+          where: { jobId: job.id, status: { in: ["accepted", "in_progress"] } },
+          orderBy: { dispatchedAt: "desc" },
+          include: { contractor: { select: { code: true, name: true } } },
+        });
+        if (job.status !== "on_hold" || open === null) {
+          res.status(409).json({ error: `The job is ${job.status} -- there is no return visit to book.` });
+          return;
+        }
+        const tomorrow = new Date(Date.parse(`${todayIn(job.timezone)}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+        res.json({
+          ...facts,
+          mode: "return",
+          contractor: {
+            code: open.contractor.code,
+            name: open.contractor.name,
+            firstName: open.contractor.name.split(" ")[0] ?? open.contractor.name,
+          },
+          currentSlot: null,
+          defaults: { ...facts.defaults, date: tomorrow },
+        });
+        return;
+      }
       if (req.query["mode"] !== "reschedule") {
         res.json(facts);
         return;
@@ -699,6 +725,62 @@ export function jobRoutes(client: PrismaClient): Router {
         toast: `${result.jobReference} rescheduled. Waiting for ${result.contractorFirstName}'s answer.`,
       });
     })().catch(failWith(res, "POST /api/jobs/:reference/reschedule"));
+  });
+
+  // Feature 5002: Mike puts a scheduled or in-progress job on hold with a Reason. A booked time comes off and the
+  // customer and the site contact get the Job update.
+  router.post("/:reference/hold", requireRole(Role.ops), (req: WithReference, res: Response) => {
+    void (async () => {
+      if (!req.authUser) {
+        res.status(401).json({ error: "not signed in" });
+        return;
+      }
+      const reason = parseReason((req.body ?? {}) as Record<string, unknown>);
+      if (!reason.ok) {
+        res.status(reason.status).json({ error: reason.error, field: reason.field });
+        return;
+      }
+      const result = await holdJobByOps(client, req.params.reference, req.authUser.id, reason.data);
+      if (!result.ok) {
+        res.status(result.status).json({ error: result.error, field: result.field });
+        return;
+      }
+      const fresh = await loadJob(client, result.jobReference);
+      if (!fresh) {
+        res.status(500).json({ error: "internal error" });
+        return;
+      }
+      res.json({ job: await jobDetail(client, fresh, req.authUser.id), toast: `${result.jobReference} is on hold.` });
+    })().catch(failWith(res, "POST /api/jobs/:reference/hold"));
+  });
+
+  // Feature 5002: Mike books the return visit of an on-hold job (or of a scheduled one) with the contractor who holds it.
+  router.post("/:reference/return-visit", requireRole(Role.ops), (req: WithReference, res: Response) => {
+    void (async () => {
+      if (!req.authUser) {
+        res.status(401).json({ error: "not signed in" });
+        return;
+      }
+      const parsed = parseSlotInput((req.body ?? {}) as Record<string, unknown>);
+      if (!parsed.ok) {
+        res.status(parsed.status).json({ error: parsed.error, field: parsed.field });
+        return;
+      }
+      const result = await bookReturnByOps(client, req.params.reference, req.authUser.id, parsed.data);
+      if (!result.ok) {
+        res.status(result.status).json({ error: result.error, field: result.field });
+        return;
+      }
+      const fresh = await loadJob(client, result.jobReference);
+      if (!fresh) {
+        res.status(500).json({ error: "internal error" });
+        return;
+      }
+      res.json({
+        job: await jobDetail(client, fresh, req.authUser.id),
+        toast: `Return visit booked for ${result.bannerLabel}. The customer has been told.`,
+      });
+    })().catch(failWith(res, "POST /api/jobs/:reference/return-visit"));
   });
 
   router.post("/:reference/take-off", requireRole(Role.ops), (req: WithReference, res: Response) => {

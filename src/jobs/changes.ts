@@ -126,9 +126,35 @@ async function askJobUpdate(
   booking: NonNullable<Awaited<ReturnType<typeof lockJobAndBooking>>["booking"]>,
   now: Date,
 ): Promise<void> {
+  await sendJobUpdate(client, job, booking.id, booking.confirmedSlot ?? booking.proposedSlot, now, "");
+}
+
+/**
+ * Feature 5002: the same Job update when a job is put on hold and its booked time comes off. `keySuffix` keeps a second hold
+ * on the same booking from being swallowed by the first one's key.
+ */
+export async function askJobUpdateForHold(
+  client: PrismaClient,
+  jobId: string,
+  assignmentId: string,
+  slot: Date,
+  now: Date,
+  keySuffix: string,
+): Promise<void> {
+  const job = await client.job.findUniqueOrThrow({ where: { id: jobId }, include: jobFactsInclude });
+  await sendJobUpdate(client, job, assignmentId, slot, now, `:${keySuffix}`);
+}
+
+async function sendJobUpdate(
+  client: PrismaClient,
+  job: Awaited<ReturnType<typeof lockJobAndBooking>>["job"],
+  assignmentId: string,
+  slot: Date | null,
+  now: Date,
+  keySuffix: string,
+): Promise<void> {
   const settings = await client.platformSettings.findFirst({ select: { operatorPhone: true } });
   const address = effectiveAddress(job);
-  const slot = booking.confirmedSlot ?? booking.proposedSlot;
   const common = {
     jobReference: job.reference,
     trade: job.serviceType.trade.toLowerCase(),
@@ -150,9 +176,9 @@ async function askJobUpdate(
         channel,
         recipientType: audience,
         recipientId,
-        idempotencyKey: `job_update:assignment:${booking.id}:${audience}:${channel}`,
+        idempotencyKey: `job_update:assignment:${assignmentId}${keySuffix}:${audience}:${channel}`,
         relatedType: "assignment",
-        relatedId: booking.id,
+        relatedId: assignmentId,
         jobId: job.id,
         context,
       },

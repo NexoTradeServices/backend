@@ -81,7 +81,7 @@ export async function sendSlotConfirmed(client: PrismaClient, facts: AnswerFacts
         channel,
         recipientType: audience,
         recipientId: audience === "customer" ? job.customer.id : job.id,
-        idempotencyKey: `slot_confirmed:assignment:${facts.assignmentId}:${audience}:${channel}`,
+        idempotencyKey: `slot_confirmed:assignment:${facts.assignmentId}${facts.calendarEventId === undefined ? "" : `:block:${facts.calendarEventId}`}:${audience}:${channel}`,
         relatedType: "assignment",
         relatedId: facts.assignmentId,
         jobId: job.id,

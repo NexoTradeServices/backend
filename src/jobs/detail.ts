@@ -19,6 +19,7 @@ import { CANCELLED_KIND_LABELS, cancelledKindOf } from "./booking.js";
 import { entryViewOf, returnVisitMinimum, savedEntries, type EntryView } from "./visit.js";
 import { isServiceLevelMultipliers, priceLine } from "./dispatch-level.js";
 import { invoiceViewOf, type InvoiceView } from "../invoices/view.js";
+import { REASON_LABELS } from "./return-reasons.js";
 import {
   WINDOW_LABELS,
   NO_ADDRESS_REASON,
@@ -65,9 +66,20 @@ export interface VisitView {
   timezone: string;
   timeEntries: EntryView[];
   billedHours: number;
-  /** Once completed only. */
+  /** The contractor's work notes: shown before completion too (Feature 5002), "" while he has written none. */
   completionNotes: string | null;
   parts: { name: string; qty: number; unitPrice: number; lineTotal: number }[];
+}
+
+/** Feature 5002: the latest Reason a job was put on hold or given a return visit for. */
+export interface ReturnVisitView {
+  reasonLabel: string;
+  /** The text typed with "Other". */
+  otherText: string | null;
+  /** Bob's note to the office on Not yet; shown only while the job has no future block. */
+  officeNote: string | null;
+  byName: string;
+  atLabel: string;
 }
 
 /** Feature 4006: the job page's three actions, read from the status alone. */
@@ -75,6 +87,10 @@ export interface JobActions {
   reschedule: boolean;
   takeOff: boolean;
   cancel: boolean;
+  /** Feature 5002: Put on hold is offered on a scheduled or in-progress job. */
+  hold: boolean;
+  /** Feature 5002: Book return visit is offered on an on-hold job. */
+  bookReturn: boolean;
 }
 
 /** Feature 4006: how a cancelled job reads on the Request card. */
@@ -177,6 +193,8 @@ export interface JobDetail {
   canMarkNoShow: boolean;
   /** Feature 4006: set once the job is cancelled. */
   cancelled: CancelledFacts | null;
+  /** Feature 5002: why the job is on hold or has a return visit; null when it never had one. */
+  returnVisit: ReturnVisitView | null;
   /** AC1/AC2: the job page's own Dispatch button. */
   canDispatch: boolean;
   dispatchBlockedReason: string | null;
@@ -256,7 +274,7 @@ async function visitOf(client: PrismaClient, job: JobWithRelations): Promise<Vis
   if (assignment === undefined || assignment.status === "assigned") return null;
   const rows = await savedEntries(client, assignment.id);
   const completed = assignment.status === "completed";
-  const parts = completed ? await client.assignmentPart.findMany({ where: { assignmentId: assignment.id }, orderBy: { id: "asc" } }) : [];
+  const parts = await client.assignmentPart.findMany({ where: { assignmentId: assignment.id }, orderBy: { id: "asc" } });
   return {
     editable: !completed,
     completed,
@@ -266,8 +284,25 @@ async function visitOf(client: PrismaClient, job: JobWithRelations): Promise<Vis
       completed && assignment.billedHours !== null
         ? Number(assignment.billedHours)
         : billedHours(rows, await returnVisitMinimum(client)),
-    completionNotes: completed ? (assignment.completionNotes ?? "") : null,
+    completionNotes: assignment.completionNotes ?? "",
     parts: parts.map((part) => ({ name: part.name, qty: Number(part.qty), unitPrice: part.unitPrice, lineTotal: part.lineTotal })),
+  };
+}
+
+async function returnVisitOf(client: PrismaClient, job: JobWithRelations, now: Date): Promise<ReturnVisitView | null> {
+  const row = await client.returnReason.findFirst({
+    where: { jobId: job.id },
+    orderBy: [{ at: "desc" }, { id: "desc" }],
+    include: { byUser: { select: { name: true } } },
+  });
+  if (row === null) return null;
+  const futureBlock = await client.calendarEvent.findFirst({ where: { jobId: job.id, endTime: { gt: now } }, select: { id: true } });
+  return {
+    reasonLabel: REASON_LABELS[row.reason],
+    otherText: row.reason === "other" ? row.otherText : null,
+    officeNote: futureBlock === null ? row.officeNote : null,
+    byName: row.byUser.name.split(" ")[0] ?? row.byUser.name,
+    atLabel: formatDateTimeLabel(job.timezone, row.at, now),
   };
 }
 
@@ -369,12 +404,15 @@ export async function jobDetail(
       reschedule: job.status === "assigned" || job.status === "scheduled",
       takeOff: job.status === "assigned" || job.status === "scheduled",
       cancel: job.status === "new" || job.status === "assigned" || job.status === "scheduled",
+      hold: job.status === "scheduled" || job.status === "in_progress",
+      bookReturn: job.status === "on_hold",
     },
     callbackOn: callbackLinks.callbackOn,
     callbacks: callbackLinks.callbacks,
     canRaiseCallback: job.status === "completed",
     canMarkNoShow: job.status === "scheduled" || job.status === "in_progress",
     cancelled: await cancelledFactsOf(client, job),
+    returnVisit: await returnVisitOf(client, job, now),
     serviceLevel: job.serviceLevel,
     priceLine: price,
     canDispatch: job.status === "new" && hasAddress,
