@@ -5,6 +5,7 @@
 //   a. Sarah's job ON HOLD with Bob, a Reason and a note for the office saved, and a work summary written (AC11, AC12)
 //   b. Sarah's job SCHEDULED with a booked time three days ahead and Lena Park as the site contact (AC10)
 //   d. Sarah's job IN PROGRESS with Bob today, Lena Park the site contact, no time entered -- for Put on hold from Bob's screen (steps 9)
+//   e. Sarah's job whose first visit is worked and saved (notes, Part on order) and whose RETURN visit is today at 10:00am, On my way not sent -- to pretend Bob is coming back (steps 13, 14)
 //   c. A job of Sarah's booked with Bob at 1:00pm next Thursday, with Bob's time from 4:00pm that day switched off (AC7, AC8)
 // WA holiday in view for AC7: the next WA public holiday on the calendar is printed with the records.
 //
@@ -20,7 +21,7 @@ import { nextWeekdayAt, todayAt, todayIn } from "../../time/index.js";
 const PERTH = "Australia/Perth";
 const LABEL = "uat-5002";
 const HILTON = { suburb: "Hilton", state: "WA", country: "AU", lat: -32.0731, lng: 115.7797, placeId: "fixture-place-hilton" };
-const KEYS = ["onhold", "scheduled", "booked", "today"] as const;
+const KEYS = ["onhold", "scheduled", "booked", "today", "comeback"] as const;
 type Key = (typeof KEYS)[number];
 const markerOf = (key: Key): string => `[${LABEL}:${key}]`;
 
@@ -92,7 +93,7 @@ async function setUpJob1042(client: PrismaClient): Promise<string[]> {
 
 /** Top up: remake a record that is gone or no longer in its starting state; JOB-1042 only when it has left in progress. */
 export async function topUp(client: PrismaClient): Promise<string[]> {
-  const want: Record<Key, string> = { onhold: "on_hold", scheduled: "scheduled", booked: "scheduled", today: "in_progress" };
+  const want: Record<Key, string> = { onhold: "on_hold", scheduled: "scheduled", booked: "scheduled", today: "in_progress", comeback: "scheduled" };
   const need = new Set<Key>();
   for (const key of KEYS) {
     const job = await client.job.findFirst({ where: { testData: LABEL, description: { contains: markerOf(key) } }, orderBy: { createdAt: "desc" } });
@@ -107,7 +108,7 @@ export async function topUp(client: PrismaClient): Promise<string[]> {
   return lines;
 }
 
-async function makeRecords(client: PrismaClient, which: Set<Key>): Promise<string[]> {
+export async function makeRecords(client: PrismaClient, which: Set<Key>): Promise<string[]> {
   const plumbing = await client.serviceType.findUniqueOrThrow({ where: { trade: "Plumbing" } });
   const bob = await client.contractor.findUniqueOrThrow({ where: { code: "CON-014" }, include: { specialties: true } });
   const specialty = bob.specialties.find((s) => s.trade === "Plumbing");
@@ -183,6 +184,21 @@ async function makeRecords(client: PrismaClient, which: Set<Key>): Promise<strin
     const job = await makeJob("today", "in_progress", "Dripping tap, under way.", todayIn(PERTH, now), true);
     await bookWith(job.id, began, "in_progress");
     lines.push(`${job.reference} - Sarah's dripping-tap job, in progress with Bob today, Lena Park the site contact, no time entered (step 9)`);
+  }
+  if (which.has("comeback")) {
+    const returnAt = todayAt(PERTH, 10, 0, now);
+    const first = new Date(todayAt(PERTH, 8, 0, now).getTime() - 2 * 86_400_000);
+    const job = await makeJob("comeback", "scheduled", "Mixer tap, back for the part.", todayIn(PERTH, now), true);
+    const assignment = await bookWith(job.id, returnAt, "accepted");
+    await client.calendarEvent.create({
+      data: { contractorId: bob.id, type: "job", jobId: job.id, assignmentId: assignment.id, startTime: first, endTime: new Date(first.getTime() + 3_600_000) },
+    });
+    await client.assignmentTimeLog.create({ data: { assignmentId: assignment.id, startedAt: first, endedAt: new Date(first.getTime() + 3_600_000), note: "Stripped the old mixer." } });
+    await client.assignment.update({ where: { id: assignment.id }, data: { completionNotes: "Stripped the old mixer. The new cartridge is on order." } });
+    await client.returnReason.create({
+      data: { jobId: job.id, assignmentId: assignment.id, reason: "part_on_order", byUserId: bob.userId, at: new Date(first.getTime() + 3_600_000) },
+    });
+    lines.push(`${job.reference} - Sarah's mixer-tap job: first visit worked two days ago (Part on order), the RETURN visit is today at 10:00am, On my way not sent, I've arrived still to press`);
   }
   if (which.has("booked")) {
     let thursday = nextWeekdayAt(PERTH, "thu", 13, 0, new Date(now.getTime() + 86_400_000));
