@@ -794,12 +794,14 @@ describe("AC13-AC18 -- the Addresses card's one Save", () => {
     expect(stored.timezone).toBe("Australia/Perth");
   });
 
-  test("AC16: even a site in another state leaves Job.timezone frozen at creation", async () => {
+  test("AC16: a site in a state we do not operate in is refused, and the job keeps its postcode and Job.timezone", async () => {
     const mike = await signInCookie("mike@idelta.com.au");
     const job = await makeJob();
-    expect((await saveAddresses(mike, job.reference, { site: { sameAsBilling: false, address: ADELAIDE_SITE } })).status).toBe(200);
+    const res = await saveAddresses(mike, job.reference, { site: { sameAsBilling: false, address: ADELAIDE_SITE } });
+    expect(res.status).toBe(400);
+    expect((res.body as { error: string }).error).toBe("SA is not an operating state.");
     const stored = await db.job.findUniqueOrThrow({ where: { id: job.id } });
-    expect(stored.postcode).toBe("5000");
+    expect(stored.postcode).not.toBe("5000");
     expect(stored.timezone).toBe("Australia/Perth");
   });
 

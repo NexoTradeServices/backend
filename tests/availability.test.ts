@@ -131,6 +131,19 @@ describe("AC4 -- Day off, Day on and Copy", () => {
     expect(stateOf(await bobGet(bob), SUN, "07:00")).toBe("not_available"); // the tap sent with the copy was saved too
   });
 
+  test("AC4: Copy to rest of week copies a day onto the later days up to Sunday, and not the days before it", async () => {
+    const bob = await signIn(app, "bob@idelta.com.au");
+    await put(bob, off(TUE, "07:00", "07:30"));
+    const res = await request(app).post("/api/contractor/availability/copy-rest").set("Cookie", bob).send({ from: TUE });
+    expect(res.status).toBe(200);
+    const week = await bobGet(bob);
+    expect(stateOf(week, "2027-03-10", "07:00")).toBe("not_available"); // Wednesday
+    expect(stateOf(week, SUN, "07:30")).toBe("not_available");
+    expect(stateOf(week, SUN, "08:00")).toBe("available");
+    expect(stateOf(week, "2027-03-08", "07:00")).toBe("available"); // Monday is before Tuesday - untouched
+    expect(stateOf(await bobGet(bob, "2027-03-15"), "2027-03-15", "07:00")).toBe("available"); // the next week is untouched
+  });
+
   test("AC4: Copy to next week copies the pattern and asks 'Replace it?' when that week is already set", async () => {
     const bob = await signIn(app, "bob@idelta.com.au");
     await put(bob, off(TUE, "07:00", "07:30"));
@@ -261,6 +274,19 @@ describe("AC12, AC13, AC14 -- dispatch", () => {
     await put(bobCookie, off(MONDAY, "08:30")); // Bob switches off the second half of the hour
     expect((await dispatchTo(mike, job.reference)).status).toBe(409);
     expect((await candidates(mike, job.reference)).serves.find((r) => r.code === "CON-014")?.why).toBe("Not available");
+  });
+
+  test("AC12: the day grid on the dispatch page carries Bob's switched-off hours as Not available runs", async () => {
+    const mike = await signIn(app, "mike@idelta.com.au");
+    await put(mike, off(MONDAY, "08:00", "08:30"), "/api/contractors/CON-014/availability");
+    const day = await request(app).get("/api/contractors/CON-014/day").query({ date: MONDAY }).set("Cookie", mike);
+    expect(day.status).toBe(200);
+    // the hours outside the business day are Not available too (midnight to 7:00am, 7:00pm to midnight)
+    expect((day.body as { notAvailable: unknown }).notAvailable).toEqual([
+      { startMinutes: 0, endMinutes: 420 },
+      { startMinutes: 480, endMinutes: 540 },
+      { startMinutes: 1140, endMinutes: 1440 },
+    ]);
   });
 
   test("AC12: reschedule refuses Not available time too, and the booking stays", async () => {

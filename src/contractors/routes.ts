@@ -23,6 +23,8 @@ import { readyToDispatch, type ReadyInput } from "./ready.js";
 import { isOpenState } from "../holidays/missing.js";
 import { parseServiceAreaInput, saveServiceArea, serviceAreaDtoOf } from "./service-area.js";
 import { loadContractorDay } from "./day.js";
+import { notAvailableRunsOn } from "../availability/index.js";
+import { zonedDateTimeToUtc, dateOnlyAsUtcMidnight } from "../time/index.js";
 import { isValidAbn } from "../invoices/abn.js";
 import { listContractorReviews } from "../reviews/service.js";
 
@@ -900,7 +902,14 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
           typeof ignoreRef === "string"
             ? await client.job.findUnique({ where: { reference: ignoreRef }, select: { id: true } })
             : null;
-        res.json({ blocks: await loadContractorDay(client, contractor.id, date, dayZone, ignored?.id) });
+        // Feature 2004: the half hours the contractor has switched off, so the day view greys them (dispatch and reschedule).
+        const dayStart = zonedDateTimeToUtc(dayZone, date, 0, 0);
+        const nextDate = new Date(dateOnlyAsUtcMidnight(date).getTime() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        const dayEnd = zonedDateTimeToUtc(dayZone, nextDate, 0, 0);
+        res.json({
+          blocks: await loadContractorDay(client, contractor.id, date, dayZone, ignored?.id),
+          notAvailable: await notAvailableRunsOn(client, contractor, dayStart, dayEnd),
+        });
       })().catch((error: unknown) => {
         console.error("GET /api/contractors/:code/day failed", error);
         res.status(500).json({ error: "internal error" });

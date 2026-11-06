@@ -17,7 +17,7 @@ import { clockTimeIn, formatTimeRangeLabel, todayIn, zoneForState, zonedDateTime
 
 type Db = Pick<PrismaClient, "platformSettings" | "contractorAvailability" | "publicHoliday" | "calendarEvent" | "contractor">;
 
-export type SlotState = "available" | "not_available" | "booked" | "to_answer" | "closed" | "past";
+export type SlotState = "available" | "not_available" | "booked" | "in_progress" | "to_answer" | "closed" | "past";
 
 export interface AvailabilityContractor {
   id: string;
@@ -30,6 +30,8 @@ export interface Slot {
   /** minutes since midnight in the contractor's zone, on the half hour */
   minutes: number;
   state: SlotState;
+  /** the reference of the job holding this half hour, for the label on the grid */
+  job: string | null;
   /** the saved-or-default answer ignoring jobs, holidays and the past - what Copy carries */
   effective: boolean;
 }
@@ -101,7 +103,7 @@ export async function dayStates(
   const rangeEnd = zonedDateTimeToUtc(zone, addDays(last, 1), 0, 0);
   const events = await client.calendarEvent.findMany({
     where: { contractorId: contractor.id, type: "job", startTime: { lt: rangeEnd }, endTime: { gt: rangeStart } },
-    select: { startTime: true, endTime: true, assignment: { select: { status: true } } },
+    select: { startTime: true, endTime: true, assignment: { select: { status: true } }, job: { select: { reference: true } } },
   });
 
   return dates.map((date): DayStates => {
@@ -114,11 +116,15 @@ export async function dayStates(
       let state: SlotState = effective ? "available" : "not_available";
       const holding = events.filter((e) => e.startTime < end && e.endTime > start);
       if (holding.length > 0) {
-        state = holding.some((e) => e.assignment?.status !== "assigned") ? "booked" : "to_answer";
+        state = holding.some((e) => e.assignment?.status === "in_progress")
+          ? "in_progress"
+          : holding.some((e) => e.assignment?.status !== "assigned")
+            ? "booked"
+            : "to_answer";
       }
       if (closed !== null) state = "closed";
       else if (start.getTime() < now.getTime()) state = "past";
-      slots.push({ minutes, state, effective });
+      slots.push({ minutes, state, job: holding[0]?.job?.reference ?? null, effective });
     }
     return { date, closed, slots };
   });
@@ -136,7 +142,7 @@ export interface ApplyResult {
   skipped: number;
 }
 
-const LOCKED: ReadonlySet<SlotState> = new Set<SlotState>(["booked", "to_answer", "closed", "past"]);
+const LOCKED: ReadonlySet<SlotState> = new Set<SlotState>(["booked", "in_progress", "to_answer", "closed", "past"]);
 
 export function parseChanges(raw: unknown): Change[] | null {
   if (raw === undefined) return [];
@@ -205,7 +211,7 @@ function copyPlan(source: DayStates, targetDate: string): Change[] {
   return source.slots.map((slot) => ({
     date: targetDate,
     time: clockOf(slot.minutes),
-    available: slot.state === "booked" || slot.state === "to_answer" ? true : slot.effective,
+    available: slot.state === "booked" || slot.state === "in_progress" || slot.state === "to_answer" ? true : slot.effective,
   }));
 }
 
@@ -222,6 +228,26 @@ export async function copyDay(
   if (source === undefined) return { written: 0, skipped: 0, target };
   const result = await applyChanges(client, contractorId, copyPlan(source, target), input.byUserId, now);
   return { ...result, target };
+}
+
+/** Copy a day onto every later day of the same Monday-to-Sunday week (a Sunday has none left: nothing is written). */
+export async function copyRestOfWeek(
+  client: PrismaClient,
+  contractorId: string,
+  input: { from: string; changes: Change[]; byUserId: string | null },
+  now: Date = new Date(),
+): Promise<ApplyResult & { targets: string[] }> {
+  if (input.changes.length > 0) await applyChanges(client, contractorId, input.changes, input.byUserId, now);
+  const sunday = addDays(mondayOf(input.from), 6);
+  const targets: string[] = [];
+  for (let day = addDays(input.from, 1); day <= sunday; day = addDays(day, 1)) targets.push(day);
+  if (targets.length === 0) return { written: 0, skipped: 0, targets };
+  const contractor = await loadContractor(client, contractorId);
+  const [source] = await dayStates(client, contractor, [input.from], now);
+  if (source === undefined) return { written: 0, skipped: 0, targets };
+  const plan = targets.flatMap((target) => copyPlan(source, target));
+  const result = await applyChanges(client, contractorId, plan, input.byUserId, now);
+  return { ...result, targets };
 }
 
 export type CopyWeekResult = (ApplyResult & { needsReplace: false; targetWeek: string }) | { needsReplace: true; targetWeek: string };
@@ -275,6 +301,44 @@ export async function notAvailableIn(
     out.set(contractor.id, { notAvailable, notSet: contractor.availabilitySavedAt === null });
   }
   return out;
+}
+
+/**
+ * For the dispatch day view: the runs of one calendar day (drawn in the day's own zone, from `dayStart` to `dayEnd`) in which
+ * the contractor is switched off. Same rule as `notAvailableIn`; minutes are counted from `dayStart`.
+ */
+export async function notAvailableRunsOn(
+  client: Db,
+  contractor: AvailabilityContractor,
+  dayStart: Date,
+  dayEnd: Date,
+): Promise<{ startMinutes: number; endMinutes: number }[]> {
+  const zone = zoneOf(contractor);
+  const slots: { offset: number; date: string; minutes: number }[] = [];
+  for (let t = dayStart.getTime(); t < dayEnd.getTime(); t += HALF_HOUR_MINUTES * 60_000) {
+    const at = new Date(t);
+    const [h, m] = clockTimeIn(zone, at).split(":").map(Number);
+    slots.push({
+      offset: Math.round((t - dayStart.getTime()) / 60_000),
+      date: todayIn(zone, at),
+      minutes: Math.floor(((h ?? 0) * 60 + (m ?? 0)) / HALF_HOUR_MINUTES) * HALF_HOUR_MINUTES,
+    });
+  }
+  if (slots.length === 0) return [];
+  const dates = [...new Set(slots.map((s) => s.date))].sort();
+  const savedRows = await client.contractorAvailability.findMany({
+    where: { contractorId: contractor.id, date: { gte: dayDate(dates[0] ?? ""), lte: dayDate(dates[dates.length - 1] ?? "") } },
+  });
+  const rows = new Map(savedRows.map((row) => [`${row.date.toISOString().slice(0, 10)}|${row.startTime}`, row.available]));
+  const runs: { startMinutes: number; endMinutes: number }[] = [];
+  for (const slot of slots) {
+    if (effectiveOf(contractor, rows, slot.date, slot.minutes)) continue;
+    const end = slot.offset + HALF_HOUR_MINUTES;
+    const last = runs[runs.length - 1];
+    if (last !== undefined && last.endMinutes === slot.offset) last.endMinutes = end;
+    else runs.push({ startMinutes: slot.offset, endMinutes: end });
+  }
+  return runs;
 }
 
 export type CalendarStatus = "booked" | "to_answer" | "in_progress" | "finished";

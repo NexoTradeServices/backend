@@ -2,6 +2,7 @@
 //
 //   /api/contractor/availability            GET ?week=  PUT {changes}   the contractor's own
 //   /api/contractor/availability/copy-day   POST {from, changes?}
+//   /api/contractor/availability/copy-rest  POST {from, changes?}   the day onto the rest of its week
 //   /api/contractor/availability/copy-week  POST {fromWeek, replace?, changes?}
 //   /api/contractor/calendar                GET ?from=&to=
 //   /api/contractor/hours-notice-seen       POST   stamps the new-hours dashboard message as seen
@@ -20,6 +21,7 @@ import {
   calendarRange,
   clockOf,
   copyDay,
+  copyRestOfWeek,
   copyWeek,
   dayStates,
   mondayOf,
@@ -49,7 +51,7 @@ async function weekPayload(client: PrismaClient, who: Who, week: string) {
     days: days.map((day) => ({
       date: day.date,
       closed: day.closed,
-      slots: day.slots.map((slot) => ({ time: clockOf(slot.minutes), state: slot.state })),
+      slots: day.slots.map((slot) => ({ time: clockOf(slot.minutes), state: slot.state, job: slot.job })),
     })),
   };
 }
@@ -93,6 +95,14 @@ function mount(router: Router, client: PrismaClient, path: string, roles: Role[]
     if (typeof body["from"] !== "string" || !DATE.test(body["from"])) return bad(res, "from must be a date", "from");
     if (changes === null) return bad(res, "changes must be a list of { date, time, available }", "changes");
     res.json(await copyDay(client, who.id, { from: body["from"], changes, byUserId: userId(req) }));
+  }));
+
+  router.post(`${path}/availability/copy-rest`, guard, wrap("POST copy-rest", async (req, res, who) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const changes = parseChanges(body["changes"]);
+    if (typeof body["from"] !== "string" || !DATE.test(body["from"])) return bad(res, "from must be a date", "from");
+    if (changes === null) return bad(res, "changes must be a list of { date, time, available }", "changes");
+    res.json(await copyRestOfWeek(client, who.id, { from: body["from"], changes, byUserId: userId(req) }));
   }));
 
   router.post(`${path}/availability/copy-week`, guard, wrap("POST copy-week", async (req, res, who) => {
