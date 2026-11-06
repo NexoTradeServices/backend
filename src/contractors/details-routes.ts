@@ -90,6 +90,13 @@ export function contractorDetailsRoutes(client: PrismaClient): Router {
       else if (b["address"] !== undefined) {
         if (!isPlacesAddress(b["address"])) return void bad("Pick the address from the list, or clear the field.", "address");
         address = b["address"];
+        // Feature 1021's rule, as on Mike's form: a NEWLY picked address sits in the contractor's Operating state (one
+        // already on file stays, so the page can still be saved while the office sorts a move).
+        const onFile = contractor.address !== null && typeof contractor.address === "object" ? (contractor.address as Record<string, unknown>) : null;
+        const isNew = onFile === null || onFile["placeId"] !== address.placeId || onFile["street"] !== address.street;
+        if (isNew && address.state !== contractor.operatingState) {
+          return void bad(`The address must be in ${contractor.operatingState}. Ring the office if you have moved.`, "address");
+        }
       }
       const name = typeof b["name"] === "string" ? b["name"].trim() : contractor.name;
       if (name === "") return void bad("Required.", "name");

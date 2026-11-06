@@ -3,7 +3,8 @@
 // AC2  Bob edits his name, phone, business name, address and emergency contact and they hold; a blank name is refused
 // AC3  everything else is read-only, on the screen and by sending it (email, ABN, GST, the bank details, trades,
 //      insurance, status, Operating state); another contractor's details cannot be read
-// AC4  the address has no state check; Bob's Operating state and service area do not change
+// AC4  a new address must be in Bob's Operating state (the rule 1021 gave Mike's form); an address already on file stays;
+//      Bob's Operating state and service area do not change
 // AC5  the bank details are the office's: Bob cannot change them; when Mike replaces them the contractor and the office
 //      are emailed with no numbers and the change is stamped (tests/contractors.test.ts)
 // AC6  a first entry by Mike sends nothing (tests/contractors.test.ts)
@@ -42,6 +43,7 @@ async function signInCookie(email: string): Promise<string> {
 const details = (cookie: string) => request(app).get("/api/contractor/details").set("Cookie", cookie);
 const save = (cookie: string, body: Record<string, unknown>) => request(app).put("/api/contractor/details").set("Cookie", cookie).send(body);
 
+const PERTH_HOME = { street: "9 Rokeby Road", suburb: "Subiaco", state: "WA", country: "AU", postcode: "6008", lat: -31.95, lng: 115.82, placeId: "p-subiaco-home" };
 const SYDNEY = { street: "30 King Street", suburb: "Newtown", state: "NSW", country: "AU", postcode: "2042", lat: -33.897, lng: 151.179, placeId: "p-newtown" };
 
 beforeAll(() => {
@@ -90,7 +92,7 @@ describe("AC2, AC3 -- the page reads and writes only what is Bob's", () => {
       name: "Robert Reilly",
       phone: "0400 111 222",
       businessName: "Reilly & Son Plumbing",
-      address: SYDNEY,
+      address: PERTH_HOME,
       emergencyContactName: "Ann Reilly",
       emergencyContactPhone: "0400 000 321",
     });
@@ -100,7 +102,7 @@ describe("AC2, AC3 -- the page reads and writes only what is Bob's", () => {
       name: "Robert Reilly",
       phone: "0400 111 222",
       businessName: "Reilly & Son Plumbing",
-      address: SYDNEY,
+      address: PERTH_HOME,
       emergencyContactName: "Ann Reilly",
       emergencyContactPhone: "0400 000 321",
     });
@@ -141,16 +143,28 @@ describe("AC2, AC3 -- the page reads and writes only what is Bob's", () => {
   });
 });
 
-describe("AC4 -- the address is for the file", () => {
-  test("AC4: an address in a state we do not operate in saves; Operating state and service area stay as they were", async () => {
+describe("AC4 -- the address sits in the Operating state", () => {
+  test("AC4: a new address in another state is refused; one in WA saves; Operating state and service area never change", async () => {
     const before = await db.contractor.findUniqueOrThrow({ where: { code: "CON-014" }, include: { _count: { select: { servedPostcodes: true } } } });
     const bob = await signInCookie("bob@idelta.com.au");
-    const res = await save(bob, { address: { ...SYDNEY, state: "VIC", suburb: "Carlton", postcode: "3053" } });
-    expect(res.status).toBe(200);
+    const refused = await save(bob, { address: { ...SYDNEY, state: "VIC", suburb: "Carlton", postcode: "3053" } });
+    expect(refused.status).toBe(400);
+    expect(refused.body).toMatchObject({ error: "The address must be in WA. Ring the office if you have moved.", field: "address" });
+    expect((await db.contractor.findUniqueOrThrow({ where: { code: "CON-014" } })).address).toEqual(before.address);
+
+    const ok = await save(bob, { address: { ...SYDNEY, state: "WA", suburb: "Subiaco", postcode: "6008", placeId: "p-subiaco" } });
+    expect(ok.status).toBe(200);
     const after = await db.contractor.findUniqueOrThrow({ where: { code: "CON-014" }, include: { _count: { select: { servedPostcodes: true } } } });
     expect(after.operatingState).toBe(before.operatingState);
     expect(after._count.servedPostcodes).toBe(before._count.servedPostcodes);
     expect(after.coreLocation).toEqual(before.coreLocation);
-    expect((after.address as { state: string }).state).toBe("VIC");
+    expect((after.address as { suburb: string }).suburb).toBe("Subiaco");
+  });
+
+  test("AC4: an address already on file in another state stays, and the page still saves other changes", async () => {
+    await db.contractor.update({ where: { code: "CON-014" }, data: { address: { ...SYDNEY } } });
+    const bob = await signInCookie("bob@idelta.com.au");
+    const res = await save(bob, { address: { ...SYDNEY }, phone: "0400 222 333" });
+    expect(res.status).toBe(200);
   });
 });
