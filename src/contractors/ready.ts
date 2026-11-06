@@ -47,6 +47,10 @@ export interface ReadyInput {
   agreementVersion: string | null;
   /** the label of the latest published agreement, or null while none is published -- Feature 2006 */
   currentAgreementVersion: string | null;
+  /** the state the contractor works in (Feature 1021) */
+  operatingState: string;
+  /** the service-area pin, Places-shaped, or null (Feature 1021: its state must be the operating state) */
+  coreLocation: unknown;
 }
 
 /** Whose pen fixes this item -- Managing the contractor record / Pens. */
@@ -135,9 +139,8 @@ export function readyToDispatch(input: ReadyInput, now: Date = new Date()): Read
   }
 
   if (!input.payoutBsb || !input.payoutAccountNo || !input.payoutAccountName) {
-    // Bank details are his own pen (Pens), but /contractor/details is 2005 --
-    // no route until it ships (decision 3).
-    missing.push({ key: "payout_details", copy: "payout details", pen: "own", route: null, blocking: true });
+    // Bank details are the office's pen (Feature 2005, at UAT): My details shows them locked, the contractor rings the office.
+    missing.push({ key: "payout_details", copy: "payout details", pen: "mikes", route: null, blocking: true });
   }
 
   if (input.status !== "active") {
@@ -155,6 +158,22 @@ export function readyToDispatch(input: ReadyInput, now: Date = new Date()): Read
       copy: "service area (not set up yet)",
       pen: "own",
       route: "/contractor/service-area",
+      blocking: true,
+    });
+  }
+
+  // Feature 1021: a saved pin outside the contractor's operating state is the office's to fix (change the
+  // state back, or the contractor saves a pin inside it).
+  const pinState =
+    input.coreLocation !== null && typeof input.coreLocation === "object"
+      ? (input.coreLocation as Record<string, unknown>)["state"]
+      : undefined;
+  if (typeof pinState === "string" && pinState !== input.operatingState) {
+    missing.push({
+      key: "service_area_state",
+      copy: `Service area outside ${input.operatingState}`,
+      pen: "mikes",
+      route: null,
       blocking: true,
     });
   }

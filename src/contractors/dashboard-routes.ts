@@ -45,6 +45,8 @@ function readyInputOf(
     servedPostcodeCount: contractor._count.servedPostcodes,
     agreementVersion: contractor.agreementVersion,
     currentAgreementVersion,
+    operatingState: contractor.operatingState,
+    coreLocation: contractor.coreLocation,
   };
 }
 
@@ -188,7 +190,17 @@ export function contractorDashboardRoutes(client: PrismaClient): Router {
         });
       }
 
-      res.json({ ready, missing, jobs: [...jobs, ...awaiting] });
+      // Feature 2004: "Set your availability" until the first save (blocks nothing), and the new-hours message once
+      // when the business widened its hours after he last saw one (or after he was made).
+      const settings = await client.platformSettings.findFirstOrThrow({
+        select: { openingTime: true, closingTime: true, openingHoursChangedAt: true, operatorPhone: true },
+      });
+      const seenAfter = contractor.hoursNoticeSeenAt ?? contractor.createdAt;
+      const hoursNotice =
+        settings.openingHoursChangedAt !== null && settings.openingHoursChangedAt.getTime() > seenAfter.getTime()
+          ? { openingTime: settings.openingTime, closingTime: settings.closingTime }
+          : null;
+      res.json({ ready, missing, setAvailability: contractor.availabilitySavedAt === null, hoursNotice, officePhone: settings.operatorPhone, jobs: [...jobs, ...awaiting] });
     })().catch((error: unknown) => {
       console.error("GET /api/contractor/dashboard failed", error);
       res.status(500).json({ error: "internal error" });

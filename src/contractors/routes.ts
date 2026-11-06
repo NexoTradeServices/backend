@@ -20,10 +20,14 @@ import { Role } from "../generated/prisma/enums.js";
 import { nextReference } from "../db/reference.js";
 import { currentAgreementLabel } from "../agreements/current.js";
 import { readyToDispatch, type ReadyInput } from "./ready.js";
+import { isOpenState } from "../holidays/missing.js";
 import { parseServiceAreaInput, saveServiceArea, serviceAreaDtoOf } from "./service-area.js";
 import { loadContractorDay } from "./day.js";
+import { notAvailableRunsOn } from "../availability/index.js";
+import { zonedDateTimeToUtc, dateOnlyAsUtcMidnight } from "../time/index.js";
 import { isValidAbn } from "../invoices/abn.js";
 import { listContractorReviews } from "../reviews/service.js";
+import { bankReplaced, bankStamp, sendBankChanged } from "./bank-change.js";
 
 // ---------------------------------------------------------------------------
 // Shapes
@@ -37,7 +41,7 @@ import { listContractorReviews } from "../reviews/service.js";
 // frontend e2e suite against the real dev DB (Bob's migrated row), not by
 // the backend suite's throwaway one (its fixtures never carry a legacy
 // address, so this gap never exercised there).
-interface PlacesAddress {
+export interface PlacesAddress {
   street: string;
   suburb?: string;
   state?: string;
@@ -80,6 +84,8 @@ interface ContractorInput {
   payoutAccountNo: string | null;
   payoutAccountName: string | null;
   active: boolean; // Contractor.status === "active"
+  /** Feature 1021: undefined = the body did not carry it (an update leaves it alone; a create refuses) */
+  operatingState: string | undefined;
 }
 
 interface FieldError {
@@ -96,7 +102,7 @@ type ParseResult = { ok: true; data: ContractorInput } | { ok: false } & FieldEr
 export const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-function isValidBsb(raw: string): boolean {
+export function isValidBsb(raw: string): boolean {
   return /^\d{6}$/.test(raw.replace(/[\s-]/g, ""));
 }
 
@@ -105,14 +111,14 @@ function isValidBsb(raw: string): boolean {
  * optional field -- only a genuinely wrong-shaped value (a number, an
  * object) is the error case, returned as `undefined`.
  */
-function optionalString(value: unknown): string | null | undefined {
+export function optionalString(value: unknown): string | null | undefined {
   if (value === undefined || value === null) return null;
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed === "" ? null : trimmed;
 }
 
-function isPlacesAddress(value: unknown): value is PlacesAddress {
+export function isPlacesAddress(value: unknown): value is PlacesAddress {
   if (value === null || typeof value !== "object") return false;
   const v = value as Record<string, unknown>;
   if (typeof v["street"] !== "string") return false;
@@ -276,9 +282,16 @@ function parseContractorInput(body: unknown): ParseResult {
   const payoutAccountName = optionalString(b["payoutAccountName"]);
   if (payoutAccountName === undefined) return { ok: false, error: "invalid account name", field: "payoutAccountName" };
 
+  const stateRaw = b["operatingState"];
+  if (stateRaw !== undefined && stateRaw !== null && (typeof stateRaw !== "string" || stateRaw.trim() === "")) {
+    return { ok: false, error: "Required.", field: "operatingState" };
+  }
+  const operatingState = typeof stateRaw === "string" ? stateRaw.trim() : undefined;
+
   return {
     ok: true,
     data: {
+      operatingState,
       name,
       email: emailRaw,
       phone,
@@ -359,6 +372,8 @@ function readyInputOf(contractor: NonNullable<ContractorWithRelations>, currentA
     servedPostcodeCount: contractor._count.servedPostcodes,
     agreementVersion: contractor.agreementVersion,
     currentAgreementVersion,
+    operatingState: contractor.operatingState,
+    coreLocation: contractor.coreLocation,
   };
 }
 
@@ -382,6 +397,7 @@ async function toDto(client: PrismaClient, contractor: NonNullable<ContractorWit
 
   return {
     code: contractor.code,
+    operatingState: contractor.operatingState,
     name: contractor.name,
     email: contractor.email,
     phone: contractor.phone,
@@ -521,6 +537,23 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
         return;
       }
 
+      // Feature 1021: Operating state is required, and an open one. Refused before the login is made,
+      // so no invite goes.
+      if (data.operatingState === undefined) {
+        res.status(400).json({ error: "Required.", field: "operatingState" });
+        return;
+      }
+      if (!(await isOpenState(client, data.operatingState))) {
+        res.status(400).json({ error: `${data.operatingState} is not an operating state.`, field: "operatingState" });
+        return;
+      }
+
+      // Feature 1021: the address cannot sit in another state than the Operating state.
+      if (data.address !== null && data.address.state !== data.operatingState) {
+        res.status(400).json({ error: `The address must be in ${data.operatingState} or change the Operating state first.`, field: "address" });
+        return;
+      }
+
       const existingUser = await client.user.findUnique({ where: { email: data.email } });
       if (existingUser) {
         res.status(400).json({ error: "This email already has a login", field: "email" });
@@ -530,6 +563,8 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
       // Decision 6: the User (role contractor, no usable password) is
       // created in the same transaction as the Contractor.
       const code = await nextReference("CON", client);
+      // Feature 2004: Availability starts from the business hours as they are today.
+      const hours = await client.platformSettings.findFirstOrThrow({ select: { openingTime: true, closingTime: true } });
       const created = await client.$transaction(async (tx) => {
         const user = await tx.user.create({
           data: { name: data.name, email: data.email, role: Role.contractor },
@@ -537,6 +572,9 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
         return tx.contractor.create({
           data: {
             code,
+            operatingState: data.operatingState ?? "WA",
+            defaultOpening: hours.openingTime,
+            defaultClosing: hours.closingTime,
             userId: user.id,
             name: data.name,
             email: data.email,
@@ -608,6 +646,26 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
         return;
       }
 
+      // Feature 1021: a new Operating state must be an open one; the contractor's current state may stay even if closed.
+      if (
+        data.operatingState !== undefined &&
+        data.operatingState !== existing.operatingState &&
+        !(await isOpenState(client, data.operatingState))
+      ) {
+        res.status(400).json({ error: `${data.operatingState} is not an operating state.`, field: "operatingState" });
+        return;
+      }
+
+      // Feature 1021: a newly picked address cannot sit in another state than the Operating state; an address
+      // already on file stays, so a contractor who is moved to a new state can be saved before the address is.
+      const stateAfter = data.operatingState ?? existing.operatingState;
+      const onFile = existing.address as { placeId?: string; street?: string } | null;
+      const addressPicked = data.address !== null && (onFile === null || onFile.placeId !== data.address.placeId || onFile.street !== data.address.street);
+      if (data.address !== null && addressPicked && data.address.state !== stateAfter) {
+        res.status(400).json({ error: `The address must be in ${stateAfter} or change the Operating state first.`, field: "address" });
+        return;
+      }
+
       const unknownTrade = await unknownTradeField(client, data.specialties);
       if (unknownTrade) {
         res.status(400).json(unknownTrade);
@@ -656,6 +714,7 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
         await tx.contractor.update({
           where: { id: existing.id },
           data: {
+            ...(data.operatingState === undefined ? {} : { operatingState: data.operatingState }),
             name: data.name,
             email: data.email,
             phone: data.phone,
@@ -671,6 +730,7 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
             payoutBsb: data.payoutBsb,
             payoutAccountNo: data.payoutAccountNo,
             payoutAccountName: data.payoutAccountName,
+            ...bankStamp(existing, data, authUser?.id ?? null, now),
             status: data.active ? "active" : "suspended",
             ...(statusChanged
               ? { statusChangedByUserId: authUser?.id ?? null, statusChangedAt: now }
@@ -706,6 +766,9 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
           }
         }
       });
+
+      // Feature 2005: replacing bank details already on file tells the contractor and the office.
+      if (bankReplaced(existing, data)) await sendBankChanged(client, existing, now);
 
       const full = await loadContractor(client, existing.code);
       if (!full) {
@@ -784,7 +847,11 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
           res.status(400).json({ error: parsed.error, field: parsed.field });
           return;
         }
-        const saved = await saveServiceArea(client, contractor.id, parsed.data);
+        const saved = await saveServiceArea(client, contractor.id, parsed.data, {
+          operatingState: contractor.operatingState,
+          caller: "ops",
+          firstName: contractor.name.split(" ")[0] ?? contractor.name,
+        });
         if (!saved.ok) {
           res.status(400).json({ error: saved.error, field: saved.field });
           return;
@@ -827,13 +894,27 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
           res.status(503).json({ error: "the day view is unavailable right now" });
           return;
         }
+        // Feature 1022: ?job=<reference> draws the day in THAT job's zone (a Sydney job: Sydney's midnight to midnight).
+        const jobRef = req.query["job"];
+        const forJob =
+          typeof jobRef === "string"
+            ? await client.job.findUnique({ where: { reference: jobRef }, select: { timezone: true } })
+            : null;
+        const dayZone = forJob?.timezone ?? settings.timezone;
         // Feature 4006: ?ignoreJob=<reference> leaves that job's own block off the day.
         const ignoreRef = req.query["ignoreJob"];
         const ignored =
           typeof ignoreRef === "string"
             ? await client.job.findUnique({ where: { reference: ignoreRef }, select: { id: true } })
             : null;
-        res.json({ blocks: await loadContractorDay(client, contractor.id, date, settings.timezone, ignored?.id) });
+        // Feature 2004: the half hours the contractor has switched off, so the day view greys them (dispatch and reschedule).
+        const dayStart = zonedDateTimeToUtc(dayZone, date, 0, 0);
+        const nextDate = new Date(dateOnlyAsUtcMidnight(date).getTime() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        const dayEnd = zonedDateTimeToUtc(dayZone, nextDate, 0, 0);
+        res.json({
+          blocks: await loadContractorDay(client, contractor.id, date, dayZone, ignored?.id),
+          notAvailable: await notAvailableRunsOn(client, contractor, dayStart, dayEnd),
+        });
       })().catch((error: unknown) => {
         console.error("GET /api/contractors/:code/day failed", error);
         res.status(500).json({ error: "internal error" });

@@ -13,6 +13,7 @@ import express, { type Express } from "express";
 import request from "supertest";
 import { toNodeHandler } from "better-auth/node";
 import { resetReferenceSequences, testClient, truncateAll } from "./helpers/database.js";
+import { seedWaHolidays } from "./helpers/holidays.js";
 import { recordingAdapter, setProviders } from "./helpers/notifications.js";
 import { owedInvoice } from "./helpers/owed-invoice.js";
 import { seedBase } from "../src/db/seed/base.js";
@@ -88,6 +89,7 @@ beforeEach(async () => {
   await truncateAll(db);
   await resetReferenceSequences(db);
   await seedBase(db);
+  await seedWaHolidays(db); // 1020: keeps the "public holidays missing" step quiet
   await seedFixtures(db);
   await seedAuthFixtures(db);
   await setProviders(db, { emailProvider: email.name, providerOverrides: null });

@@ -76,7 +76,7 @@ describe("AC6 -- the update email", () => {
     expect(rows.map((r) => r.recipientId)).not.toContain(priya.userId);
 
     await drainOnce();
-    expect(email.sent.map((m) => m.to).sort()).toEqual(["bob@idelta.com.au", "dave@idelta.com.au"]);
+    expect(email.sent.map((m) => m.to).sort()).toEqual(["bob@idelta.com.au", "dave@idelta.com.au", "liam@idelta.com.au"]);
     const bobMail = email.sent.find((m) => m.to === "bob@idelta.com.au")?.message;
     expect(bobMail?.html).toContain("Read and accept");
     expect(bobMail?.html).toContain("/contractor/agreement");

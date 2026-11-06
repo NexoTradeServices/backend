@@ -520,14 +520,14 @@ describe("AC8 -- what a row carries", () => {
       windowLabel: "morning 7:00-12:00",
       source: "web",
     });
-    expect(row?.receivedLabel).toMatch(/^(Today|[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}( \d{4})?), \d{1,2}:\d{2}(am|pm) AWST$/);
+    expect(row?.receivedLabel).toMatch(/^(Today|[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}( \d{4})?), \d{1,2}:\d{2}(am|pm)$/);
     expect(row?.contractor?.name).toBe("Bob Reilly");
     expect(row?.contractor?.code).toBe("CON-014");
-    expect(row?.contractor?.standing).toMatch(/^Waiting for Bob's answer - proposed [A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am AWST$/);
+    expect(row?.contractor?.standing).toMatch(/^Waiting for Bob's answer - proposed [A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}( \d{4})?, 8:00am WA time$/);
 
-    expect(body.rows.find((r) => r.reference === "JOB-1051")?.contractor?.standing).toBe("Booked - Today, 1:00pm AWST");
+    expect(body.rows.find((r) => r.reference === "JOB-1051")?.contractor?.standing).toBe("Booked - Today, 1:00pm WA time");
     expect(body.rows.find((r) => r.reference === "JOB-1039")?.contractor?.standing).toBe("On hold - no return date yet");
-    expect(body.updatedLabel).toMatch(/^\d{1,2}:\d{2}(am|pm) AWST$/);
+    expect(body.updatedLabel).toMatch(/^\d{1,2}:\d{2}(am|pm)$/);
   });
 
   test("AC8: a phone-taken job says Phone", async () => {
@@ -539,10 +539,10 @@ describe("AC8 -- what a row carries", () => {
 
   test("AC8: times render in the given zone and are labelled -- today, another day with its year, and a plain date read as stored", () => {
     const now = new Date("2026-09-10T02:42:00.000Z"); // 10:42am in Perth
-    expect(formatDateTimeLabel("Australia/Perth", new Date("2026-09-10T01:14:00.000Z"), now)).toBe("Today, 9:14am AWST");
-    expect(formatDateTimeLabel("Australia/Perth", new Date("2026-09-08T07:20:00.000Z"), now)).toBe("Tue 8 Sep, 3:20pm AWST");
+    expect(formatDateTimeLabel("Australia/Perth", new Date("2026-09-10T01:14:00.000Z"), now)).toBe("Today, 9:14am");
+    expect(formatDateTimeLabel("Australia/Perth", new Date("2026-09-08T07:20:00.000Z"), now)).toBe("Tue 8 Sep, 3:20pm");
     // Another year carries its year (frontend-conventions / Formats).
-    expect(formatDateTimeLabel("Australia/Perth", new Date("2025-09-08T07:20:00.000Z"), now)).toBe("Mon 8 Sep 2025, 3:20pm AWST");
+    expect(formatDateTimeLabel("Australia/Perth", new Date("2025-09-08T07:20:00.000Z"), now)).toBe("Mon 8 Sep 2025, 3:20pm");
     // 11pm UTC on the 9th is already the 10th in Perth.
     expect(formatDateLabel("Australia/Perth", new Date("2026-09-09T23:00:00.000Z"), now)).toBe("Thu 10 Sep");
     expect(formatDateLabel("Australia/Perth", new Date("2025-09-09T23:00:00.000Z"), now)).toBe("Wed 10 Sep 2025");
@@ -686,7 +686,7 @@ describe("AC12 -- the contractor card", () => {
     const page = await detail(mike, "JOB-1042");
     expect(page.contractor?.name).toBe("Bob Reilly");
     expect(page.contractor?.code).toBe("CON-014");
-    expect(page.contractor?.standing).toMatch(/^Waiting for Bob's answer - proposed .+ AWST$/);
+    expect(page.contractor?.standing).toMatch(/^Waiting for Bob's answer - proposed .+ WA time$/);
 
     const fresh = await makeJob();
     expect((await detail(mike, fresh.reference)).contractor).toBeNull();
@@ -794,12 +794,14 @@ describe("AC13-AC18 -- the Addresses card's one Save", () => {
     expect(stored.timezone).toBe("Australia/Perth");
   });
 
-  test("AC16: even a site in another state leaves Job.timezone frozen at creation", async () => {
+  test("AC16: a site in a state we do not operate in is refused, and the job keeps its postcode and Job.timezone", async () => {
     const mike = await signInCookie("mike@idelta.com.au");
     const job = await makeJob();
-    expect((await saveAddresses(mike, job.reference, { site: { sameAsBilling: false, address: ADELAIDE_SITE } })).status).toBe(200);
+    const res = await saveAddresses(mike, job.reference, { site: { sameAsBilling: false, address: ADELAIDE_SITE } });
+    expect(res.status).toBe(400);
+    expect((res.body as { error: string }).error).toBe("SA is not an operating state.");
     const stored = await db.job.findUniqueOrThrow({ where: { id: job.id } });
-    expect(stored.postcode).toBe("5000");
+    expect(stored.postcode).not.toBe("5000");
     expect(stored.timezone).toBe("Australia/Perth");
   });
 
@@ -934,7 +936,7 @@ describe("AC19-AC23 -- operator notes, a log", () => {
     const page = second.body as DetailBody;
     expect(page.notes.map((n) => n.type)).toEqual(["general", "dispute"]);
     expect(page.notes[1]?.authorName).toBe("Mike");
-    expect(page.notes[1]?.atLabel).toMatch(/^Today, \d{1,2}:\d{2}(am|pm) AWST$/);
+    expect(page.notes[1]?.atLabel).toMatch(/^Today, \d{1,2}:\d{2}(am|pm)$/);
   });
 
   test("AC20: General, Instruction, Complaint and Dispute are taken; correction or any other type is refused", async () => {
@@ -1025,7 +1027,7 @@ describe("AC24 -- the new-job-request email links to the job page", () => {
         location: { suburb: "Joondalup", state: "WA", country: "AU", postcode: "6027", lat: -31.7448, lng: 115.7661, placeId: "fixture-place-joondalup" },
         trade: "Plumbing",
         selectedOptions: [],
-        preferredDate: "2026-09-16",
+        preferredDate: "2027-09-15",
         preferredWindow: "morning",
         description: "Kitchen tap won't stop dripping.",
         marketingEmail: false,

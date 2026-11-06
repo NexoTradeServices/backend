@@ -15,6 +15,8 @@ import { currentAgreementLabel } from "../agreements/current.js";
 import { loadCandidates, guardReason, readyInputOf, type CandidatesResult } from "./candidates.js";
 import { siteContactLine } from "./site-contact.js";
 import { cancelBooking } from "./booking.js";
+import { slotRefusal, stateOfLocation } from "../calendar/rules.js";
+import { notAvailableIn } from "../availability/index.js";
 import { asAddress, suburbOf, effectiveAddress, NO_ADDRESS_REASON, type Address } from "./shared.js";
 
 const WINDOW_START_MINUTES: Record<string, number> = { morning: 420, afternoon: 720, evening: 1020 };
@@ -56,6 +58,8 @@ export interface DispatchFacts {
   /** Feature 4006: the job's real status, for the page's tag (it was hardcoded New). */
   status: string;
   defaults: { date: string; startMinutes: number; holdMinutes: number };
+  /** Feature 1022: "NSW time" - the label on every time the page shows (it replaced the hard-coded AWST) */
+  stateLabel: string;
   /** Feature 4006: "reschedule" fixes the contractor who holds the booking; absent at dispatch. */
   mode?: "reschedule";
   contractor?: { code: string; name: string; firstName: string };
@@ -73,6 +77,7 @@ export function dispatchFactsOf(job: DispatchJobRow): DispatchFacts {
     siteAddress: effectiveAddress(job),
     customerName: job.customer.name,
     status: job.status,
+    stateLabel: `${stateOfLocation(job.serviceLocation) ?? ""} time`.trim(),
     defaults: {
       date: job.preferredDate.toISOString().slice(0, 10),
       startMinutes: WINDOW_START_MINUTES[window] ?? 420,
@@ -166,7 +171,7 @@ export async function candidatesAndPriceFor(
   const base: TierRates = { calloutRate: job.customerCalloutRate, standardRate: job.customerStandardRate };
   const price = priceFor(base, multipliers, level);
   const candidates = await loadCandidates(client, {
-    job: { trade: job.serviceType.trade, postcode: job.postcode, lat: location.lat, lng: location.lng },
+    job: { trade: job.serviceType.trade, postcode: job.postcode, lat: location.lat, lng: location.lng, state: stateOfLocation(job.serviceLocation) },
     zone: job.timezone,
     date: slot.date,
     holdStart: start,
@@ -248,6 +253,13 @@ export async function dispatchJob(
         throw new Refused({ ok: false, status: 400, error: "A slot in the past cannot be dispatched.", field: "startMinutes" });
       }
 
+      // Feature 1020: a holiday in the job's state, or a slot outside opening hours, is refused --
+      // an emergency included.
+      const refusal = await slotRefusal(tx, job, slot);
+      if (refusal !== null) {
+        throw new Refused({ ok: false, status: 400, error: refusal, field: "startMinutes" });
+      }
+
       // Lock the Job row (must still be `new`) -- 4001's pattern.
       await tx.$queryRaw`SELECT id FROM "Job" WHERE id = ${job.id} FOR UPDATE`;
       const freshStatus = (await tx.job.findUniqueOrThrow({ where: { id: job.id }, select: { status: true } })).status;
@@ -315,6 +327,13 @@ export async function dispatchJob(
       });
       if (clash) {
         throw new Refused({ ok: false, status: 409, error: "Busy at that time - pick another slot or another contractor." });
+      }
+
+      // Feature 2004: time switched off in his Availability is refused here too, on the server - dispatch and reschedule alike
+      // (Mike's page refreshes its list on this answer). Read under the contractor's lock, so a save a moment earlier counts.
+      const availability = (await notAvailableIn(tx, [contractor], { start, end })).get(contractor.id);
+      if (availability?.notAvailable === true) {
+        throw new Refused({ ok: false, status: 409, error: "Not available at that time - pick another slot or another contractor." });
       }
 
       const level = serviceLevelFor(job.timezone, start, slot.emergency);

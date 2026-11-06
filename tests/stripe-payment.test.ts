@@ -100,7 +100,7 @@ function intentFor(invoice: OwedInvoice, id: string, method = "card", amount = 6
   return id;
 }
 
-// 15 Oct 2026, 2:15pm AWST
+// 15 Oct 2026, 2:15pm
 const PAID_AT = Math.floor(new Date("2026-10-15T06:15:00.000Z").getTime() / 1000);
 
 function eventOf(type: string, session: Record<string, unknown>, id = `evt_${type}_${String(Math.random()).slice(2)}`): string {
@@ -214,7 +214,7 @@ describe("AC1 / AC2 -- a card payment, and Stripe repeating itself", () => {
     expect(email.sent.map((m) => m.to).sort()).toEqual(["ops@idelta.com.au", "sarah@idelta.com.au", "sarah@idelta.com.au"]);
     const notice = email.sent.find((m) => m.to === "ops@idelta.com.au");
     expect(notice?.message.subject).toBe(`Payment received - INV-2042, $655 (${sarahs.jobReference})`);
-    expect(notice?.message.text).toContain(`Sarah Chen paid INV-2042 for ${sarahs.jobReference}: $655 by card, 15 Oct 2026 at 2:15pm AWST.`);
+    expect(notice?.message.text).toContain(`Sarah Chen paid INV-2042 for ${sarahs.jobReference}: $655 by card, 15 Oct 2026 at 2:15pm.`);
     expect(notice?.message.text).toContain(`https://idelta.com.au/ops/jobs/${sarahs.jobReference}`);
     expect(sms.sent).toHaveLength(0);
   });
@@ -474,7 +474,7 @@ describe("AC6 -- Check payment with Stripe", () => {
     expect(res.status).toBe(200);
     expect((res.body as CheckBody).paid).toBe(false);
     // When it was checked, on the job's clock -- for the card's own line.
-    expect((res.body as CheckBody).checkedLabel).toMatch(/^\d{1,2}:\d{2}(am|pm) AWST$/);
+    expect((res.body as CheckBody).checkedLabel).toMatch(/^\d{1,2}:\d{2}(am|pm)$/);
     const now = await state(sarahs);
     expect(now.invoice.status).toBe("sent");
     expect(now.payments).toHaveLength(0);
@@ -536,7 +536,7 @@ describe("AC6 -- Check payment with Stripe", () => {
 // ---------------------------------------------------------------------------
 
 describe("AC7 -- the receipt's wording", () => {
-  test("AC7: Sarah's card receipt names INV and JOB, $655, card, the date and time in AWST, nothing further owed, the office number; no attachment, no button", async () => {
+  test("AC7: Sarah's card receipt names INV and JOB, $655, card, the date and time in, nothing further owed, the office number; no attachment, no button", async () => {
     const sarahs = await owedInvoice(db);
     await post(completed(intentFor(sarahs, "pi_receipt")));
     await drainOnce(db);
@@ -546,7 +546,7 @@ describe("AC7 -- the receipt's wording", () => {
       [
         "Hi Sarah,",
         "",
-        `Thank you - we've received your payment of $655 for invoice INV-2042 (${sarahs.jobReference}), paid by card on 15 Oct 2026 at 2:15pm AWST.`,
+        `Thank you - we've received your payment of $655 for invoice INV-2042 (${sarahs.jobReference}), paid by card on 15 Oct 2026 at 2:15pm.`,
         "",
         "Nothing further is owed.",
         "",

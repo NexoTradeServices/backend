@@ -87,7 +87,7 @@ describe("AC5 -- the cancel", () => {
     };
     expect(body.toast).toBe("JOB-1042 cancelled.");
     expect(body.job.status).toBe("cancelled");
-    expect(body.job.actions).toEqual({ reschedule: false, takeOff: false, cancel: false });
+    expect(body.job.actions).toEqual({ reschedule: false, takeOff: false, cancel: false, hold: false, bookReturn: false });
     expect(body.job.cancelled).toMatchObject({
       reasonLabel: "Customer changed their mind",
       note: "Sarah rang this morning",

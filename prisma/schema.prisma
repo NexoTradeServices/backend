@@ -239,6 +239,8 @@ model User {
 
   // audit-pair back-relations (who did the thing)
   gstStatusChanges        PlatformSettings[]           @relation("GstStatusChangedBy")
+  operatingStateChanges   OperatingState[]            @relation("OperatingStateChangedBy")
+  availabilityChanges     ContractorAvailability[]    @relation("AvailabilityChangedBy")
   cancelledJobs           Job[]                        @relation("JobCancelledBy")
   cancelledAssignments    Assignment[]                 @relation("AssignmentCancelledBy")
   voidedInvoices          Invoice[]                    @relation("InvoiceVoidedBy")
@@ -247,6 +249,8 @@ model User {
   supersededSettlements   ContractorSettlement[]       @relation("SettlementSupersededBy")
   payAdjustmentsAdded     ContractorPayAdjustment[]    @relation("PayAdjustmentCreatedBy")
   contractorStatusChanges Contractor[]                 @relation("ContractorStatusChangedBy")
+  contractorPayoutChanges Contractor[]                 @relation("ContractorPayoutChangedBy")
+  returnReasons           ReturnReason[]
   agreementVersionsIssued ContractorAgreementVersion[] @relation("AgreementIssuedBy")
   specialtyStatusChanges  ContractorSpecialty[]        @relation("ContractorSpecialtyStatusChangedBy")
 
@@ -361,6 +365,13 @@ model PlatformSettings {
   /// stamped onto each new Job -- see Data Model / Time. Backfilled onto the
   /// existing row by this column's own migration (Feature 1008).
   timezone                  String      @default("Australia/Perth")
+  /// the business opens / closes at these clock times, "HH:MM" on the half hour,
+  /// the same every day (Calendar & Scheduling / Opening hours). Feature 1020.
+  openingTime               String      @default("07:00")
+  closingTime               String      @default("19:00")
+  /// stamped when a save WIDENS the hours (earlier opening or later closing);
+  /// feature 2004 reads it for the contractor's one-time message. Feature 1020.
+  openingHoursChangedAt     DateTime?
   /// the brand's display name -- screens, email sender name, template
   /// signatures all read THIS, never a literal (Foundations / Brand
   /// identity; ADR 0005). Backfilled onto the existing row by this column's
@@ -386,6 +397,40 @@ model PlatformSettings {
 
   /// Test-data label (design: Data Model, Test data). Empty on every real record.
   testData String?
+}
+
+/// One row per Australian state: is the business operating there? -- Feature 1021
+/// (Calendar & Scheduling / Operating states). WA open at launch; the owner ticks the others on
+/// Settings, and a state opens only with this year's holidays entered.
+model OperatingState {
+  id              String   @id @default(uuid(7))
+  /// the state code, as Job.serviceLocation.state carries it ("WA", "NSW", ...)
+  state           String   @unique
+  open            Boolean  @default(false)
+  changedAt       DateTime?
+  changedByUserId String?
+
+  changedBy User? @relation("OperatingStateChangedBy", fields: [changedByUserId], references: [id])
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
+}
+
+/// One public holiday of one state -- Feature 1020 (Calendar & Scheduling /
+/// Public holidays). The business is closed that day in that state: nothing is
+/// dispatched or rescheduled, and the forms refuse it as a wanted date.
+model PublicHoliday {
+  id    String   @id @default(uuid(7))
+  /// the state code, as Job.serviceLocation.state carries it ("WA", "NSW", ...)
+  state String
+  /// the calendar day, plain date (no time, no zone)
+  date  DateTime @db.Date
+  name  String
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
+
+  @@unique([state, date])
 }
 
 /// One published contractor agreement -- Feature 2006. A never-changed file;
@@ -512,6 +557,18 @@ model Customer {
 
 model Contractor {
   id                    String           @id @default(uuid(7))
+  /// the opening hours this contractor's Availability starts from (Calendar & Scheduling / Availability): a half hour
+  /// with no saved row is Available inside them and Not available outside. Stamped from the settings row when the
+  /// contractor is made; widening the business hours later leaves these as they were, so the new half hours start
+  /// Not available until the contractor switches them on. Feature 2004.
+  defaultOpening        String           @default("07:00")
+  defaultClosing        String           @default("19:00")
+  /// when the contractor (or Mike) first saved Availability; empty = never set (the dashboard says so)
+  availabilitySavedAt   DateTime?
+  /// when the contractor last saw the "new opening hours" notice on the dashboard
+  hoursNoticeSeenAt     DateTime?
+  /// the state this contractor works in -- office-held (Managing the contractor record). Feature 1021.
+  operatingState        String           @default("WA")
   /// human-readable CON-xxxx; system-generated, sequential
   code                  String           @unique
   userId                String           @unique
@@ -547,6 +604,10 @@ model Contractor {
   payoutBsb             String?
   payoutAccountNo       String?
   payoutAccountName     String?
+  /// AUDIT pair: who last REPLACED bank details already on file, and when -- a first entry stamps nothing.
+  /// Feature 2005.
+  payoutChangedByUserId String?
+  payoutChangedAt       DateTime?
   status                ContractorStatus @default(active)
   /// AUDIT pair: who last changed status, and when -- Managing the
   /// contractor record
@@ -564,10 +625,12 @@ model Contractor {
 
   user                 User                            @relation(fields: [userId], references: [id])
   statusChangedBy      User?                           @relation("ContractorStatusChangedBy", fields: [statusChangedByUserId], references: [id])
+  payoutChangedBy      User?                           @relation("ContractorPayoutChangedBy", fields: [payoutChangedByUserId], references: [id])
   specialties          ContractorSpecialty[]
   servedPostcodes      ContractorServedPostcode[]
   reviews              Review[]
   calendarEvents       CalendarEvent[]
+  availability         ContractorAvailability[]
   assignments          Assignment[]
   settlements          ContractorSettlement[]
   agreementAcceptances ContractorAgreementAcceptance[]
@@ -644,6 +707,27 @@ model Review {
 
 /// Availability + bookings. Block state is READ from the assignment -- there is
 /// deliberately no hold/confirmed field here.
+/// One half hour of one contractor's Availability that differs from "available inside the defaults" -- Feature 2004.
+/// Only changed half hours are written. `date` is the calendar day in the zone of the contractor's Operating state;
+/// `startTime` is the half hour's start, "HH:MM".
+model ContractorAvailability {
+  id              String   @id @default(uuid(7))
+  contractorId    String
+  date            DateTime @db.Date
+  startTime       String
+  available       Boolean
+  changedByUserId String?
+  changedAt       DateTime @default(now())
+
+  contractor Contractor @relation(fields: [contractorId], references: [id], onDelete: Cascade)
+  changedBy  User?      @relation("AvailabilityChangedBy", fields: [changedByUserId], references: [id])
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
+
+  @@unique([contractorId, date, startTime])
+}
+
 model CalendarEvent {
   id           String            @id @default(uuid(7))
   contractorId String
@@ -653,6 +737,8 @@ model CalendarEvent {
   jobId        String?
   assignmentId String?
   notes        String?
+  /// when the block was made -- a return visit booked later is told apart from the first booking by this (Feature 5002)
+  createdAt    DateTime          @default(now())
 
   contractor Contractor  @relation(fields: [contractorId], references: [id], onDelete: Cascade)
   job        Job?        @relation(fields: [jobId], references: [id])
@@ -752,6 +838,7 @@ model Job {
   capabilityTokens CapabilityToken[]
   payAdjustments   ContractorPayAdjustment[]
   notifications    Notification[]
+  returnReasons    ReturnReason[]
 
   /// Test-data label (design: Data Model, Test data). Empty on every real record.
   testData String?
@@ -834,6 +921,7 @@ model Assignment {
   calendarEvents   CalendarEvent[]
   capabilityTokens CapabilityToken[]
   issuedInvoices   Invoice[]           @relation("InvoiceAssignment")
+  returnReasons    ReturnReason[]
 
   /// Test-data label (design: Data Model, Test data). Empty on every real record.
   testData String?
@@ -1293,4 +1381,37 @@ model ServiceAreaPage {
   testData String?
 
   @@unique([serviceTypeId, suburbId])
+}
+
+// ---------------------------------------------------------------------------
+// Return visits (Feature 5002)
+// ---------------------------------------------------------------------------
+
+enum ReturnReasonKind {
+  part_on_order
+  more_time_needed
+  other
+}
+
+/// Why a job could not be finished in one visit: written by Bob's Book a return visit and by Mike's Put on hold.
+/// The latest row is the job's current Reason. The office note is Bob's "Not yet" note to the office.
+model ReturnReason {
+  id           String           @id @default(uuid(7))
+  jobId        String
+  assignmentId String
+  reason       ReturnReasonKind
+  otherText    String?
+  officeNote   String?
+  byUserId     String
+  at           DateTime         @default(now())
+
+  job        Job        @relation(fields: [jobId], references: [id])
+  assignment Assignment @relation(fields: [assignmentId], references: [id])
+  byUser     User       @relation(fields: [byUserId], references: [id])
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
+
+  @@index([jobId, at])
+  @@index([assignmentId])
 }

@@ -127,6 +127,12 @@ async function acceptedJob(reference = "JOB-5001"): Promise<{ jobId: string; ass
       acceptedAt: new Date(),
     },
   });
+  // A first visit and a booked return: the job can hold two visit rows (5002: a row needs a block behind it).
+  for (const start of [slot, new Date(slot.getTime() + 7 * 86_400_000)]) {
+    await db.calendarEvent.create({
+      data: { contractorId: bob.id, startTime: start, endTime: new Date(start.getTime() + 2 * 3_600_000), type: "job", jobId: job.id, assignmentId: assignment.id },
+    });
+  }
   return { jobId: job.id, assignmentId: assignment.id };
 }
 

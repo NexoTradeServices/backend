@@ -15,9 +15,15 @@ import type { Router } from "express";
 import { Router as createRouter } from "express";
 import type { Request, Response } from "express";
 import type { PrismaClient } from "../db/client.js";
+import type { Prisma } from "../generated/prisma/client.js";
 import { requireRole } from "../auth/middleware.js";
 import { Role } from "../generated/prisma/enums.js";
-import { formatSlotLabel } from "../time/index.js";
+import { dateOnlyAsUtcMidnight, formatSlotLabel, todayIn, zonedDateTimeToUtc } from "../time/index.js";
+import { holidayOn, stateOfLocation } from "../calendar/rules.js";
+import { notAvailableRunsOn } from "../availability/index.js";
+import { loadContractorDay } from "./day.js";
+import { parseSlotInput } from "../jobs/dispatch.js";
+import { bookReturnIn, parseReason, putOnHoldIn, sendHeldUpdate, sendReturnBooked, type BookedReturn, type HeldJob } from "../jobs/return-visit.js";
 import { suburbOf } from "../jobs/shared.js";
 import { billedHours } from "../jobs/billed-hours.js";
 import { issueInvoice } from "../invoices/issue.js";
@@ -89,6 +95,66 @@ export interface PaidPaymentView {
 
 export type PaymentView = UnpaidPaymentView | PaidPaymentView;
 
+/**
+ * Feature 5002: a second visit row only comes from a booked return. Bob holds as many rows as the
+ * assignment has booked blocks, and never fewer than the rows already saved (old data, a hold that
+ * took the time off, Mike's own additions stay editable).
+ */
+async function visitsAllowedOf(db: Pick<PrismaClient, "calendarEvent">, assignmentId: string, saved: number): Promise<number> {
+  const blocks = await db.calendarEvent.count({ where: { assignmentId, type: "job" } });
+  return Math.max(blocks, saved, 1);
+}
+
+/** Feature 5002: the saved rows whose visit is over -- one per booked block after the first, never more than are saved. */
+async function lockedVisitsOf(db: Pick<PrismaClient, "calendarEvent">, assignmentId: string, saved: number): Promise<number> {
+  const blocks = await db.calendarEvent.count({ where: { assignmentId, type: "job" } });
+  return Math.min(saved, Math.max(0, blocks - 1));
+}
+
+/** Feature 5002: inside the locked transaction, refuse a save that changes an earlier visit's row. */
+async function holdEarlierVisits(tx: Prisma.TransactionClient, assignmentId: string, entries: readonly ParsedEntry[]): Promise<void> {
+  const saved = await tx.assignmentTimeLog.findMany({ where: { assignmentId }, orderBy: [{ startedAt: "asc" }, { id: "asc" }] });
+  const locked = saved.slice(0, await lockedVisitsOf(tx, assignmentId, saved.length));
+  for (const row of locked) {
+    const kept = entries.some(
+      (entry) => entry.startedAt.getTime() === row.startedAt.getTime() && entry.endedAt.getTime() === row.endedAt.getTime() && (entry.note ?? "") === (row.note ?? ""),
+    );
+    if (!kept) throw new Refused({ ok: false, status: 409, error: "An earlier visit is over - ask the office to change it.", field: "timeEntries" });
+  }
+}
+
+/** Feature 5002: inside the locked transaction, refuse a visit row no booked block stands behind. */
+async function holdVisitLimit(tx: Prisma.TransactionClient, assignmentId: string, entries: readonly ParsedEntry[]): Promise<void> {
+  await holdEarlierVisits(tx, assignmentId, entries);
+  const rows = entries.length;
+  const saved = await tx.assignmentTimeLog.count({ where: { assignmentId } });
+  if (rows > (await visitsAllowedOf(tx, assignmentId, saved))) {
+    throw new Refused({ ok: false, status: 409, error: "Book a return visit to add another visit.", field: "timeEntries" });
+  }
+}
+
+async function returnVisitOf(db: Pick<PrismaClient, "returnReason">, assignmentId: string): Promise<ContractorJobView["returnVisit"]> {
+  const row = await db.returnReason.findFirst({ where: { assignmentId }, orderBy: [{ at: "desc" }, { id: "desc" }] });
+  if (row === null) return null;
+  return { reason: row.reason, otherText: row.otherText ?? "", officeNote: row.officeNote ?? "" };
+}
+
+/**
+ * Feature 5002: "I've arrived" is for the visit that is due -- the next booked block not yet worked
+ * (blocks in order, one per saved visit row) -- on its day or after it. Days before it, the screen
+ * only says when the next visit is.
+ */
+async function visitDueBy(db: Pick<PrismaClient, "calendarEvent">, assignmentId: string, worked: number, zone: string, now: Date): Promise<boolean> {
+  const blocks = await db.calendarEvent.findMany({
+    where: { assignmentId, type: "job" },
+    orderBy: [{ startTime: "asc" }, { id: "asc" }],
+    select: { startTime: true },
+  });
+  const next = blocks[worked];
+  if (next === undefined) return blocks.length === 0; // no block at all (an old record): nothing to wait for
+  return todayIn(zone, next.startTime) <= todayIn(zone, now);
+}
+
 export interface ContractorJobView extends JobFacts {
   reference: string;
   jobStatus: string;
@@ -116,6 +182,14 @@ export interface ContractorJobView extends JobFacts {
   frozen: boolean;
   /** "On site" is offered only while the visit is accepted. */
   canOnSite: boolean;
+  /** Feature 5002: Book a return visit is offered on a scheduled or in-progress job whose visit is still open. */
+  canBookReturn: boolean;
+  /** Feature 5002: how many visit rows Bob may hold -- one per booked block, never fewer than the rows already saved. */
+  visitsAllowed: number;
+  /** Feature 5002: how many of the first saved visit rows are earlier visits (a return is booked after them): locked. */
+  lockedVisits: number;
+  /** Feature 5002: the Reason on the latest return asked for on this visit, or null. */
+  returnVisit: { reason: "part_on_order" | "more_time_needed" | "other"; otherText: string; officeNote: string } | null;
   /** Feature 5004: null (no visit booked today), or whether On my way has gone for today's visit. */
   onMyWay: OnMyWayView;
   timezone: string;
@@ -239,7 +313,11 @@ async function viewOf(client: PrismaClient, assignment: OwnAssignment, now: Date
     returnVisitMinimumMinutes: minimum,
     maxContractorPartAmount: settings?.maxContractorPartAmount ?? 15_000,
     frozen: assignment.status === "completed",
-    canOnSite: assignment.status === "accepted",
+    canOnSite: assignment.status === "accepted" && job.status === "scheduled" && (await visitDueBy(client, assignment.id, logs.length, zone, now)),
+    returnVisit: await returnVisitOf(client, assignment.id),
+    visitsAllowed: await visitsAllowedOf(client, assignment.id, logs.length),
+    lockedVisits: await lockedVisitsOf(client, assignment.id, logs.length),
+    canBookReturn: (job.status === "scheduled" || job.status === "in_progress") && (assignment.status === "accepted" || assignment.status === "in_progress"),
     onMyWay: await onMyWayOf(
       client,
       { id: assignment.id, jobStatus: job.status, assignmentStatus: assignment.status, timezone: zone },
@@ -404,6 +482,7 @@ export function contractorJobRoutes(client: PrismaClient, options: ContractorJob
       await client.$transaction(async (tx) => {
         const locked = await lockAssignment(tx, assignment.jobId, assignment.id);
         if (!(OPEN_VISIT_STATUSES as readonly string[]).includes(locked.status)) throw new Refused(lockedFailure(locked.status));
+        await holdVisitLimit(tx, locked.id, entries);
         await writeEntries(tx, locked.id, entries);
         await writeParts(tx, locked.id, parts);
         if (!complete) {
@@ -459,6 +538,108 @@ export function contractorJobRoutes(client: PrismaClient, options: ContractorJob
     }
     res.json(await viewOf(client, fresh, new Date()));
   }
+
+  // Feature 5002: Book a return visit (or Not yet). Saves the screen's times, notes and parts with the booking in ONE
+  // transaction -- a refused booking saves nothing. Needs a time entry dated today in the job's zone.
+  router.post("/:reference/return-visit", requireRole(Role.contractor), (req: WithReference, res: Response) => {
+    void (async () => {
+      const assignment = await own(req, res);
+      if (assignment === null) return;
+      const zone = assignment.job.timezone;
+      const settings = await client.platformSettings.findFirst({ select: { maxContractorPartAmount: true } });
+      const parsed = parseVisit(req.body, zone, settings?.maxContractorPartAmount ?? 15_000);
+      if (!parsed.ok) {
+        send(res, parsed);
+        return;
+      }
+      const body = req.body !== null && typeof req.body === "object" ? (req.body as Record<string, unknown>) : {};
+      const reason = parseReason(body);
+      if (!reason.ok) {
+        send(res, reason);
+        return;
+      }
+      const notYet = body["notYet"] === true;
+      let slot: ReturnType<typeof parseSlotInput> | null = null;
+      if (!notYet) {
+        slot = parseSlotInput(body["slot"] !== null && typeof body["slot"] === "object" ? (body["slot"] as Record<string, unknown>) : {});
+        if (!slot.ok) {
+          send(res, { ok: false, status: slot.status, error: slot.error, field: slot.field ?? "slot" });
+          return;
+        }
+      }
+      const now = new Date();
+      const today = todayIn(zone, now);
+      if (!parsed.input.entries.some((entry) => todayIn(zone, entry.startedAt) === today)) {
+        send(res, { ok: false, status: 400, error: "Enter today's time on site first.", field: "timeEntries" });
+        return;
+      }
+      let booked: BookedReturn | null = null;
+      let held: HeldJob | null = null;
+      try {
+        await client.$transaction(async (tx) => {
+          const locked = await lockAssignment(tx, assignment.jobId, assignment.id);
+          if (!(OPEN_VISIT_STATUSES as readonly string[]).includes(locked.status)) throw new Refused(lockedFailure(locked.status));
+          await holdVisitLimit(tx, locked.id, parsed.input.entries);
+          await writeEntries(tx, locked.id, parsed.input.entries);
+          await writeParts(tx, locked.id, parsed.input.parts);
+          await tx.assignment.update({ where: { id: locked.id }, data: { completionNotes: parsed.input.notes } });
+          const actor = { kind: "contractor" as const, userId: req.authUser?.id ?? "" };
+          if (notYet) {
+            held = await putOnHoldIn(tx, { jobId: locked.jobId, assignmentId: locked.id, actor, reason: reason.data, now });
+          } else if (slot?.ok) {
+            booked = await bookReturnIn(tx, { jobId: locked.jobId, assignmentId: locked.id, actor, reason: reason.data, slot: slot.data, now });
+          }
+        });
+      } catch (error: unknown) {
+        if (error instanceof Refused) {
+          send(res, error.failure);
+          return;
+        }
+        throw error;
+      }
+      if (booked !== null) await sendReturnBooked(client, booked, now);
+      if (held !== null) await sendHeldUpdate(client, held, now);
+      const fresh = await loadOwn(client, req.authUser?.id ?? "", req.params.reference);
+      if (fresh === null) {
+        res.status(404).json({ error: "not found" });
+        return;
+      }
+      res.json({ ...(await viewOf(client, fresh, new Date())), returnBooked: booked === null ? null : { label: (booked as BookedReturn).bannerLabel } });
+    })().catch(failWith(res, "POST /api/contractor/jobs/:reference/return-visit"));
+  });
+
+  // Feature 5002: the return picker's day -- his own calendar for the date, in the job's zone, the hours he has switched
+  // off (he may still book them), and whether the date is a holiday.
+  router.get("/:reference/day", requireRole(Role.contractor), (req: WithReference, res: Response) => {
+    void (async () => {
+      const assignment = await own(req, res);
+      if (assignment === null) return;
+      const date = req.query["date"];
+      if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        res.status(400).json({ error: "date must be a YYYY-MM-DD date" });
+        return;
+      }
+      const zone = assignment.job.timezone;
+      const contractor = await client.contractor.findUniqueOrThrow({
+        where: { id: assignment.contractorId },
+        select: { id: true, operatingState: true, defaultOpening: true, defaultClosing: true },
+      });
+      const hours = await client.platformSettings.findFirstOrThrow({ select: { openingTime: true, closingTime: true } });
+      const dayStart = zonedDateTimeToUtc(zone, date, 0, 0);
+      const next = new Date(dateOnlyAsUtcMidnight(date).getTime() + 86_400_000).toISOString().slice(0, 10);
+      const dayEnd = zonedDateTimeToUtc(zone, next, 0, 0);
+      const state = stateOfLocation(assignment.job.serviceLocation);
+      const holiday = state === null ? null : await holidayOn(client, state, date);
+      res.json({
+        blocks: await loadContractorDay(client, contractor.id, date, zone),
+        notAvailable: await notAvailableRunsOn(client, contractor, dayStart, dayEnd),
+        closed: holiday?.name ?? null,
+        openingTime: hours.openingTime,
+        closingTime: hours.closingTime,
+        timezone: zone,
+      });
+    })().catch(failWith(res, "GET /api/contractor/jobs/:reference/day"));
+  });
 
   router.put("/:reference", requireRole(Role.contractor), (req: WithReference, res: Response) => {
     void saveVisit(req, res, false).catch(failWith(res, "PUT /api/contractor/jobs/:reference"));

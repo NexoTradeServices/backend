@@ -231,7 +231,7 @@ describe("AC1-AC4 -- Bob's live job list, sorted", () => {
     const body = await dashboard(cookie);
     const card = body.jobs.find((j) => j.reference === "JOB-9104");
     expect(card?.slotLabel).toBe(formatSlotLabel(zone, fixedSlot));
-    expect(card?.slotLabel).toMatch(/^(Today|[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}( \d{4})?), \d{1,2}:\d{2}(am|pm) AWST$/);
+    expect(card?.slotLabel).toMatch(/^(Today|[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}( \d{4})?), \d{1,2}:\d{2}(am|pm)$/);
   });
 });
 
@@ -251,14 +251,14 @@ describe("AC6-AC8 -- the readiness panel", () => {
     expect(body.missing).toEqual([]);
   });
 
-  test("AC7: Priya's panel -- her own two items, Mike's one, no address/EC nudge", async () => {
+  test("AC7: Priya's panel -- her one own item, the office's two (payout details, insurance), no address/EC nudge", async () => {
     const cookie = await signInCookie("priya@idelta.com.au");
     const body = await dashboard(cookie);
     expect(body.ready).toBe(false);
 
     const byKey = new Map(body.missing.map((item) => [item.key, item]));
     expect(byKey.get("service_area")).toMatchObject({ pen: "own", blocking: true, route: "/contractor/service-area" });
-    expect(byKey.get("payout_details")).toMatchObject({ pen: "own", blocking: true });
+    expect(byKey.get("payout_details")).toMatchObject({ pen: "mikes", blocking: true, route: null }); // 2005: the bank details are the office's -- Bob rings the office
     expect(byKey.get("insurance_renewal")).toMatchObject({ pen: "mikes", blocking: true, route: null });
     expect(byKey.has("address")).toBe(false);
     expect(byKey.has("emergency_contact")).toBe(false);
@@ -267,7 +267,7 @@ describe("AC6-AC8 -- the readiness panel", () => {
     // RVW1.3: "his own first ... Mike's after" (plan.md, Frontend task
     // breakdown) -- her own two rows must precede Mike's, whatever order
     // the underlying checks run in.
-    expect(body.missing.map((item) => item.pen)).toEqual(["own", "own", "mikes"]);
+    expect(body.missing.map((item) => item.pen)).toEqual(["own", "mikes", "mikes"]);
   });
 
   test("6003 AC1: GST registration not asked is Mike's item and never reaches the contractor's panel", async () => {

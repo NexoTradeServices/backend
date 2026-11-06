@@ -9,6 +9,8 @@
 import type { PrismaClient } from "../db/client.js";
 import { Prisma } from "../generated/prisma/client.js";
 import type { PreferredWindow } from "../generated/prisma/enums.js";
+import { holidayRefusalForDate, stateOfLocation } from "../calendar/rules.js";
+import { isOpenState } from "../holidays/missing.js";
 import { zoneForState } from "../time/index.js";
 import {
   PREFERRED_WINDOWS,
@@ -88,6 +90,10 @@ export async function editRequest(client: PrismaClient, reference: string, input
     } catch {
       return { ok: false, status: 400, error: `no service zone for state "${location.state}"`, field: "location" };
     }
+    // Feature 1021: a new suburb in a closed state is refused, unless it is the state the job is already in.
+    if (location.state !== stateOfLocation(job.serviceLocation) && !(await isOpenState(client, location.state))) {
+      return { ok: false, status: 400, error: `${location.state} is not an operating state.`, field: "location" };
+    }
     data.postcode = location.postcode;
     data.timezone = zone;
     data.serviceLocation = {
@@ -112,6 +118,15 @@ export async function editRequest(client: PrismaClient, reference: string, input
     const zone = typeof data.timezone === "string" ? data.timezone : job.timezone;
     if (input.preferredDate.toISOString().slice(0, 10) < todayIn(zone)) {
       return { ok: false, status: 400, error: "preferredDate must not be before today", field: "preferredDate" };
+    }
+    // Feature 1020: not on a public holiday of the job's state (the new suburb's, when it changes too).
+    const state =
+      input.location !== undefined && data.serviceLocation !== undefined
+        ? stateOfLocation(data.serviceLocation)
+        : stateOfLocation(job.serviceLocation);
+    if (state !== null) {
+      const closed = await holidayRefusalForDate(client, state, input.preferredDate.toISOString().slice(0, 10));
+      if (closed !== null) return { ok: false, status: 400, error: closed, field: "preferredDate" };
     }
     data.preferredDate = input.preferredDate;
   }

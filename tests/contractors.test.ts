@@ -102,6 +102,7 @@ function validTradeRow(overrides: Record<string, unknown> = {}): Record<string, 
 
 function validBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
+    operatingState: "WA",
     name: "New Contractor",
     email: "newbie@idelta.com.au",
     phone: "0412 345 678",
@@ -146,7 +147,7 @@ describe("AC1 -- the seeded list, ops+owner, Bob refused", () => {
     const res = await request(app).get("/api/contractors").set("Cookie", cookie);
     expect(res.status).toBe(200);
     const rows = res.body as { code: string; status: string; ready: boolean; missing: string[] }[];
-    expect(rows).toHaveLength(3);
+    expect(rows).toHaveLength(4); // Bob, Dave, Priya and (1021) Liam in NSW
 
     for (const row of rows) {
       expect(row.status).toBe("active");
@@ -168,7 +169,7 @@ describe("AC1 -- the seeded list, ops+owner, Bob refused", () => {
     const cookie = await signInCookie("owner@idelta.com.au");
     const res = await request(app).get("/api/contractors").set("Cookie", cookie);
     expect(res.status).toBe(200);
-    expect((res.body as unknown[]).length).toBe(3);
+    expect((res.body as unknown[]).length).toBe(4);
   });
 
   test("AC1: Bob (contractor) gets 403 from every endpoint", async () => {
@@ -250,6 +251,8 @@ describe("AC3 -- the invite email, and using its link", () => {
     // Better Auth's own route happens to carry -- strip the link first.
     const proseOnly = rendered.text.replace(context.resetUrl ?? "", "");
     expect(proseOnly.toLowerCase()).not.toContain("reset");
+    expect(rendered.text).toContain("Log in and complete your details."); // 2005 AC8
+    expect(rendered.text).not.toContain("Mike will finish");
     expect(rendered.text).toContain(context.resetUrl);
 
     const setRes = await request(app)
@@ -638,7 +641,7 @@ describe("2006 AC7 / AC14 -- the agreement on the ops list and record", () => {
     await publishAgreement("1");
     await new Promise((r) => setTimeout(r, 5));
     await publishAgreement("2");
-    const acceptedAt = new Date("2026-09-09T02:00:00Z");
+    const acceptedAt = new Date("2027-09-08T02:00:00Z");
     await db.contractor.update({ where: { code: "CON-014" }, data: { agreementVersion: "2", agreementAcceptedAt: acceptedAt } });
     const mike = await signInCookie("mike@idelta.com.au");
 
@@ -772,7 +775,7 @@ describe("6003 AC1 -- GST registration is a three-way answer", () => {
     await db.contractor.update({ where: { code: "CON-021" }, data: { gstRegistered: false } });
     await db.$executeRawUnsafe(statement ?? "");
     const answers = await db.contractor.findMany({ select: { code: true, gstRegistered: true }, orderBy: { code: "asc" } });
-    expect(answers.map((row) => row.gstRegistered)).toEqual([true, null, null]);
+    expect(answers.map((row) => row.gstRegistered)).toEqual([true, null, null, true]); // Bob, Dave, Priya, Liam
   });
 });
 
@@ -835,5 +838,35 @@ describe("6009 AC8 -- the Reviews tab's endpoint", () => {
     const second = (await reviewsOf(mike, "CON-014", first.nextCursor ?? "")).body as { reviews: { jobReference: string }[]; nextCursor: string | null };
     expect(second.reviews.map((r) => r.jobReference)).toEqual([made[1], made[0]]);
     expect(second.nextCursor).toBeNull();
+  });
+});
+
+describe("2005 AC5 -- Mike replacing bank details", () => {
+  test("AC5: Mike replacing details already on file stamps his name and emails Bob and the office; a first entry sends nothing", async () => {
+    await seedCast();
+    const cookie = await signInCookie("mike@idelta.com.au");
+    const mike = await db.user.findUniqueOrThrow({ where: { email: "mike@idelta.com.au" } });
+    const bob = await db.contractor.findUniqueOrThrow({ where: { code: "CON-014" } });
+    const body = (bank: Record<string, unknown>) =>
+      validBody({ name: bob.name, email: bob.email, phone: bob.phone, specialties: [validTradeRow()], insurer: "QBE", insurancePolicyNo: "PL-2291-884", insuranceExpiry: "2028-02-28", ...bank });
+
+    const same = await request(app).put("/api/contractors/CON-014").set("Cookie", cookie).send(body({ payoutBsb: bob.payoutBsb, payoutAccountNo: bob.payoutAccountNo, payoutAccountName: bob.payoutAccountName }));
+    expect(same.status).toBe(200);
+    expect(await db.notification.count({ where: { type: "bank_details_changed" } })).toBe(0);
+
+    const changed = await request(app).put("/api/contractors/CON-014").set("Cookie", cookie).send(body({ payoutBsb: "062-000", payoutAccountNo: "99887766", payoutAccountName: "B Reilly" }));
+    expect(changed.status).toBe(200);
+    const row = await db.contractor.findUniqueOrThrow({ where: { code: "CON-014" } });
+    expect(row.payoutChangedByUserId).toBe(mike.id);
+    expect(row.payoutChangedAt).not.toBeNull();
+    expect((await db.notification.findMany({ where: { type: "bank_details_changed" } })).map((n) => n.recipientType).sort()).toEqual(["contractor", "ops"]);
+
+    // Priya has none on file: Mike's first entry stamps nothing and sends nothing more.
+    const priya = await db.contractor.findUniqueOrThrow({ where: { code: "CON-030" }, include: { specialties: true } });
+    const first = await request(app).put("/api/contractors/CON-030").set("Cookie", cookie).send(
+      validBody({ name: priya.name, email: priya.email, phone: priya.phone, specialties: [validTradeRow({ trade: priya.specialties[0]?.trade ?? "Plumbing" })], payoutBsb: "062-000", payoutAccountNo: "55443322", payoutAccountName: "P Nair" }),
+    );
+    expect(first.status).toBe(200);
+    expect(await db.notification.count({ where: { type: "bank_details_changed" } })).toBe(2);
   });
 });

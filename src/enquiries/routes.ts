@@ -13,6 +13,7 @@ import type { Request, Response } from "express";
 import type { PrismaClient } from "../db/client.js";
 import type { PreferredWindow } from "../generated/prisma/enums.js";
 import { createJob, isNonEmptyString, parseJobFields, resolveLocation, type NewJobInput } from "../jobs/create.js";
+import { todayIn, zoneForState } from "../time/index.js";
 import { coverageOf, type CoverageInput } from "../coverage/tier.js";
 import { sendNotification } from "../notifications/index.js";
 import { enquiriesRefusedForNoKey, verifyRecaptcha, type RecaptchaVerdict } from "./recaptcha.js";
@@ -120,7 +121,7 @@ export function enquiryRoutes(client: PrismaClient, options: EnquiryRoutesOption
           res.status(404).json({ error: "no such suburb" });
           return;
         }
-        input = { postcode: location.postcode, lat: location.lat, lng: location.lng };
+        input = { state: location.state, postcode: location.postcode, lat: location.lat, lng: location.lng };
       } else {
         const postcode = q["postcode"];
         const lat = typeof q["lat"] === "string" && q["lat"].trim() !== "" ? Number(q["lat"]) : NaN;
@@ -129,12 +130,33 @@ export function enquiryRoutes(client: PrismaClient, options: EnquiryRoutesOption
           res.status(400).json({ error: "send suburbId, or postcode with lat and lng" });
           return;
         }
-        input = { postcode: postcode.trim(), lat, lng };
+        input = { ...(typeof q["state"] === "string" && q["state"].trim() !== "" ? { state: q["state"].trim() } : {}), postcode: postcode.trim(), lat, lng };
       }
       const { tier } = await coverageOf(client, input);
       res.json({ tier });
     })().catch(() => {
       res.status(500).json({ error: "could not check coverage" });
+    });
+  });
+
+  // Feature 1022: today's date in a state's own zone, for the two forms' date default and `min` once the suburb
+  // gives the state. Public, like the coverage check.
+  // With no state it answers the business clock's today (phone intake before the suburb is picked).
+  router.get("/today", (req: Request, res: Response) => {
+    void (async () => {
+      const state = typeof req.query["state"] === "string" ? req.query["state"].trim() : "";
+      if (state === "") {
+        const settings = await client.platformSettings.findFirstOrThrow({ select: { timezone: true } });
+        res.json({ state: null, date: todayIn(settings.timezone) });
+        return;
+      }
+      try {
+        res.json({ state, date: todayIn(zoneForState(state)) });
+      } catch {
+        res.status(400).json({ error: "state must be a state code like WA", field: "state" });
+      }
+    })().catch(() => {
+      res.status(500).json({ error: "could not read today" });
     });
   });
 

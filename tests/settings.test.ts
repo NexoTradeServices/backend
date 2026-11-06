@@ -493,3 +493,63 @@ describe("6015 AC11 -- the accounts phone", () => {
     expect((await db.platformSettings.findFirstOrThrow()).accountsPhone).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Feature 1020 -- opening hours
+//
+// AC1  the owner changes opening hours and they hold after a reload; a closing time at or before opening is refused; Mike cannot reach it
+// AC2  widening stamps openingHoursChangedAt; narrowing does not
+// ---------------------------------------------------------------------------
+describe("1020 -- opening hours on the settings row", () => {
+  async function ownerCookie(): Promise<string> {
+    await seedCast();
+    const res = await request(app).post("/api/auth/sign-in/email").send({ email: "owner@idelta.com.au", password: DEV_PASSWORD });
+    const raw = res.headers["set-cookie"] as string[] | string | undefined;
+    const cookies: string[] = Array.isArray(raw) ? raw : raw ? [raw] : [];
+    return (cookies.find((c) => c.includes("better-auth.session_token=")) ?? "").split(";")[0] ?? "";
+  }
+
+  test("AC1: the seed row opens 07:00 and closes 19:00; a save of 08:00-17:30 holds after a reload", async () => {
+    const owner = await ownerCookie();
+    const first = await request(app).get("/api/settings").set("Cookie", owner);
+    expect(first.body).toMatchObject({ openingTime: "07:00", closingTime: "19:00", openingHoursChangedAt: null });
+    const saved = await request(app).put("/api/settings").set("Cookie", owner).send(validBody({ openingTime: "08:00", closingTime: "17:30" }));
+    expect(saved.status).toBe(200);
+    const again = await request(app).get("/api/settings").set("Cookie", owner);
+    expect(again.body).toMatchObject({ openingTime: "08:00", closingTime: "17:30" });
+  });
+
+  test("AC1: closing at or before opening, or off the half hour, is refused and nothing is saved", async () => {
+    const owner = await ownerCookie();
+    for (const [openingTime, closingTime] of [["09:00", "09:00"], ["09:00", "08:30"], ["09:15", "17:00"], ["07:00", "7pm"]]) {
+      const res = await request(app).put("/api/settings").set("Cookie", owner).send(validBody({ openingTime, closingTime }));
+      expect(res.status).toBe(400);
+    }
+    const row = await db.platformSettings.findFirstOrThrow();
+    expect([row.openingTime, row.closingTime]).toEqual(["07:00", "19:00"]);
+  });
+
+  test("AC1: Mike cannot reach the settings", async () => {
+    await seedCast();
+    const res = await request(app).post("/api/auth/sign-in/email").send({ email: "mike@idelta.com.au", password: DEV_PASSWORD });
+    const raw = res.headers["set-cookie"] as string[] | string | undefined;
+    const cookies: string[] = Array.isArray(raw) ? raw : raw ? [raw] : [];
+    const mike = (cookies.find((c) => c.includes("better-auth.session_token=")) ?? "").split(";")[0] ?? "";
+    expect((await request(app).put("/api/settings").set("Cookie", mike).send(validBody({ openingTime: "08:00", closingTime: "17:00" }))).status).toBe(403);
+  });
+
+  test("AC2: widening stamps openingHoursChangedAt; narrowing, and a save without a change, do not", async () => {
+    const owner = await ownerCookie();
+    const put = (openingTime: string, closingTime: string) =>
+      request(app).put("/api/settings").set("Cookie", owner).send(validBody({ openingTime, closingTime }));
+    expect((await put("08:00", "17:00")).body).toMatchObject({ openingHoursChangedAt: null }); // narrowing
+    expect((await put("08:00", "17:00")).body).toMatchObject({ openingHoursChangedAt: null }); // no change
+    const widened = await put("07:30", "17:00"); // earlier opening
+    expect((widened.body as { openingHoursChangedAt: string | null }).openingHoursChangedAt).not.toBeNull();
+    await db.platformSettings.updateMany({ data: { openingHoursChangedAt: null } });
+    const later = await put("07:30", "18:00"); // later closing
+    expect((later.body as { openingHoursChangedAt: string | null }).openingHoursChangedAt).not.toBeNull();
+    await db.platformSettings.updateMany({ data: { openingHoursChangedAt: null } });
+    expect(((await put("09:00", "16:00")).body as { openingHoursChangedAt: string | null }).openingHoursChangedAt).toBeNull();
+  });
+});

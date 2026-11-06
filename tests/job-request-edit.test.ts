@@ -162,6 +162,7 @@ describe("AC3 -- the suburb", () => {
   test("a suburb in another state re-freezes the zone", async () => {
     const mike = await signIn("mike@idelta.com.au");
     const reference = await makeJob();
+    await db.operatingState.update({ where: { state: "SA" }, data: { open: true } }); // 1021: SA must be open to move a job there
     expect((await edit(mike, reference, { location: ADELAIDE })).status).toBe(200);
     expect((await db.job.findUniqueOrThrow({ where: { reference } })).timezone).toBe("Australia/Adelaide");
   });

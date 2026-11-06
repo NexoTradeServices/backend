@@ -13,6 +13,7 @@ import type { PrismaClient } from "../db/client.js";
 import type { ContractorStatus } from "../generated/prisma/enums.js";
 import { currentAgreementLabel } from "../agreements/current.js";
 import { readyToDispatch, type ReadyInput } from "../contractors/ready.js";
+import { notAvailableIn } from "../availability/index.js";
 import { dateOnlyAsUtcMidnight, formatTimeRangeLabel, formatPlainDateShort } from "../time/index.js";
 
 export interface DispatchJob {
@@ -20,6 +21,8 @@ export interface DispatchJob {
   postcode: string;
   lat: number;
   lng: number;
+  /** Feature 1021: the state the job is in; contractors of another Operating state are not candidates. */
+  state?: string | null;
 }
 
 export interface Rating {
@@ -41,6 +44,12 @@ export interface CandidateRow {
   distanceKm: number | null;
   pay: { calloutRate: number; standardRate: number };
   rating: Rating | null;
+  /** Feature 2004: a half hour of the hold is switched off in his Availability */
+  notAvailable: boolean;
+  /** Feature 2004: Not available is the ONLY problem - Mike may open that time with the contractor's yes ("Change availability") */
+  linkable: boolean;
+  /** Feature 2004: he has never saved his Availability ("Availability not set") */
+  availabilityNotSet: boolean;
 }
 
 export interface CandidatesResult {
@@ -76,6 +85,8 @@ export interface ContractorForGuard {
   specialties: { status: ContractorStatus; licenceExpiry: Date }[];
   servedPostcodeCount: number;
   agreementVersion: string | null;
+  operatingState: string;
+  coreLocation: unknown;
 }
 
 /** Exported so the dispatch write path (a separate transaction, its own load shape) builds the same `ReadyInput` -- one derivation, never a second copy. */
@@ -98,6 +109,8 @@ export function readyInputOf(contractor: ContractorForGuard, currentAgreementVer
     servedPostcodeCount: contractor.servedPostcodeCount,
     agreementVersion: contractor.agreementVersion,
     currentAgreementVersion,
+    operatingState: contractor.operatingState,
+    coreLocation: contractor.coreLocation,
   };
 }
 
@@ -161,6 +174,8 @@ interface BusyRow {
   endTime: Date;
   jobReference: string | null;
   suburb: string | null;
+  /** Feature 1022: the clashing block's own job state, for the office label */
+  state: string | null;
 }
 
 /** Plan decision 5: any CalendarEvent overlapping [holdStart, holdEnd) -- declined/cancelled blocks are deleted, so no status filter is needed. */
@@ -176,7 +191,8 @@ async function busyFor(
     SELECT DISTINCT ON (ce."contractorId")
            ce."contractorId" AS "contractorId", ce."startTime", ce."endTime",
            j.reference AS "jobReference",
-           j."serviceLocation"->>'suburb' AS suburb
+           j."serviceLocation"->>'suburb' AS suburb,
+           j."serviceLocation"->>'state' AS state
       FROM "CalendarEvent" ce
       LEFT JOIN "Job" j ON j.id = ce."jobId"
      WHERE ce."contractorId" = ANY(${ids})
@@ -222,9 +238,10 @@ export async function loadCandidates(client: PrismaClient, input: CandidatesInpu
   const contractors = await loadContractorsForTrade(client, input.job.trade);
   const ids = contractors.map((c) => c.id);
   const agreementLabel = await currentAgreementLabel(client);
-  const [distances, busy] = await Promise.all([
+  const [distances, busy, availability] = await Promise.all([
     distancesFor(client, ids, input.job),
     busyFor(client, ids, input.holdStart, input.holdEnd, input.ignoreJobId ?? null),
+    notAvailableIn(client, contractors, { start: input.holdStart, end: input.holdEnd }),
   ]);
 
   // Plan decision 2: "run with now set to UTC midnight of the slot's local
@@ -239,6 +256,8 @@ export async function loadCandidates(client: PrismaClient, input: CandidatesInpu
   for (const contractor of contractors) {
     const specialty = contractor.specialties.find((s) => s.trade === input.job.trade);
     if (!specialty) continue; // not a candidate at all
+    // Feature 1021: a contractor works in their own Operating state only; a job in another state never lists them.
+    if (input.job.state && contractor.operatingState !== input.job.state) continue;
 
     const guarded = guardReason(
       readyInputOf({ ...contractor, servedPostcodeCount: contractor.servedPostcodes.length }, agreementLabel),
@@ -247,11 +266,17 @@ export async function loadCandidates(client: PrismaClient, input: CandidatesInpu
       guardNow,
     );
     let why = guarded.why;
+    const slotAvailability = availability.get(contractor.id);
+    let onlyNotAvailable = false;
     if (why === null) {
       const clash = busy.get(contractor.id);
       if (clash) {
         const where = clash.jobReference ? ` - ${clash.jobReference}, ${clash.suburb ?? ""}` : "";
-        why = `Busy ${formatTimeRangeLabel(input.zone, clash.startTime, clash.endTime)}${where}`;
+        why = `Busy ${formatTimeRangeLabel(input.zone, clash.startTime, clash.endTime, clash.state ?? undefined)}${where}`;
+      } else if (slotAvailability?.notAvailable === true) {
+        // Feature 2004: after the Busy check - a hold touching a switched-off half hour is greyed, "Not available".
+        why = "Not available";
+        onlyNotAvailable = guarded.ready;
       }
     }
 
@@ -265,6 +290,9 @@ export async function loadCandidates(client: PrismaClient, input: CandidatesInpu
       distanceKm: distances.has(contractor.id) ? Math.round(distances.get(contractor.id)! * 10) / 10 : null,
       pay: { calloutRate: specialty.contractorCalloutRate, standardRate: specialty.contractorStandardRate },
       rating: ratingOf(contractor),
+      notAvailable: slotAvailability?.notAvailable === true,
+      linkable: onlyNotAvailable,
+      availabilityNotSet: slotAvailability?.notSet === true,
     };
     (row.served ? serves : outside).push(row);
   }

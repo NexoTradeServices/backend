@@ -46,8 +46,9 @@
 // Joondalup, ~26km -- genuinely out of reach, AC36).
 import "dotenv/config";
 import { Prisma } from "../../generated/prisma/client.js";
-import { reserveUpTo } from "../reference.js";
-import { zoneForState, nextWeekdayAt, todayAt } from "../../time/index.js";
+import { nextReference, reserveUpTo } from "../reference.js";
+import { inRangeSuburbs } from "../../suburbs/in-range.js";
+import { zoneForState, nextWeekdayAt, todayAt, todayIn } from "../../time/index.js";
 import { serviceLevelFor } from "../../jobs/dispatch-level.js";
 import { disconnectPrisma, getPrisma, type PrismaClient } from "../client.js";
 import { seedAuthFixtures } from "./auth.js";
@@ -387,6 +388,8 @@ export async function seedFixtures(
     await reserveUpTo("CON", contractor.codeNumber, client);
   }
 
+  await seedLiamAndNsw(client, result);
+
   // Feature 4002, plan decision 16: Dave's service area, written whenever he
   // has none -- covers both a Dave just created above (fresh environment)
   // and one seeded before this feature existed (an established dev
@@ -604,11 +607,52 @@ export async function seedFixtures(
   return result;
 }
 
+/**
+ * Feature 1022 -- Hannah Lee (the Sydney happy path, a guest) and a new Newtown 2042 plumbing job for Liam to take. Dev and UAT
+ * only, and run by the fixtures COMMAND, not by `seedFixtures()`: the tests build their own Sydney job, and a second fixture
+ * job would move every test that counts jobs or reads the next reference. Create-if-missing, keyed on Hannah's email and
+ * the job's marker in its description.
+ */
+export async function seedSydneyJob(client: PrismaClient = getPrisma()): Promise<string | null> {
+  const plumbing = await client.serviceType.findUnique({ where: { trade: "Plumbing" } });
+  if (plumbing === null) return null;
+  const hannah =
+    (await client.customer.findUnique({ where: { email: "hannah@idelta.com.au" } })) ??
+    (await client.customer.create({
+      data: { code: await nextReference("CUS", client), name: "Hannah Lee", email: "hannah@idelta.com.au", phone: "0400 001 054" },
+    }));
+  const marker = "[fixture: Hannah's Newtown job]";
+  const existing = await client.job.findFirst({ where: { customerId: hannah.id, description: { contains: marker } } });
+  if (existing !== null) return existing.reference;
+  const when = nextWeekdayAt("Australia/Sydney", "wed", 8, 0, new Date());
+  const job = await client.job.create({
+    data: {
+      reference: await nextReference("JOB", client),
+      customerId: hannah.id,
+      serviceTypeId: plumbing.id,
+      customerCalloutRate: plumbing.customerCalloutRate,
+      customerStandardRate: plumbing.customerStandardRate,
+      postcode: "2042",
+      serviceLocation: { suburb: "Newtown", state: "NSW", country: "AU", lat: NEWTOWN.lat, lng: NEWTOWN.lng, placeId: NEWTOWN.placeId },
+      siteAddress: { street: "30 King Street", suburb: "Newtown", state: "NSW", country: "AU", postcode: "2042", lat: NEWTOWN.lat, lng: NEWTOWN.lng, placeId: NEWTOWN.placeId },
+      timezone: "Australia/Sydney",
+      description: `Blocked kitchen sink. ${marker}`,
+      selectedOptions: [],
+      source: "web",
+      preferredWindow: "morning",
+      preferredDate: new Date(`${todayIn("Australia/Sydney", when)}T00:00:00.000Z`),
+      status: "new",
+    },
+  });
+  return job.reference;
+}
+
 async function main(): Promise<void> {
   if (process.env["NODE_ENV"] === "production") {
     throw new Error("fixture seed is dev/test only -- refusing to run with NODE_ENV=production");
   }
   const result = await seedFixtures();
+  await seedSydneyJob();
   console.log(
     `fixture seed: contractors created: ${result.contractorsCreated.length ? result.contractorsCreated.join(", ") : "none (already present)"}; ` +
       `customers created: ${result.customersCreated.length ? result.customersCreated.join(", ") : "none (already present)"}; ` +
@@ -629,4 +673,115 @@ if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
     await disconnectPrisma();
     process.exit(1);
   });
+}
+
+
+// ---------------------------------------------------------------------------
+// Feature 1021 -- Liam Walsh (CON-037), the NSW contractor, and NSW open with its holidays.
+//
+// Dev, test and UAT only (the fixtures seed never runs in production, which stays WA only). Liam is
+// Bob's twin in Sydney: Plumbing at Bob's rates (so figures compare across states), core location
+// Newtown 2042, a saved service area, everything else Bob has -- ready to dispatch.
+// ---------------------------------------------------------------------------
+
+const NEWTOWN = {
+  suburb: "Newtown",
+  state: "NSW",
+  country: "AU",
+  postcode: "2042",
+  lat: -33.897644,
+  lng: 151.180228,
+  placeId: "fixture-place-newtown",
+};
+
+/** NSW-wide public holidays for 2026 and 2027, from https://www.nsw.gov.au/about-nsw/public-holidays (read 3 Nov 2026). */
+const NSW_HOLIDAYS: readonly (readonly [string, string])[] = [
+  ["2026-01-01", "New Year's Day"], ["2026-01-26", "Australia Day"], ["2026-04-03", "Good Friday"],
+  ["2026-04-04", "Easter Saturday"], ["2026-04-05", "Easter Sunday"], ["2026-04-06", "Easter Monday"],
+  ["2026-04-25", "Anzac Day"], ["2026-04-27", "Additional Day"], ["2026-06-08", "King's Birthday"],
+  ["2026-10-05", "Labour Day"], ["2026-12-25", "Christmas Day"], ["2026-12-26", "Boxing Day"],
+  ["2026-12-28", "Additional Day"],
+  ["2027-01-01", "New Year's Day"], ["2027-01-26", "Australia Day"], ["2027-03-26", "Good Friday"],
+  ["2027-03-27", "Easter Saturday"], ["2027-03-28", "Easter Sunday"], ["2027-03-29", "Easter Monday"],
+  ["2027-04-25", "Anzac Day"], ["2027-04-26", "Additional Day"], ["2027-06-14", "King's Birthday"],
+  ["2027-10-04", "Labour Day"], ["2027-12-25", "Christmas Day"], ["2027-12-26", "Boxing Day"],
+  ["2027-12-27", "Additional Day"], ["2027-12-28", "Additional Day"],
+];
+
+async function seedLiamAndNsw(client: PrismaClient, result: SeedFixturesResult): Promise<void> {
+  // NSW holidays first (create-if-missing), then NSW open - a state opens only with its holidays in.
+  for (const [date, name] of NSW_HOLIDAYS) {
+    const day = new Date(`${date}T00:00:00.000Z`);
+    if ((await client.publicHoliday.findUnique({ where: { state_date: { state: "NSW", date: day } } })) === null) {
+      await client.publicHoliday.create({ data: { state: "NSW", date: day, name } });
+    }
+  }
+  // Open it unless the owner has ever ticked or unticked it on Settings (changedAt set): their choice stays.
+  await client.operatingState.upsert({ where: { state: "NSW" }, create: { state: "NSW", open: true }, update: {} });
+  await client.operatingState.updateMany({ where: { state: "NSW", changedAt: null }, data: { open: true } });
+
+  if ((await client.contractor.findUnique({ where: { code: "CON-037" } })) === null) {
+    await client.contractor.create({
+      data: {
+        code: "CON-037",
+        operatingState: "NSW",
+        name: "Liam Walsh",
+        businessName: "Walsh Plumbing",
+        abn: "51000000842", // ATO-checksum-valid, invented like Bob's
+        gstRegistered: true,
+        phone: "0400 000 037",
+        email: "liam@idelta.com.au",
+        address: {
+          street: "21 King Street",
+          suburb: "Newtown",
+          state: "NSW",
+          country: "AU",
+          postcode: "2042",
+          lat: -33.897644,
+          lng: 151.180228,
+          placeId: "fixture-place-newtown-home",
+        },
+        emergencyContactName: "Grace Walsh",
+        emergencyContactPhone: "0400 100 037",
+        coreLocation: NEWTOWN,
+        lastRadiusKm: 30,
+        insurer: "QBE",
+        insurancePolicyNo: "PL-3302-037",
+        insuranceExpiry: new Date("2028-02-28"),
+        payoutBsb: "062-000",
+        payoutAccountNo: "37003700",
+        payoutAccountName: "L Walsh",
+        status: "active",
+        user: { create: { name: "Liam Walsh", email: "liam@idelta.com.au", role: "contractor" } },
+        specialties: {
+          create: [
+            {
+              trade: "Plumbing",
+              contractorCalloutRate: 20_000, // Bob's rates, so figures compare across states
+              contractorStandardRate: 15_000,
+              licenceNumber: "PL-9037", // PLACEHOLDER -- cast.md states no licence for Liam
+              licenceExpiry: new Date("2027-06-30"),
+              status: "active",
+            },
+          ],
+        },
+      },
+    });
+    result.contractorsCreated.push("CON-037");
+  }
+  // Feature 6003's rule for the cast: an emptied GST answer is given back.
+  await client.contractor.updateMany({ where: { code: "CON-037", gstRegistered: null }, data: { gstRegistered: true } });
+  await reserveUpTo("CON", 37, client);
+
+  // His service area: the NSW postcodes within 30km of Newtown, written whenever he has none (needs the
+  // suburb reference data; without it he simply has no area yet and stays Not ready).
+  const liam = await client.contractor.findUniqueOrThrow({ where: { code: "CON-037" }, include: { _count: { select: { servedPostcodes: true } } } });
+  if (liam._count.servedPostcodes === 0) {
+    const postcodes = await inRangeSuburbs(client, { lat: NEWTOWN.lat, lng: NEWTOWN.lng, km: 30, state: "NSW" });
+    if (postcodes.length > 0) {
+      await client.contractorServedPostcode.createMany({
+        data: postcodes.map((row) => ({ contractorId: liam.id, postcode: row.postcode })),
+      });
+    }
+  }
 }
