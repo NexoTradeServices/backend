@@ -455,6 +455,14 @@ describe("AC4 -- weekend and emergency, through Complete", () => {
 
   test("AC4: Bob's multiplier follows the EARLIEST entry's date, whatever order the entries were typed in", async () => {
     const made = await acceptedJob({ date: "2026-10-09", level: "normal" });
+    // two visit rows need two booked blocks behind them (5002)
+    const assignment = await db.assignment.findUniqueOrThrow({ where: { id: made.assignmentId } });
+    for (const day of [9, 10]) {
+      const start = new Date(Date.UTC(2026, 9, day, 0, 0));
+      await db.calendarEvent.create({
+        data: { contractorId: assignment.contractorId, startTime: start, endTime: new Date(start.getTime() + 3_600_000), type: "job", jobId: made.jobId, assignmentId: made.assignmentId },
+      });
+    }
     await bobCompletes(made, {
       withPart: false,
       entries: [

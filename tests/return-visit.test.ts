@@ -13,6 +13,7 @@
 // AC11 Mike sees the Reason and note, books the return through the same path; the note leaves, the Reason stays
 // AC12 Mike sees the contractor's work notes before completion
 // AC13 hours from both visits bill, the return visit with its floor
+// UAT  a second visit row only comes from a booked return: one row per booked block, never fewer than the rows already saved
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import request from "supertest";
 import express from "express";
@@ -258,7 +259,7 @@ describe("AC10, AC11, AC12 -- Mike", () => {
 describe("AC13 -- billing", () => {
   test("AC13: the hours of both visits bill, the return visit with its floor", async () => {
     const { bob, assignmentId } = await visitUnderWay();
-    expect((await book(bob, { timeEntries: [...entries(), { date: RETURN_DAY, start: "09:00", end: "09:10", note: "" }] })).status).toBe(200);
+    expect((await book(bob)).status).toBe(200);
     const done = await request(app)
       .post("/api/contractor/jobs/JOB-1042/complete")
       .set("Cookie", bob)
@@ -267,5 +268,27 @@ describe("AC13 -- billing", () => {
     const settings = await db.platformSettings.findFirstOrThrow({ select: { returnVisitMinimumMinutes: true } });
     // first visit: one hour; the 10 minutes of the return visit bill at the return visit's floor
     expect(Number((await db.assignment.findUniqueOrThrow({ where: { id: assignmentId } })).billedHours)).toBe(1 + settings.returnVisitMinimumMinutes / 60);
+  });
+});
+
+describe("A second visit row needs a booked return", () => {
+  test("a second row is refused until a return is booked; then it saves", async () => {
+    const { bob, assignmentId } = await visitUnderWay();
+    const second = { date: RETURN_DAY, start: "09:00", end: "10:00", note: "" };
+    const view = async () => (await request(app).get("/api/contractor/jobs/JOB-1042").set("Cookie", bob)).body as { visitsAllowed: number };
+    expect((await view()).visitsAllowed).toBe(1);
+
+    const save = (rows: unknown[]) => request(app).put("/api/contractor/jobs/JOB-1042").set("Cookie", bob).send({ timeEntries: rows, completionNotes: "", parts: [] });
+    const refused = await save([...entries(), second]);
+    expect(refused.status).toBe(409);
+    expect(refused.body).toMatchObject({ error: "Book a return visit to add another visit.", field: "timeEntries" });
+    expect(await db.assignmentTimeLog.count({ where: { assignmentId } })).toBe(0);
+    // booking itself cannot carry a second row either
+    expect((await book(bob, { timeEntries: [...entries(), second] })).status).toBe(409);
+
+    expect((await book(bob)).status).toBe(200);
+    expect((await view()).visitsAllowed).toBe(2);
+    expect((await save([...entries(), second])).status).toBe(200);
+    expect(await db.assignmentTimeLog.count({ where: { assignmentId } })).toBe(2);
   });
 });

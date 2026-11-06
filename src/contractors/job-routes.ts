@@ -15,6 +15,7 @@ import type { Router } from "express";
 import { Router as createRouter } from "express";
 import type { Request, Response } from "express";
 import type { PrismaClient } from "../db/client.js";
+import type { Prisma } from "../generated/prisma/client.js";
 import { requireRole } from "../auth/middleware.js";
 import { Role } from "../generated/prisma/enums.js";
 import { dateOnlyAsUtcMidnight, formatSlotLabel, todayIn, zonedDateTimeToUtc } from "../time/index.js";
@@ -94,6 +95,24 @@ export interface PaidPaymentView {
 
 export type PaymentView = UnpaidPaymentView | PaidPaymentView;
 
+/**
+ * Feature 5002: a second visit row only comes from a booked return. Bob holds as many rows as the
+ * assignment has booked blocks, and never fewer than the rows already saved (old data, a hold that
+ * took the time off, Mike's own additions stay editable).
+ */
+async function visitsAllowedOf(db: Pick<PrismaClient, "calendarEvent">, assignmentId: string, saved: number): Promise<number> {
+  const blocks = await db.calendarEvent.count({ where: { assignmentId, type: "job" } });
+  return Math.max(blocks, saved, 1);
+}
+
+/** Feature 5002: inside the locked transaction, refuse a visit row no booked block stands behind. */
+async function holdVisitLimit(tx: Prisma.TransactionClient, assignmentId: string, rows: number): Promise<void> {
+  const saved = await tx.assignmentTimeLog.count({ where: { assignmentId } });
+  if (rows > (await visitsAllowedOf(tx, assignmentId, saved))) {
+    throw new Refused({ ok: false, status: 409, error: "Book a return visit to add another visit.", field: "timeEntries" });
+  }
+}
+
 export interface ContractorJobView extends JobFacts {
   reference: string;
   jobStatus: string;
@@ -123,6 +142,8 @@ export interface ContractorJobView extends JobFacts {
   canOnSite: boolean;
   /** Feature 5002: Book a return visit is offered on a scheduled or in-progress job whose visit is still open. */
   canBookReturn: boolean;
+  /** Feature 5002: how many visit rows Bob may hold -- one per booked block, never fewer than the rows already saved. */
+  visitsAllowed: number;
   /** Feature 5004: null (no visit booked today), or whether On my way has gone for today's visit. */
   onMyWay: OnMyWayView;
   timezone: string;
@@ -247,6 +268,7 @@ async function viewOf(client: PrismaClient, assignment: OwnAssignment, now: Date
     maxContractorPartAmount: settings?.maxContractorPartAmount ?? 15_000,
     frozen: assignment.status === "completed",
     canOnSite: assignment.status === "accepted",
+    visitsAllowed: await visitsAllowedOf(client, assignment.id, logs.length),
     canBookReturn: (job.status === "scheduled" || job.status === "in_progress") && (assignment.status === "accepted" || assignment.status === "in_progress"),
     onMyWay: await onMyWayOf(
       client,
@@ -412,6 +434,7 @@ export function contractorJobRoutes(client: PrismaClient, options: ContractorJob
       await client.$transaction(async (tx) => {
         const locked = await lockAssignment(tx, assignment.jobId, assignment.id);
         if (!(OPEN_VISIT_STATUSES as readonly string[]).includes(locked.status)) throw new Refused(lockedFailure(locked.status));
+        await holdVisitLimit(tx, locked.id, entries.length);
         await writeEntries(tx, locked.id, entries);
         await writeParts(tx, locked.id, parts);
         if (!complete) {
@@ -508,6 +531,7 @@ export function contractorJobRoutes(client: PrismaClient, options: ContractorJob
         await client.$transaction(async (tx) => {
           const locked = await lockAssignment(tx, assignment.jobId, assignment.id);
           if (!(OPEN_VISIT_STATUSES as readonly string[]).includes(locked.status)) throw new Refused(lockedFailure(locked.status));
+          await holdVisitLimit(tx, locked.id, parsed.input.entries.length);
           await writeEntries(tx, locked.id, parsed.input.entries);
           await writeParts(tx, locked.id, parsed.input.parts);
           await tx.assignment.update({ where: { id: locked.id }, data: { completionNotes: parsed.input.notes } });
