@@ -27,6 +27,7 @@ import { notAvailableRunsOn } from "../availability/index.js";
 import { zonedDateTimeToUtc, dateOnlyAsUtcMidnight } from "../time/index.js";
 import { isValidAbn } from "../invoices/abn.js";
 import { listContractorReviews } from "../reviews/service.js";
+import { bankReplaced, bankStamp, sendBankChanged } from "./bank-change.js";
 
 // ---------------------------------------------------------------------------
 // Shapes
@@ -40,7 +41,7 @@ import { listContractorReviews } from "../reviews/service.js";
 // frontend e2e suite against the real dev DB (Bob's migrated row), not by
 // the backend suite's throwaway one (its fixtures never carry a legacy
 // address, so this gap never exercised there).
-interface PlacesAddress {
+export interface PlacesAddress {
   street: string;
   suburb?: string;
   state?: string;
@@ -101,7 +102,7 @@ type ParseResult = { ok: true; data: ContractorInput } | { ok: false } & FieldEr
 export const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-function isValidBsb(raw: string): boolean {
+export function isValidBsb(raw: string): boolean {
   return /^\d{6}$/.test(raw.replace(/[\s-]/g, ""));
 }
 
@@ -110,14 +111,14 @@ function isValidBsb(raw: string): boolean {
  * optional field -- only a genuinely wrong-shaped value (a number, an
  * object) is the error case, returned as `undefined`.
  */
-function optionalString(value: unknown): string | null | undefined {
+export function optionalString(value: unknown): string | null | undefined {
   if (value === undefined || value === null) return null;
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed === "" ? null : trimmed;
 }
 
-function isPlacesAddress(value: unknown): value is PlacesAddress {
+export function isPlacesAddress(value: unknown): value is PlacesAddress {
   if (value === null || typeof value !== "object") return false;
   const v = value as Record<string, unknown>;
   if (typeof v["street"] !== "string") return false;
@@ -729,6 +730,7 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
             payoutBsb: data.payoutBsb,
             payoutAccountNo: data.payoutAccountNo,
             payoutAccountName: data.payoutAccountName,
+            ...bankStamp(existing, data, authUser?.id ?? null, now),
             status: data.active ? "active" : "suspended",
             ...(statusChanged
               ? { statusChangedByUserId: authUser?.id ?? null, statusChangedAt: now }
@@ -764,6 +766,9 @@ export function contractorRoutes(client: PrismaClient, auth: Auth): Router {
           }
         }
       });
+
+      // Feature 2005: replacing bank details already on file tells the contractor and the office.
+      if (bankReplaced(existing, data)) await sendBankChanged(client, existing, now);
 
       const full = await loadContractor(client, existing.code);
       if (!full) {

@@ -258,7 +258,7 @@ describe("AC6-AC8 -- the readiness panel", () => {
 
     const byKey = new Map(body.missing.map((item) => [item.key, item]));
     expect(byKey.get("service_area")).toMatchObject({ pen: "own", blocking: true, route: "/contractor/service-area" });
-    expect(byKey.get("payout_details")).toMatchObject({ pen: "own", blocking: true });
+    expect(byKey.get("payout_details")).toMatchObject({ pen: "own", blocking: true, route: "/contractor/details" }); // 2005 AC7: the item opens My details
     expect(byKey.get("insurance_renewal")).toMatchObject({ pen: "mikes", blocking: true, route: null });
     expect(byKey.has("address")).toBe(false);
     expect(byKey.has("emergency_contact")).toBe(false);

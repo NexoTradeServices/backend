@@ -3,8 +3,7 @@
 //
 // Design: Contractor Workflow step 1 -- "Welcome to <display name>, set your
 // password to get started" ... "the contractor never sees the word reset."
-// Until the contractor's own details page exists (leaf 2005) the email says
-// Mike will finish setting up their details with them (plan decision 6).
+// The closing line asks the contractor to log in and complete their details on My details (Feature 2005).
 //
 // Transactional, per the design's Notifications table (Onboarding / account
 // setup row): always sends, no unsubscribe.
@@ -17,14 +16,14 @@ Welcome to {{platformName}}. Set your password to get started:
 
 {{resetUrl}}
 
-Mike will finish setting up your details with you.
+Log in and complete your details.
 
 -- {{platformName}}`;
 
 const HTML = `<p>Hi {{name}},</p>
 <p>Welcome to {{platformName}}. Set your password to get started:</p>
 <p><a href="{{resetUrl}}">Set your password</a></p>
-<p>Mike will finish setting up your details with you.</p>
+<p>Log in and complete your details.</p>
 <p>-- {{platformName}}</p>`;
 
 export const contractorOnboardingEmail: NotificationTemplate = {

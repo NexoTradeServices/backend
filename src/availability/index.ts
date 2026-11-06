@@ -16,6 +16,7 @@ import { minutesOf } from "../calendar/rules.js";
 import { clockTimeIn, formatTimeRangeLabel, todayIn, zoneForState, zonedDateTimeToUtc } from "../time/index.js";
 
 type Db = Pick<PrismaClient, "platformSettings" | "contractorAvailability" | "publicHoliday" | "calendarEvent" | "contractor">;
+type Tx = Parameters<Parameters<PrismaClient["$transaction"]>[0]>[0];
 
 export type SlotState = "available" | "not_available" | "booked" | "in_progress" | "to_answer" | "closed" | "past";
 
@@ -178,32 +179,41 @@ export async function applyChanges(
   byUserId: string | null,
   now: Date = new Date(),
 ): Promise<ApplyResult> {
-  return client.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM "Contractor" WHERE id = ${contractorId} FOR UPDATE`;
-    const contractor = await loadContractor(tx, contractorId);
-    const dates = [...new Set(changes.map((c) => c.date))];
-    const states = new Map((await dayStates(tx, contractor, dates, now)).map((d) => [d.date, d]));
-    let written = 0;
-    let skipped = 0;
-    for (const change of changes) {
-      const slot = states.get(change.date)?.slots.find((s) => clockOf(s.minutes) === change.time);
-      if (slot === undefined || LOCKED.has(slot.state)) {
-        skipped += 1;
-        continue;
-      }
-      if ((slot.state === "available") === change.available) continue; // nothing changed - nothing written
-      await tx.contractorAvailability.upsert({
-        where: { contractorId_date_startTime: { contractorId, date: dayDate(change.date), startTime: change.time } },
-        create: { contractorId, date: dayDate(change.date), startTime: change.time, available: change.available, changedByUserId: byUserId },
-        update: { available: change.available, changedByUserId: byUserId, changedAt: now },
-      });
-      written += 1;
+  return client.$transaction((tx) => applyChangesIn(tx, contractorId, changes, byUserId, now));
+}
+
+/** The same, inside a transaction the caller already holds (Feature 5002: a return visit books and opens the time as one). */
+export async function applyChangesIn(
+  tx: Tx,
+  contractorId: string,
+  changes: Change[],
+  byUserId: string | null,
+  now: Date = new Date(),
+): Promise<ApplyResult> {
+  await tx.$queryRaw`SELECT id FROM "Contractor" WHERE id = ${contractorId} FOR UPDATE`;
+  const contractor = await loadContractor(tx, contractorId);
+  const dates = [...new Set(changes.map((c) => c.date))];
+  const states = new Map((await dayStates(tx, contractor, dates, now)).map((d) => [d.date, d]));
+  let written = 0;
+  let skipped = 0;
+  for (const change of changes) {
+    const slot = states.get(change.date)?.slots.find((s) => clockOf(s.minutes) === change.time);
+    if (slot === undefined || LOCKED.has(slot.state)) {
+      skipped += 1;
+      continue;
     }
-    if (contractor.availabilitySavedAt === null) {
-      await tx.contractor.update({ where: { id: contractorId }, data: { availabilitySavedAt: now } });
-    }
-    return { written, skipped };
-  });
+    if ((slot.state === "available") === change.available) continue; // nothing changed - nothing written
+    await tx.contractorAvailability.upsert({
+      where: { contractorId_date_startTime: { contractorId, date: dayDate(change.date), startTime: change.time } },
+      create: { contractorId, date: dayDate(change.date), startTime: change.time, available: change.available, changedByUserId: byUserId },
+      update: { available: change.available, changedByUserId: byUserId, changedAt: now },
+    });
+    written += 1;
+  }
+  if (contractor.availabilitySavedAt === null) {
+    await tx.contractor.update({ where: { id: contractorId }, data: { availabilitySavedAt: now } });
+  }
+  return { written, skipped };
 }
 
 /** What Copy carries from a source day: each half hour's own answer; a job's hours arrive Available. */
@@ -418,4 +428,30 @@ export async function calendarRange(
     const past = day.slots.length > 0 && day.slots.every((s) => s.state === "past");
     return { date: day.date, closed: day.closed, past, blocks, notAvailable, jobCount: blocks.length };
   });
+}
+
+/**
+ * Feature 5002: the half hours of a hold the contractor has switched off, as the changes that switch them on - what a
+ * contractor booking their own Not available time asks for. Empty when the whole hold is available.
+ */
+export async function switchOnChanges(
+  client: Db,
+  contractor: AvailabilityContractor,
+  hold: { start: Date; end: Date },
+): Promise<Change[]> {
+  const zone = zoneOf(contractor);
+  const touched: { date: string; minutes: number }[] = [];
+  for (let t = hold.start.getTime(); t < hold.end.getTime(); t += HALF_HOUR_MINUTES * 60_000) {
+    const at = new Date(t);
+    const [h, m] = clockTimeIn(zone, at).split(":").map(Number);
+    touched.push({ date: todayIn(zone, at), minutes: Math.floor(((h ?? 0) * 60 + (m ?? 0)) / HALF_HOUR_MINUTES) * HALF_HOUR_MINUTES });
+  }
+  const dates = [...new Set(touched.map((s) => s.date))].sort();
+  const savedRows = await client.contractorAvailability.findMany({
+    where: { contractorId: contractor.id, date: { gte: dayDate(dates[0] ?? ""), lte: dayDate(dates[dates.length - 1] ?? "") } },
+  });
+  const rows = new Map(savedRows.map((row) => [`${row.date.toISOString().slice(0, 10)}|${row.startTime}`, row.available]));
+  return touched
+    .filter((s) => !effectiveOf(contractor, rows, s.date, s.minutes))
+    .map((s) => ({ date: s.date, time: clockOf(s.minutes), available: true }));
 }

@@ -139,9 +139,8 @@ export function readyToDispatch(input: ReadyInput, now: Date = new Date()): Read
   }
 
   if (!input.payoutBsb || !input.payoutAccountNo || !input.payoutAccountName) {
-    // Bank details are his own pen (Pens), but /contractor/details is 2005 --
-    // no route until it ships (decision 3).
-    missing.push({ key: "payout_details", copy: "payout details", pen: "own", route: null, blocking: true });
+    // Bank details are the contractor's own pen: My details (Feature 2005).
+    missing.push({ key: "payout_details", copy: "payout details", pen: "own", route: "/contractor/details", blocking: true });
   }
 
   if (input.status !== "active") {

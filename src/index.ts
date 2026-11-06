@@ -26,6 +26,7 @@ import { serviceTypeRoutes } from './service-types/routes.js'
 import { contractorRoutes } from './contractors/routes.js'
 import { contractorServiceAreaRoutes } from './contractors/service-area-routes.js'
 import { contractorDashboardRoutes } from './contractors/dashboard-routes.js'
+import { contractorDetailsRoutes } from './contractors/details-routes.js'
 import { contractorJobRoutes } from './contractors/job-routes.js'
 import { agreementRoutes } from './agreements/routes.js'
 import { suburbRoutes } from './suburbs/routes.js'
@@ -123,6 +124,7 @@ app.use('/api/contractor', contractorServiceAreaRoutes(prisma))
 app.use('/api/contractor', contractorAvailabilityRoutes(prisma))
 app.use('/api/contractors', opsAvailabilityRoutes(prisma))
 app.use('/api/contractor', contractorDashboardRoutes(prisma))
+app.use('/api/contractor', contractorDetailsRoutes(prisma))
 app.use('/api/contractor/jobs', contractorJobRoutes(prisma))
 // Feature 6003: the contractor's own settlements.
 app.use('/api/contractor/settlements', contractorSettlementRoutes(prisma))

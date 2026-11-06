@@ -249,6 +249,8 @@ model User {
   supersededSettlements   ContractorSettlement[]       @relation("SettlementSupersededBy")
   payAdjustmentsAdded     ContractorPayAdjustment[]    @relation("PayAdjustmentCreatedBy")
   contractorStatusChanges Contractor[]                 @relation("ContractorStatusChangedBy")
+  contractorPayoutChanges Contractor[]                 @relation("ContractorPayoutChangedBy")
+  returnReasons           ReturnReason[]
   agreementVersionsIssued ContractorAgreementVersion[] @relation("AgreementIssuedBy")
   specialtyStatusChanges  ContractorSpecialty[]        @relation("ContractorSpecialtyStatusChangedBy")
 
@@ -602,6 +604,10 @@ model Contractor {
   payoutBsb             String?
   payoutAccountNo       String?
   payoutAccountName     String?
+  /// AUDIT pair: who last REPLACED bank details already on file, and when -- a first entry stamps nothing.
+  /// Feature 2005.
+  payoutChangedByUserId String?
+  payoutChangedAt       DateTime?
   status                ContractorStatus @default(active)
   /// AUDIT pair: who last changed status, and when -- Managing the
   /// contractor record
@@ -619,6 +625,7 @@ model Contractor {
 
   user                 User                            @relation(fields: [userId], references: [id])
   statusChangedBy      User?                           @relation("ContractorStatusChangedBy", fields: [statusChangedByUserId], references: [id])
+  payoutChangedBy      User?                           @relation("ContractorPayoutChangedBy", fields: [payoutChangedByUserId], references: [id])
   specialties          ContractorSpecialty[]
   servedPostcodes      ContractorServedPostcode[]
   reviews              Review[]
@@ -730,6 +737,8 @@ model CalendarEvent {
   jobId        String?
   assignmentId String?
   notes        String?
+  /// when the block was made -- a return visit booked later is told apart from the first booking by this (Feature 5002)
+  createdAt    DateTime          @default(now())
 
   contractor Contractor  @relation(fields: [contractorId], references: [id], onDelete: Cascade)
   job        Job?        @relation(fields: [jobId], references: [id])
@@ -829,6 +838,7 @@ model Job {
   capabilityTokens CapabilityToken[]
   payAdjustments   ContractorPayAdjustment[]
   notifications    Notification[]
+  returnReasons    ReturnReason[]
 
   /// Test-data label (design: Data Model, Test data). Empty on every real record.
   testData String?
@@ -911,6 +921,7 @@ model Assignment {
   calendarEvents   CalendarEvent[]
   capabilityTokens CapabilityToken[]
   issuedInvoices   Invoice[]           @relation("InvoiceAssignment")
+  returnReasons    ReturnReason[]
 
   /// Test-data label (design: Data Model, Test data). Empty on every real record.
   testData String?
@@ -1370,4 +1381,37 @@ model ServiceAreaPage {
   testData String?
 
   @@unique([serviceTypeId, suburbId])
+}
+
+// ---------------------------------------------------------------------------
+// Return visits (Feature 5002)
+// ---------------------------------------------------------------------------
+
+enum ReturnReasonKind {
+  part_on_order
+  more_time_needed
+  other
+}
+
+/// Why a job could not be finished in one visit: written by Bob's Book a return visit and by Mike's Put on hold.
+/// The latest row is the job's current Reason. The office note is Bob's "Not yet" note to the office.
+model ReturnReason {
+  id           String           @id @default(uuid(7))
+  jobId        String
+  assignmentId String
+  reason       ReturnReasonKind
+  otherText    String?
+  officeNote   String?
+  byUserId     String
+  at           DateTime         @default(now())
+
+  job        Job        @relation(fields: [jobId], references: [id])
+  assignment Assignment @relation(fields: [assignmentId], references: [id])
+  byUser     User       @relation(fields: [byUserId], references: [id])
+
+  /// Test-data label (design: Data Model, Test data). Empty on every real record.
+  testData String?
+
+  @@index([jobId, at])
+  @@index([assignmentId])
 }
