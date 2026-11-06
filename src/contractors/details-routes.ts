@@ -11,8 +11,7 @@ import { Prisma } from "../generated/prisma/client.js";
 import type { PrismaClient } from "../db/client.js";
 import { requireRole } from "../auth/middleware.js";
 import { Role } from "../generated/prisma/enums.js";
-import { bankStamp, sendBankChanged } from "./bank-change.js";
-import { isPlacesAddress, isValidBsb, optionalString } from "./routes.js";
+import { isPlacesAddress, optionalString } from "./routes.js";
 
 async function loadOwn(client: PrismaClient, userId: string) {
   return client.contractor.findUnique({ where: { userId }, include: { specialties: { orderBy: { trade: "asc" } } } });
@@ -21,19 +20,19 @@ async function loadOwn(client: PrismaClient, userId: string) {
 function viewOf(contractor: NonNullable<Awaited<ReturnType<typeof loadOwn>>>) {
   return {
     own: {
+      name: contractor.name,
+      phone: contractor.phone,
+      businessName: contractor.businessName,
       address: contractor.address,
       emergencyContactName: contractor.emergencyContactName,
       emergencyContactPhone: contractor.emergencyContactPhone,
+    },
+    office: {
+      code: contractor.code,
+      email: contractor.email,
       payoutBsb: contractor.payoutBsb,
       payoutAccountNo: contractor.payoutAccountNo,
       payoutAccountName: contractor.payoutAccountName,
-    },
-    office: {
-      name: contractor.name,
-      code: contractor.code,
-      email: contractor.email,
-      phone: contractor.phone,
-      businessName: contractor.businessName,
       abn: contractor.abn,
       gstRegistered: contractor.gstRegistered,
       operatingState: contractor.operatingState,
@@ -85,34 +84,33 @@ export function contractorDetailsRoutes(client: PrismaClient): Router {
       const b = (req.body ?? {}) as Record<string, unknown>;
       const bad = (error: string, field: string) => res.status(400).json({ error, field });
 
-      // Only the six own fields are read; a body that names anything else is simply not read for it.
+      // Only the five own things are read; a body that names anything else is simply not read for it.
       let address: Prisma.InputJsonValue | typeof Prisma.DbNull | undefined;
       if (b["address"] === null) address = Prisma.DbNull;
       else if (b["address"] !== undefined) {
         if (!isPlacesAddress(b["address"])) return void bad("Pick the address from the list, or clear the field.", "address");
         address = b["address"];
       }
+      const name = typeof b["name"] === "string" ? b["name"].trim() : contractor.name;
+      if (name === "") return void bad("Required.", "name");
+      const phone = typeof b["phone"] === "string" ? b["phone"].trim() : contractor.phone;
+      if (phone === "") return void bad("Required.", "phone");
+      const businessName = b["businessName"] === undefined ? contractor.businessName : optionalString(b["businessName"]);
+      if (businessName === undefined) return void bad("invalid business name", "businessName");
       const emergencyContactName = optionalString(b["emergencyContactName"]);
       if (emergencyContactName === undefined) return void bad("invalid emergency contact name", "emergencyContactName");
       const emergencyContactPhone = optionalString(b["emergencyContactPhone"]);
       if (emergencyContactPhone === undefined) return void bad("invalid emergency contact phone", "emergencyContactPhone");
-      const payoutBsb = optionalString(b["payoutBsb"]);
-      if (payoutBsb === undefined) return void bad("invalid BSB", "payoutBsb");
-      if (payoutBsb !== null && !isValidBsb(payoutBsb)) return void bad("A BSB is six digits.", "payoutBsb");
-      const payoutAccountNo = optionalString(b["payoutAccountNo"]);
-      if (payoutAccountNo === undefined) return void bad("invalid account number", "payoutAccountNo");
-      const payoutAccountName = optionalString(b["payoutAccountName"]);
-      if (payoutAccountName === undefined) return void bad("invalid account name", "payoutAccountName");
 
-      const after = { payoutBsb, payoutAccountNo, payoutAccountName };
-      const now = new Date();
-      const stamp = bankStamp(contractor, after, req.authUser.id, now);
-      const updated = await client.contractor.update({
-        where: { id: contractor.id },
-        data: { ...(address === undefined ? {} : { address }), emergencyContactName, emergencyContactPhone, ...after, ...stamp },
-        include: { specialties: { orderBy: { trade: "asc" } } },
+      const updated = await client.$transaction(async (tx) => {
+        // The login's display name follows (Mike's form does the same).
+        if (name !== contractor.name) await tx.user.update({ where: { id: contractor.userId }, data: { name } });
+        return tx.contractor.update({
+          where: { id: contractor.id },
+          data: { ...(address === undefined ? {} : { address }), name, phone, businessName, emergencyContactName, emergencyContactPhone },
+          include: { specialties: { orderBy: { trade: "asc" } } },
+        });
       });
-      if (Object.keys(stamp).length > 0) await sendBankChanged(client, contractor, now);
       res.json(viewOf(updated));
     })().catch((error: unknown) => {
       console.error("PUT /api/contractor/details failed", error);
