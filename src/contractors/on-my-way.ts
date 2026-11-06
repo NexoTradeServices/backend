@@ -30,7 +30,9 @@ export async function todaysVisit(client: PrismaClient, input: VisitInput, now: 
     select: { id: true, startTime: true },
   });
   const today = todayIn(input.timezone, now);
-  const block = blocks.find((row) => todayIn(input.timezone, row.startTime) === today);
+  // Feature 5002: a visit already worked (a saved time row each, in order) is behind him -- the tap is for the next one.
+  const worked = await client.assignmentTimeLog.count({ where: { assignmentId: input.id } });
+  const block = blocks.slice(worked).find((row) => todayIn(input.timezone, row.startTime) === today);
   return block === undefined ? null : { calendarEventId: block.id };
 }
 
